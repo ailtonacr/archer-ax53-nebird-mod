@@ -5,8 +5,7 @@
 # Installs: init service, control CLI, xzmini decoder, LuCI backend (source
 # .lua), firewall rules, factory-reset cleanup and boot enable symlink.
 # The NetBird binary is NOT embedded in rootfs and NOT stored on any MTD/UBI
-# partition; it is downloaded over HTTPS from a public Cloudflare R2 bucket and
-# materialized into /tmp at runtime (see work/netbird-final/docs/R2-RUNTIME.md).
+# partition; it is downloaded over HTTPS and materialized into /tmp at runtime.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -23,7 +22,6 @@ R="$ROOTFS_DIR"
 
 echo "### NetBird backend/service integration ###"
 
-# 1) copy the file tree
 echo "[1/6] copying netbird files into rootfs ..."
 (cd "$FILES" && cp -a --parents lib/netbird/netbird.sh sbin/netbird-ctl sbin/xzmini usr/bin/netbird \
    etc/init.d/netbird usr/lib/lua/luci/controller/admin/netbird.lua \
@@ -31,25 +29,33 @@ echo "[1/6] copying netbird files into rootfs ..."
 chmod 0755 "$R/sbin/netbird-ctl" "$R/sbin/xzmini" "$R/usr/bin/netbird" "$R/etc/init.d/netbird" 2>/dev/null || true
 chmod 0644 "$R/lib/netbird/netbird.sh" "$R/usr/lib/lua/luci/controller/admin/netbird.lua" "$R/usr/lib/lua/luci/model/netbird.lua" 2>/dev/null || true
 
-# 2) firewall functions into tpcmd.sh
-echo "[2/6] adding fw_netbird_access/block to /lib/firewall/tpcmd.sh ..."
-if ! grep -q "fw_netbird_access" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
+# Append a v2 override even when an older NetBird function already exists in a
+# previously patched rootfs. Shell uses the last function definition, which
+# makes this idempotent and safely upgrades broad wt0<->LAN rules.
+echo "[2/6] adding CIDR-scoped fw_netbird_access/block ..."
+if ! grep -q "# NetBird v2 CIDR-scoped" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
   cat >> "$R/lib/firewall/tpcmd.sh" <<'EOF'
 
-# NetBird (wt0) -- minimal, explicit rules; no broad "-i wt0 -j ACCEPT".
+# NetBird v2 CIDR-scoped -- later definition intentionally overrides v1.
 fw_netbird_access(){
     local port=$1
     local access=$2
     local homeif="$(uci_get_state firewall core lan_ifname)"
+    local cidr="$(sed -n 's/^advertise_cidr=//p' /tp_data/netbird/settings 2>/dev/null | head -n 1)"
 
     fw_s_add 4 f INPUT ACCEPT 1 { "-p udp -m udp --dport $port" }
     fw_s_add 4 f INPUT ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
     fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
 
-    if [ "$access" == "lan" ]; then
-        fw_s_add 4 f FORWARD ACCEPT 1 { "-i wt0 -o $homeif" }
-        fw_s_add 4 f FORWARD ACCEPT 1 { "-i $homeif -o wt0" }
-        fw_s_add 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10" }
+    # Remove legacy broad forwarding before installing scoped rules.
+    fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif" }
+    fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0" }
+    fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10" }
+
+    if [ "$access" == "lan" ] && [ -n "$cidr" ]; then
+        fw_s_add 4 f FORWARD ACCEPT 1 { "-i wt0 -o $homeif -d $cidr" }
+        fw_s_add 4 f FORWARD ACCEPT 1 { "-i $homeif -o wt0 -s $cidr" }
+        fw_s_add 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }
     fi
 }
 
@@ -57,23 +63,25 @@ fw_netbird_block(){
     local port=$1
     local access=$2
     local homeif="$(uci_get_state firewall core lan_ifname)"
+    local cidr="$(sed -n 's/^advertise_cidr=//p' /tp_data/netbird/settings 2>/dev/null | head -n 1)"
 
     fw_s_del 4 f INPUT ACCEPT { "-p udp -m udp --dport $port" }
     fw_s_del 4 f INPUT ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
     fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
-
-    if [ "$access" == "lan" ]; then
-        fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif" }
-        fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0" }
-        fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10" }
+    if [ -n "$cidr" ]; then
+        fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }
+        fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }
+        fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }
     fi
+    fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif" }
+    fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0" }
+    fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10" }
 }
 EOF
 else
-  echo "    (already present, skipping)"
+  echo "    (CIDR-scoped override already present, skipping)"
 fi
 
-# 3) dispatch netbird_access/block in /sbin/fw
 echo "[3/6] wiring netbird_access|netbird_block into /sbin/fw ..."
 if ! grep -q "netbird_access" "$R/sbin/fw" 2>/dev/null; then
   sed -i 's#openvpnc_access|openvpnc_block)#openvpnc_access|openvpnc_block|netbird_access|netbird_block)#' "$R/sbin/fw"
@@ -85,18 +93,15 @@ else
   echo "    (already present, skipping)"
 fi
 
-# 4) factory reset cleanup (remove config; payload is re-downloaded on demand)
 echo "[4/6] factory-reset cleanup in /sbin/reset ..."
 if ! grep -q "tp_data/netbird" "$R/sbin/reset" 2>/dev/null; then
   sed -i 's#^sleep 3$#rm -rf /tp_data/netbird\nsleep 3#' "$R/sbin/reset"
 fi
 
-# 5) boot enable symlink
 echo "[5/6] enabling service (rc.d S99netbird) ..."
 mkdir -p "$R/etc/rc.d"
 ln -sfn "../init.d/netbird" "$R/etc/rc.d/S99netbird" 2>/dev/null || true
 
-# 6) sanity
 echo "[6/6] verifying installed files ..."
 for f in lib/netbird/netbird.sh sbin/netbird-ctl sbin/xzmini usr/bin/netbird etc/init.d/netbird \
          usr/lib/lua/luci/controller/admin/netbird.lua usr/lib/lua/luci/model/netbird.lua; do
