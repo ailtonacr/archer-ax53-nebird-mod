@@ -1,0 +1,24 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+
+fw_led_status_set()
+{
+	local fw_led_support=$(uci get profile.@ledctrl[0].fw_led_support -c "/etc/profile.d/" -q)
+	if [ "$fw_led_support" = "yes" ];then
+		lua -e 'require("luci.controller.admin.firmware").fw_led_status_set()'
+	fi
+}
+
+cycle()
+{
+	sleep 1
+	ledcli STATUS_ON
+
+	fw_led_status_set
+}
+
+start()
+{
+	cycle &
+}

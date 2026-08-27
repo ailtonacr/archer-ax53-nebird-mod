@@ -1,0 +1,32 @@
+#!/bin/sh
+
+check_wan_conn()
+{	
+	local res=$(sed -n '1p' /proc/driver/rtl8367s/phy)
+	local sysmode=$(uci get sysmode.sysmode.mode)
+	local count=0
+	if [ "$sysmode" == "ap" ]; then
+		if [ "${res:0:9}" != "0 0 0 0 0" ]; then
+			echo 0
+			return 0
+		else
+			echo 1
+			return 1
+		fi
+	fi
+	for port in ${res}
+	do
+			if [ $count -eq 0 ] && [ $port -eq 1 ]; then
+				echo 0
+				return 0
+			fi
+			count=$(($count+1))
+	done
+	
+	echo 1
+	return 1
+}
+
+local link=$(check_wan_conn)
+[ -n "$1" ] && echo $link
+return $link

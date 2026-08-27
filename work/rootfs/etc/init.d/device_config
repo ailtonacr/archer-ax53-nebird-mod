@@ -1,0 +1,17 @@
+#!/bin/sh /etc/rc.common
+
+. /lib/functions.sh
+. /lib/functions/network.sh 
+
+START=60
+boot()
+{
+	start &
+}
+
+start()
+{
+	echo "generating device config file now..." > /dev/console
+	lua -e 'require("luci.controller.device_config").analyse_config()'
+}
+

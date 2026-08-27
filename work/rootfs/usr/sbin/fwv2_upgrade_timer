@@ -1,0 +1,17 @@
+#!/bin/sh
+SECONDS=1800
+sleep $SECONDS
+echo "30 minutes have passed, delete up file" > /dev/console
+rm -f /tmp/cloud_up.bin
+rm -f /tmp/fw_check_status
+rm -f /tmp/firmware_checked #This flag is created in nvrammanager -c process
+touch /tmp/wait_upgrade_overtime
+agent_pid=$(pgrep easymesh-agent)
+[ x"$agent_pid" != x ] && {
+	echo "agent send FIRMWARE_STATUS_REPORT to controller" > /dev/console
+	mac=$(ubus call map meshd '{ "action": "findcontroller"}' | grep "mac" | awk -F '"' '{print $4}')
+	[ x"$mac" != x ] &&{
+		cmd="ubus call map tpvdmp '{ \"action\": \"sync_comp\", \"type\": \"FIRMWARE_STATUS_REPORT\", \"mac\": \"$mac\"}'"
+		eval ${cmd}
+	}
+}

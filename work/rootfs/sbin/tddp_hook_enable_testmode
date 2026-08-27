@@ -1,0 +1,40 @@
+#!/bin/sh
+
+SEVERIP="192.168.0.100"
+VAPS=$(iw dev | awk '{if ($1=="Interface" && $2 !~/^wifi*/) print $2}')
+RMMODS="wifi_3_0 wifi_2_0 qca_ol"
+INSMODS="diagchar qca_ol wifi_3_0"
+APPS="ftm diag_socket_app"
+
+if [ "$(is_cal)" == true ]; then
+    #kill app
+    for app in $APPS; do
+        if pgrep $app; then killall -q $app; fi;
+    done
+
+    #delete wireless interfaces
+    for vap in $VAPS; do iw $vap del; done;
+
+    #reload .ko
+    for mod in $RMMODS; do [ -d /sys/module/$mod ] && rmmod $mod; done;
+
+    for mod in $INSMODS; do
+        case "$mod" in
+        qca_ol) [ -d /sys/module/$mod ] || insmod $mod testmode=1
+        ;;
+        *) [ -d /sys/module/$mod ] || insmod $mod
+        ;;
+        esac
+    done
+
+    #start app
+    for app in $APPS; do
+        case "$app" in
+        ftm) ftm -n&
+        ;;
+        diag_socket_app) diag_socket_app -a $SEVERIP&
+        ;;
+        esac
+    done
+fi
+

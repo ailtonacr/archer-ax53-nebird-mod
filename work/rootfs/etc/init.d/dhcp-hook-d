@@ -1,0 +1,141 @@
+#!/bin/sh /etc/rc.common
+
+SERVICE_DAEMONIZE=1
+START=99
+STOP=99
+
+debug() {
+    echo $1 >/dev/console 2>&1
+}
+
+start() {
+    mode=`uci get sysmode.sysmode.mode`
+    if [ ${mode} = "router" ];then
+        rmmod tp_dhcp_hook
+        debug "dhcp_hook_d not load"
+        return 0
+    fi
+
+	local wlan_name
+	local wlan_options
+	local wlan_guest_options
+	local wlan_iot_options
+	local wlan_mlo_options
+	local wlan_mssid_options
+	local wlan_option_prefix="wireless_ifname_"
+	local wlan_backhaul_option_prefix="wireless_mesh_bh_"
+	local wlan_guest_option_prefix="wireless_guest_ifname_"
+	local wlan_iot_option_prefix="wireless_iot_ifname_"
+	local wlan_mlo_option_prefix="wireless_mlo_ifname_"
+	local wlan_mssid1_option_prefix="wireless_mssid1_config_"
+	local model=`uci get profile.@global[0].model -c "/etc/profile.d" -q`
+	local is_ap_model=`uci get profile.@global[0].is_ap_model -c "/etc/profile.d" -q`
+	local support_triband=`uci get profile.@wireless[0].support_triband -c "/etc/profile.d" -q`
+	local support_fourband=`uci get profile.@wireless[0].support_fourband -c "/etc/profile.d" -q`
+	local support_6g=`uci get profile.@wireless[0].support_6g -c "/etc/profile.d" -q`
+	local support_mlo=`uci get profile.@wireless[0].support_mlo_host -c "/etc/profile.d" -q`
+	local support_mssid=`uci get profile.@wireless[0].support_mssid -c "/etc/profile.d" -q`
+	local support_ap_mesh=`uci get profile.@wireless[0].support_ap_mesh -c "/etc/profile.d" -q`
+
+	if [ "${is_ap_model}" = "yes" ];then
+		[ "${mode}" = "ap" -o "${mode}" = "repeater" ] && wlan_options="2g 5g"
+		[ "${mode}" = "multissid" ] && wlan_options="2g_vap1 2g_vap2 2g_vap3 2g_vap4 5g_vap1 5g_vap2 5g_vap3 5g_vap4"
+	else
+		[ "${mode}" = "ap" -o "${mode}" = "repeater" ] && wlan_options="2g 5g"
+		[ "${support_triband}"  = "yes"  -a "${support_6g}" != "yes" ] && wlan_options="2g 5g 5g_2"      # 5G TriBand
+		[ "${support_triband}"  = "yes"  -a "${support_6g}"  = "yes" ] && wlan_options="2g 5g 6g"        # 6G TriBand
+		[ "${support_fourband}" = "yes"  -a "${support_6g}"  = "yes" ] && wlan_options="2g 5g 5g_2 6g"   # FourBand
+		wlan_guest_options=${wlan_options}
+		wlan_iot_options=${wlan_options}
+		wlan_mlo_options=${wlan_options}
+		wlan_mssid_options=${wlan_options}
+	fi
+
+	local iface_name
+	local ifname
+	for option in ${wlan_options};do
+		iface_name=`uci get profile.@wireless[0].${wlan_option_prefix}${option} -c "/etc/profile.d" -q`
+		if [ -n "${iface_name}" ];then
+			ifname=`uci get wireless.${iface_name}.ifname`
+			[ -z "${wlan_name}" ] && wlan_name=${ifname} || wlan_name="${wlan_name}:${ifname}"
+		else
+			debug "dhcp_hook_d ERROR: ${wlan_option_prefix}${option} not defined"
+		fi
+
+		# AP controller need hook backhaul interface
+		if [ "${mode}" = "ap" -a "${support_ap_mesh}" = "yes" ];then
+			backhaul_ifname=`uci get profile.@wireless[0].${wlan_backhaul_option_prefix}${option} -c "/etc/profile.d" -q`
+			if [ -n "${backhaul_ifname}" ];then
+				[ -z "${wlan_name}" ] && wlan_name=${backhaul_ifname} || wlan_name="${wlan_name}:${backhaul_ifname}"
+			else
+				debug "dhcp_hook_d ERROR: ${wlan_option_prefix}${option} not defined"
+			fi
+		fi
+	done
+
+	for gst_option in ${wlan_guest_options};do
+		iface_name=`uci get profile.@wireless[0].${wlan_guest_option_prefix}${gst_option} -c "/etc/profile.d" -q`
+		if [ -n "${iface_name}" ];then
+			# BCM Model defines guest ifname instead of iface_name in profile
+			[ "${model}" = "MTK_762X" -o "${model}" = "QCA_IPQ50XX" ] && ifname=`uci get wireless.${iface_name}.ifname` || ifname=${iface_name}
+			[ -z "${wlan_name}" ] && wlan_name=${ifname} || wlan_name="${wlan_name}:${ifname}"
+		else
+			debug "dhcp_hook_d ERROR: ${wlan_guest_option_prefix}${gst_option} not defined"
+		fi
+	done
+
+	for iot_option in ${wlan_iot_options};do
+		iface_name=`uci get profile.@wireless[0].${wlan_iot_option_prefix}${iot_option} -c "/etc/profile.d" -q`
+		if [ -n "${iface_name}" ];then
+			[ "${model}" = "MTK_762X" -o "${model}" = "QCA_IPQ50XX" ] && ifname=`uci get wireless.${iface_name}.ifname` || ifname=${iface_name}
+			[ -z "${wlan_name}" ] && wlan_name=${ifname} || wlan_name="${wlan_name}:${ifname}"
+		else
+			debug "dhcp_hook_d ERROR: ${wlan_iot_option_prefix}${iot_option} not defined"
+		fi
+	done
+
+	if [ "${support_mlo}" = "yes" ];then
+		for mlo_option in ${wlan_mlo_options};do
+			iface_name=`uci get profile.@wireless[0].${wlan_mlo_option_prefix}${mlo_option} -c "/etc/profile.d" -q`
+			if [ -n "${iface_name}" ];then
+				[ "${model}" = "MTK_762X" -o "${model}" = "QCA_IPQ50XX" ] && ifname=`uci get wireless.${iface_name}.ifname` || ifname=${iface_name}
+				[ -z "${wlan_name}" ] && wlan_name=${ifname} || wlan_name="${wlan_name}:${ifname}"
+			else
+				debug "dhcp_hook_d ERROR: ${wlan_mlo_option_prefix}${mlo_option} not defined"
+			fi
+		done
+	fi
+
+	if [ "${support_mssid}" = "yes" -a "${mode}" = "repeater" ];then
+		for mssid_option in ${wlan_mssid_options};do
+			iface_name=`uci get profile.@wireless[0].${wlan_mssid1_option_prefix}${mssid_option} -c "/etc/profile.d" -q`
+			if [ -n "${iface_name}" ];then
+				[ "${model}" = "MTK_762X" -o "${model}" = "QCA_IPQ50XX" ] && ifname=`uci get wireless.${iface_name}.ifname` || ifname=${iface_name}
+				[ -z "${wlan_name}" ] && wlan_name=${ifname} || wlan_name="${wlan_name}:${ifname}"
+			else
+				debug "dhcp_hook_d ERROR: ${wlan_mssid1_option_prefix}${mssid_option} not defined"
+			fi
+		done
+	fi
+
+    debug "dhcp_hook_d start"
+    local lan_name=`uci get network.lan.ifname`
+    lan_name=`echo $lan_name | sed 's/[ ][ ]*/:/g'`
+	if [ -n "${wlan_name}" ];then
+		echo "$wlan_name:$lan_name" > /proc/dhcp_hook/dhcp_hook_dev_name
+	else
+		echo "$lan_name" > /proc/dhcp_hook/dhcp_hook_dev_name
+	fi
+    service_start /usr/bin/dhcp_hook_d
+    debug "dhcp_hook_d end"
+    return 0
+}
+
+stop() {
+    service_stop /usr/bin/dhcp_hook_d
+    return 0
+}
+
+reload() {
+    return 0
+}

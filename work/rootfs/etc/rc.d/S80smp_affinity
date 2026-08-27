@@ -1,0 +1,58 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+#
+# Permission to use, copy, modify, and/or distribute this software for any
+# purpose with or without fee is hereby granted, provided that the above
+# copyright notice and this permission notice appear in all copies.
+#
+# THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+# WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+# MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+# ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+# WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+# ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+# OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+START=80
+update_affinity() {
+	irq_nums=`grep msm_serial0 /proc/interrupts | cut -d ':' -f 1 | tr -d ' '`
+	for entry in $irq_nums
+	do
+		echo 2 > /proc/irq/$entry/smp_affinity
+	done
+	irq_nums=`grep nss_empty_buf_sos /proc/interrupts | cut -d ':' -f 1 | tr -d ' '`
+	for entry in $irq_nums
+	do
+		echo 2 > /proc/irq/$entry/smp_affinity
+	done
+	irq_nums=`grep ce2 /proc/interrupts | cut -d ':' -f 1 | tr -d ' '`
+	for entry in $irq_nums
+	do
+		echo 2 > /proc/irq/$entry/smp_affinity
+	done
+	irq_nums=`grep pci0_wlan_ce_2 /proc/interrupts | cut -d ':' -f 1 | tr -d ' '`
+	for entry in $irq_nums
+	do
+		echo 2 > /proc/irq/$entry/smp_affinity
+	done
+	irq_nums=`grep ce3 /proc/interrupts | cut -d ':' -f 1 | tr -d ' '`
+	for entry in $irq_nums
+	do
+		echo 2 > /proc/irq/$entry/smp_affinity
+	done
+	irq_nums=`grep pci0_wlan_ce_3 /proc/interrupts | cut -d ':' -f 1 | tr -d ' '`
+	for entry in $irq_nums
+	do
+		echo 2 > /proc/irq/$entry/smp_affinity
+	done
+	irq_nums=`grep pci0_wlan_grp_dp_3 /proc/interrupts | cut -d ':' -f 1 | tr -d ' '`
+	for entry in $irq_nums
+	do
+		echo 2 > /proc/irq/$entry/smp_affinity
+	done
+}
+start() {
+	update_affinity
+}
+

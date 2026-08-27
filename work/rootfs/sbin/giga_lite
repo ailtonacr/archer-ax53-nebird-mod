@@ -1,0 +1,30 @@
+#!/bin/sh
+
+. /lib/network/network_arch.sh
+
+if [ $# -ne 1 ]; then
+	echo "usage:giga_lite <state>" > /dev/console
+	echo "state: on or off" > /dev/console
+	exit 0
+fi
+local state=$1
+local enable=0
+local lan_ports=$(uci get switch.lan.ports -q)
+local wan_ports=$(uci get switch.wan.ports -q)
+local ports="$lan_ports $wan_ports"
+
+if [ $state = "on" ];then
+    #enable giga-lite
+    enable=1
+else
+    #disable giga-lite
+    enable=0
+fi
+
+for port in ${ports} ; do
+    echo pgigalite set $port $enable > /proc/driver/rtl8367s/port
+    echo pgigalite set $port $enable > /dev/console
+done
+#auto linkdown/linkup by the switch
+
+exit 0

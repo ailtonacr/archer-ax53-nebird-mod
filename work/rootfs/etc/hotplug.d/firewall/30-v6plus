@@ -1,0 +1,30 @@
+#!/bin/sh
+
+. /lib/functions.sh
+. /lib/functions/network.sh
+
+TMP_FILE_PORT="/tmp/v6plus/v6plus_port"
+local wanproto=$(uci get network.wan.wan_type)
+local peeraddr=$(uci get dslteV6plus.wan.localIPAddress)
+
+[ "$ACTION" = "start" ] && [ "$wanproto" = "v6plus" ] && [ -n "$peeraddr" ] && {
+	local fakeip="192.0.0.1"
+
+	fw add 4 n v6plus_checkports
+
+	fw del 4 n zone_lan_prerouting v6plus_checkports
+	fw add 4 n zone_lan_prerouting v6plus_checkports
+
+	fw flush 4 n v6plus_checkports
+	fw add 4 n v6plus_checkports "CHECKPORTS --param ${peeraddr}-${fakeip}:${TMP_FILE_PORT}" "-p tcp" 1
+	fw add 4 n v6plus_checkports "CHECKPORTS --param ${peeraddr}-${fakeip}:${TMP_FILE_PORT}" "-p udp" 1
+	fw add 4 n v6plus_checkports "CHECKPORTS --param ${peeraddr}-${fakeip}:${TMP_FILE_PORT}" "-p icmp" 1
+
+	fw add 4 n v6plus_output
+	fw del 4 n zone_wan_nat v6plus_output "-o v6plus-wan"
+	fw add 4 n zone_wan_nat v6plus_output "-o v6plus-wan" 1
+	fw flush 4 n v6plus_output
+	fw add 4 n v6plus_output "V6PORTS --to-source ${peeraddr}:${TMP_FILE_PORT}" "-p tcp --sport 1:65535" 1
+	fw add 4 n v6plus_output "V6PORTS --to-source ${peeraddr}:${TMP_FILE_PORT}" "-p udp --sport 1:65535" 1
+	fw add 4 n v6plus_output "V6PORTS --to-source ${peeraddr}:${TMP_FILE_PORT}" "-p icmp" 1
+}

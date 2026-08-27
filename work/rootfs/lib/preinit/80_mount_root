@@ -1,0 +1,21 @@
+#!/bin/sh
+# Copyright (C) 2006 OpenWrt.org
+# Copyright (C) 2010 Vertical Communications
+
+. /lib/functions.sh
+
+do_mount_root() {
+    boot_run_hook preinit_mount_root
+}   
+
+do_change_bitflip_threshold() {
+	local mtd_ART=$(find_mtd 0:ART)
+	if [ -f "/sys/class/mtd/$mtd_ART/bitflip_threshold" ]; then
+		local ecc_strength=$(cat /sys/class/mtd/$mtd_ART/ecc_strength)
+		echo $ecc_strength > /sys/class/mtd/$mtd_ART/bitflip_threshold
+		echo "Change ART bitflip_threshold to ecc_strength!!!"
+	fi
+}
+
+boot_hook_add preinit_main do_mount_root
+boot_hook_add preinit_main do_change_bitflip_threshold

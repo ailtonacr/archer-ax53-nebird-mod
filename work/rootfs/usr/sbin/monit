@@ -1,0 +1,88 @@
+#!/bin/sh
+# Copyright (C) 2009 OpenWrt.org
+
+
+# "proc_name init_file pid_file"
+if [ -e /lib/monit/monit_proclist ]; then
+	source /lib/monit/monit_proclist
+elif [ -e /etc/monit/monit_proclist ]; then
+	source /etc/monit/monit_proclist
+fi
+
+
+find_pid() {
+	local mproc=$1
+	local proclist=`ls -d /proc/[0-9]*`
+	local procname
+	local mproc_cut=${mproc:0:15}
+	for proc in $proclist
+	do
+		[ -f $proc/comm ] && {
+			procname=`cat $proc/comm`
+			[ "x$mproc_cut" = "x$procname" ] && {
+				echo ${proc##*/}
+				return
+			} 
+		}
+	done
+	echo -1
+	return
+}
+
+check_proc() {    
+	local proc_name=$1
+	local init_file=$2
+	local pid_file=$3
+
+	[ -f "$pid_file" ] && {
+		#echo "${proc_name}: read pid file $pid_file" > /dev/console
+		local tmp_pid=`cat $pid_file`
+		[ -n $tmp_pid ] && [ -d "/proc/$tmp_pid" ] && [ x"$proc_name" = x"`cat /proc/$tmp_pid/comm`" ] && return		
+	}
+	#echo "${proc_name}: no pid file or nomatch" > /dev/console
+	
+	local newpid=`find_pid $proc_name`
+	[ $newpid != -1 ] && {
+		#echo "${proc_name}: update pid file" > /dev/console
+		echo $newpid > "$pid_file" && return
+	}	
+
+	#echo "${proc_name}: proc not found, to restart" > /dev/console
+	/etc/init.d/$init_file restart
+}
+
+check_proc_special() {
+	local onemesh_enable=$(uci get onemesh.onemesh.enable)
+	local smart_enable=$(uci get wireless.smart.smart_enable)
+	local process_counter=0
+
+	if [ "$onemesh_enable" = "on" ]; then
+		check_proc "sync-server" "sync-server" "/var/run/sync-server.pid"
+	fi
+
+	if [ "$onemesh_enable" = "on" -o "$smart_enable" = "on" ]; then
+		check_proc "nrd" "nrd" "/var/run/nrd.pid"
+	fi
+
+	if [ "$onemesh_enable" = "off" ]; then
+		check_proc "tdpServer" "tdpServer" "/var/run/tdpServer.pid"
+	else
+		process_counter=$(pgrep tdpServer | wc -l)
+		if [ "$process_counter" -lt 3 ]; then
+			/etc/init.d/tdpServer restart
+		fi
+	fi
+}
+
+check_proc_list() {	
+	local args
+	for mproc in $mproclist
+	do
+        args=`eval echo '$'$mproc`
+		check_proc $args
+	done
+
+	check_proc_special
+}
+
+check_proc_list

@@ -1,0 +1,13 @@
+#!/bin/sh
+NM_CONF_LOG_SAVE_BIN="/usr/sbin/nm_conf_log_save"
+
+ROOT_CRONTAB="/etc/crontabs/root"
+TMP_NM_CONF_LOG_CRONTAB="/tmp/nm_conf_log_save_cron"
+
+NEW_NM_CONF_LOG_CRON_ITEM="0 0 * * * $NM_CONF_LOG_SAVE_BIN"
+NM_CONF_LOG_CRON_ITEM=`grep "$NM_CONF_LOG_SAVE_BIN" ${ROOT_CRONTAB}`
+[ "${NM_CONF_LOG_CRON_ITEM}" != "${NEW_NM_CONF_LOG_CRON_ITEM}" ] && {
+	echo "${NEW_NM_CONF_LOG_CRON_ITEM}" > ${TMP_NM_CONF_LOG_CRONTAB}
+	crontab -l | grep -v "$NM_CONF_LOG_SAVE_BIN" | cat - "${TMP_NM_CONF_LOG_CRONTAB}" | crontab -
+	rm -f $TMP_NM_CONF_LOG_CRONTAB}
+}

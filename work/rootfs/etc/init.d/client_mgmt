@@ -1,0 +1,43 @@
+#!/bin/sh /etc/rc.common
+
+SERVICE_DAEMONIZE=1
+SERVICE_WRITE_PID=1
+
+START=70
+STOP=70
+
+client_mgmt_v6_support=`uci get profile.@ipv6[0].client_mgmt_v6_support -c /etc/profile.d/ -q`
+fing_support=`uci get profile.@client_mgmt[0].fing_support -c /etc/profile.d/ -q`
+
+start()
+{
+	service_start /usr/bin/client_mgmt
+	if [ "$client_mgmt_v6_support" == "yes" ]; then
+		echo "* * * * * lua -e 'require(\"luci.model.tm_clientmgmt_ipv6\").get_access_device_list_v6()' &" > /tmp/client6_cron
+		crontab -l | grep -v "get_access_device_list_v6" | cat - "/tmp/client6_cron" | crontab -
+		rm -f /tmp/client6_cron
+	fi
+	if [ "$fing_support" == "yes" ]; then
+		[ -f "/etc/config/fing" ] || touch /etc/config/fing
+		[ -f "/var/state/fing" ] || touch /var/state/fing
+		[ -d "/tmp/fing" ] || mkdir /tmp/fing
+		uci -P /var/state set "fing.global=state"
+		uci -P /var/state set "fing.global.mac_num=0"
+		local fing_pp_state=$(uci get fing.setting.pp_state -q)
+		if [ -z "$fing_pp_state" ]; then
+			uci set fing.setting=setting
+			uci set fing.setting.pp_state=init
+			uci commit fing
+		fi
+	fi
+	return 0
+}
+
+stop()
+{
+	service_stop /usr/bin/client_mgmt
+	if [ "$client_mgmt_v6_support" == "yes" ]; then
+		crontab -l | grep -v "get_access_device_list_v6" | crontab -
+	fi
+	return 0
+}

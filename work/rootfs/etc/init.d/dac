@@ -1,0 +1,58 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2008-2010 OpenWrt.org
+
+START=99
+#SERVICE_USE_PID=1
+
+local DAC_CHECK="/usr/bin/dac_check"
+local DAC_CONFIG="/tmp/dac_info"
+
+get_mac() {
+    local section="$1"
+    local band
+    config_get band "${section}" band
+    if [[ ! "${band}" =~ ^[25]g.* ]] ; then
+        return
+    fi
+
+    local trans_mac
+    config_get trans_mac "${section}" macaddr
+    echo "${trans_mac//-/}" >> ${DAC_CONFIG}
+}
+
+boot() {
+    local model="$(getfirm MODEL)($(getfirm COUNTRY))"
+    local type="WIRELESSROUTER"
+    local mac=`getfirm MAC | tr -d "\n\r-:"`
+    echo ${model} > ${DAC_CONFIG}
+    echo "WIRELESSROUTER" >> ${DAC_CONFIG}
+    echo "${mac}" >> ${DAC_CONFIG}
+
+    config_load "wireless"
+    config_foreach get_mac wifi-device
+
+    if [ ! -f "/etc/init.d/tss" ]; then
+        start "$@"
+    fi
+}
+
+start() {
+	echo "=========dac check start========" > /dev/console
+    "/bin/nice" -n -5 ${DAC_CHECK} -s -l -c -t -1 -d 2 &>/dev/null &
+}
+
+stop() {
+	echo "=========dac check stop=========" > /dev/console
+	local dac_check_pid=`pgrep ${DAC_CHECK}`
+    
+	if [ -n "$dac_check_pid" ];then
+		for pid in $dac_check_pid; do
+			kill "$pid"
+		done
+	fi
+}
+
+restart() {
+    stop "$@"
+	start "$@"
+}

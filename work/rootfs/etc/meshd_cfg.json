@@ -1,0 +1,24 @@
+{
+	"param": {
+		"trace_log_module": 0,
+		"trace_log_level": 3,
+		"band_support": "2.4g,5g",
+		"scan_before_connect_enable": true
+	},
+	"wireless_interfaces": {
+		"ath02": {"band": "2.4g", "map_type": "bSTA", "vap": "ath02"},
+		"ath0": {"band": "2.4g", "map_type": "fBSS", "vap": "ath0"},
+		"ath03": {"band": "2.4g", "map_type": "bBSS", "vap": "ath03"},
+		"ath04": {"band": "2.4g", "map_type": "cBSS", "vap": "ath04"},
+		"ath12": {"band": "5g", "map_type": "bSTA", "vap": "ath12"},
+		"ath1": {"band": "5g", "map_type": "fBSS", "vap": "ath1"},
+		"ath13": {"band": "5g", "map_type": "bBSS", "vap": "ath13"},
+		"ath14": {"band": "5g", "map_type": "cBSS", "vap": "ath14"}
+	},
+	"wire_interfaces": {
+		"eth1.2": {"type": "LAN"},
+		"eth1.3": {"type": "LAN"},
+		"eth1.4": {"type": "LAN"},
+		"eth1.5": {"type": "LAN"}
+	}
+}

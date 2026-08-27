@@ -1,0 +1,272 @@
+#!/bin/sh
+# Copyright(c) 2011-2014 Shenzhen TP-LINK Technologies Co.Ltd.
+# file     90-vpn
+# brief    
+# author   Zhu Xianfeng<zhuxianfeng@tp-link.net>
+# version  1.0.0
+# date     02Dec14
+# history  arg 1.0.0, 02Dec14, Zhu Xianfeng, Create the file. 
+. /lib/functions.sh
+. /lib/functions/network.sh
+
+VPN_CLIENT_MARK=0x40000
+VPN_CLIENT_MASK=0x40000
+VPN_CLIENT_PREF=500
+BRIDGE_NAME="br-lan"
+VPNC_DNS_FILE=/tmp/vpnc-dns
+OPENVPNC_REMOTE="/tmp/openvpnc_remote"
+
+openvpn_handle()
+{
+	local enabled="off"
+	local proto="udp"
+	local port="1194"
+	local access="home"
+    local dev="tun"
+
+	config_load openvpn
+	config_get enabled "server" "enabled"
+	config_get proto "server" "proto"
+	config_get port "server" "port"
+	config_get access "server" "access"
+	config_get dev "server" "dev"
+	if [ X$dev == "X" ]; then
+		dev="tun"
+	fi
+
+	if [ "$enabled" != "on" ]; then
+		fw openvpn_block $proto $port $access $dev
+		return 0
+	fi
+
+	# if the internet connection type is v6plus, the OpenVPN Server port determined by dsliteV6plus.openvpnServerPort
+	config_load network
+	local wanproto=$(uci get network.wan.wan_type)
+	if [ "$wanproto" = "v6plus" ]; then
+		config_load dsliteV6plus
+		config_get tmp_port "wan" "openvpnServerPort"
+		if [ ! $tmp_port ]; then
+			echo "[OpenVPN]:the OpenVPN Server port is not OK" > /dev/console
+		else
+			echo "[OpenVPN]:the internet connection type is v6plus, the OpenVPN Server port is $tmp_port" > /dev/console
+			uci set openvpn.server.port=$tmp_port
+			uci commit
+		fi
+	fi
+
+	# firewall handle 
+	# iptables -t filter -I INPUT 1 -i eth0 -p udp --dport 1194 -j ACCEPT
+	if [ "$ACTION" = "ifup" ]; then
+		/etc/init.d/openvpn restart
+		fw openvpn_block $proto $port $access $dev
+		config_load openvpn
+		config_get port "server" "port"
+		fw openvpn_access $proto $port $access $dev
+	elif [ "$ACTION" = "ifdown" ]; then
+		fw openvpn_block $proto $port $access $dev
+	fi
+}
+
+pptpvpn_handle()
+{
+	local enabled="off"
+
+	config_load pptpd
+	config_get enabled "pptpd" "enabled"
+	config_get smbacc  "pptpd" "samba_access"
+
+	if [ "$enabled" != "on" ]; then
+		return 0
+	fi
+
+	# firewall handle
+	# iptables -t filter -I INPUT 1 -p tcp --dport 1723 -j ACCEPT
+	# iptables -t filter -I INPUT 1 -p gre -j ACCEPT
+	if [ "$ACTION" = "ifup" ]; then
+		#fw pptp_access $smbacc
+		/etc/init.d/pptpd restart
+	elif [ "$ACTION" = "down" ]; then 
+		fw pptp_block
+	fi
+}
+
+l2tpvpn_handle()
+{
+	local enabled="off"
+
+	config_load l2tpoveripsec
+	config_get enabled "l2tpoveripsec" "enabled"
+	config_get encryption "l2tpoveripsec" "encryption"
+
+	if [ "$enabled" != "on" ]; then
+		return 0;
+	fi
+	if [ "$ACTION" = "ifup" ]; then
+		if [ "$encryption" = "true" ]; then
+			/etc/init.d/ipsec restart
+		fi
+		/etc/init.d/xl2tpd restart
+	fi
+}
+
+wireguardvpn_handle()
+{
+    local enabled="false"
+    config_load wireguard
+    config_get enabled "wireguard" "enabled"
+	config_get port "wireguard" "listen_port"
+	config_get access "wireguard" "access"
+
+    if [ "$enabled" != "true" ]; then
+        return 0;
+    fi
+    rm /tmp/wg_status.lua
+
+	# if the internet connection type is v6plus, the wireguard vpn Server port determined by dsliteV6plus.wireguardServerPort
+	config_load network
+	local wanproto=$(uci get network.wan.wan_type)
+	if [ "$wanproto" = "v6plus" ]; then
+		config_load dsliteV6plus
+		config_get tmp_port "wan" "wireguardServerPort"
+		if [ ! $tmp_port ]; then
+			echo "[wireguard vpn]:the wireguard vpn Server port is not OK" > /dev/console
+		else
+			echo "[wireguard vpn]:the internet connection type is v6plus, the wireguard vpn Server port is $tmp_port" > /dev/console
+			uci set wireguard.wireguard.listen_port=$tmp_port
+			uci commit
+		fi
+	fi
+
+    if [ "$ACTION" = "ifup" ]; then
+        /etc/init.d/wireguard restart
+		fw wireguard_block $port $access
+		config_load wireguard
+		config_get port "wireguard" "listen_port"
+		fw wireguard_access $port $access
+	elif [ "$ACTION" = "ifdown" ]; then
+		fw wireguard_block $port $access
+    fi
+}
+
+add_vpn_client()
+{
+	local access="1"
+	local mac
+	config_get access "$1" "access"
+	config_get mac "$1" "mac"
+	if [ "$access" == "on" ]; then
+		vpn_mgmt "client" add "$mac"
+	fi
+}
+
+vpn_client_handle()
+{
+	local enabled="off"
+	local vpntype="none"
+    local af_inet="AF_INET"
+    local proto="udp"
+	local remoteIP=""
+	local remotePort=""
+
+	if [ "$INTERFACE" != "vpn" ]; then
+		return 0
+	fi
+	
+	config_load vpn
+	config_get enabled "client" "enabled"
+	config_get vpntype "client" "vpntype"
+    
+	if [ "$enabled" == "off" -o "$vpntype" == "none" ]; then
+		return 0
+	fi
+
+    if [ "$vpntype" = "openvpn" -a -f "$OPENVPNC_REMOTE" ]; then
+		local remote=$(cat $OPENVPNC_REMOTE)
+		local proto=$(echo $remote | sed -r 's/.*(udp|tcp).*/\1/')
+		local af_inet=$(echo $remote | sed -r 's/.*\[(.*)\].*/\1/')
+		local remoteIP=$(echo $remote | sed -r 's/.*\](.*):.*/\1/')
+		local remotePort=$(echo $remote | sed -r 's/.*\:(.*)\.*/\1/')
+	fi
+
+	config_load network
+	if [ "$ACTION" == "ifup" ]; then
+		#if vpn kill switch is supported
+		local kill_switch_support=`uci get profile.@vpn_client[0].kill_switch_support -c "/etc/profile.d"`
+		if [ "$kill_switch_support" == "yes" ]; then
+			local kill_switch
+			config_get kill_switch "$INTERFACE" "kill_switch"
+			# if vpn kill switch is not opened
+			if [ "$kill_switch" != "on" ]; then
+				#add ip route rules
+				ip rule add pref "$VPN_CLIENT_PREF" fwmark $VPN_CLIENT_MARK/$VPN_CLIENT_MASK iif "$BRIDGE_NAME" table vpn
+			fi
+		else
+			#add ip route rules
+			ip rule add pref "$VPN_CLIENT_PREF" fwmark $VPN_CLIENT_MARK/$VPN_CLIENT_MASK iif "$BRIDGE_NAME" table vpn
+		fi
+		ip route flush cache
+		#network_get_ptop_gateway vpn_gw "vpn"
+		network_get_ipaddr vpn_gw "vpn"
+		ip route add default via $vpn_gw table vpn
+		#add dns rules
+		network_get_dnsserver vpn_dns vpn
+		echo $vpn_dns > $VPNC_DNS_FILE
+        for server in $vpn_dns; do
+			fw s_add 4 m output_rule_vpn_client "MARK --set-xmark $VPN_CLIENT_MARK/$VPN_CLIENT_MARK" { "-d $server/32 -p udp -m udp --dport 53" }
+        done
+		network_get_ipaddr lan_ip "lan"
+		killall vpnDnsproxy
+		vpnDnsproxy $lan_ip $vpn_dns
+        if [ "$vpntype" = "openvpn" ]; then
+			fw openvpnc_access $af_inet $proto $remoteIP $remotePort
+		fi
+	elif [ "$ACTION" == "ifdown" ]; then
+		killall vpnDnsproxy
+
+		#if vpn kill switch is supported
+		local kill_switch_support=`uci get profile.@vpn_client[0].kill_switch_support -c "/etc/profile.d"`
+		if [ "$kill_switch_support" == "yes" ]; then
+			local kill_switch
+			config_get kill_switch "$INTERFACE" "kill_switch"
+			# if vpn kill switch is opened
+			if [ "$kill_switch" == "on" ]; then
+				# no need to del routing via vpn-interface, system will do it
+				ip route flush cache
+			else
+				ip route del default table vpn
+				ip rule del table vpn
+				ip route flush cache
+
+
+				ip -6 route del default table vpn
+				ip -6 rule del table vpn
+				ip -6 route flush cache
+			fi
+		else
+			ip route del default table vpn
+			ip rule del table vpn
+			ip route flush cache
+
+
+			ip -6 route del default table vpn
+			ip -6 rule del table vpn
+			ip -6 route flush cache
+		fi
+		if [ "$vpntype" = "openvpn" ]; then
+			fw openvpnc_block $af_inet $proto $remoteIP $remotePort
+		fi
+
+#leave these clean job to vpn_stop, as these operations should be static not dynamic.
+#iptables -t mangle -F prerouting_rule_vpn_client
+#iptables -t nat -F prerouting_rule_vpn_client
+	fi	
+}
+
+vpn_client_handle
+if [ "$INTERFACE" != "wan" -a "$INTERFACE" != "internet" -a "$INTERFACE" != "lan" ]; then
+	exit 0
+fi
+wireguardvpn_handle
+openvpn_handle
+pptpvpn_handle
+l2tpvpn_handle

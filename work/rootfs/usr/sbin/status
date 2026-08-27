@@ -1,0 +1,221 @@
+#!/bin/sh
+
+local wan_status=
+local wan_speed=
+local wan_duplex=
+local lan_status=
+local lan_speed=
+local lan_duplex=
+
+append_status()
+{
+	eval $1=\"\$$1' '$2\"
+}
+
+# usage: get_port_speed $var_name $port_speed
+get_port_speed()
+{
+	local var_name=$1
+	local port_speed=$2
+	local speed
+	
+	if [ -n "$port_speed" ]
+	then
+		case $port_speed in
+		"2.5G")
+			speed="2500"
+			;;
+		"1G")
+			speed="1000"
+			;;
+		"500M")
+			speed="500"
+			;;
+		"1000M")
+			speed="1000"
+			;;
+		"100M")
+			speed="100"
+			;;
+		"10M")
+			speed="10"
+			;;
+		*)
+			echo "bad port speed: $speed"
+			speed="0"
+			;;
+		esac
+		
+		append_status "$var_name" "$speed"
+	else
+		append_status "$var_name" "0"
+	fi
+}
+
+# usage: get_port_status $var_name $port_status
+get_port_status()
+{
+	local var_name=$1
+	local port_status=$2
+	
+	if [ $port_status -eq 1 ]; then
+		append_status "$var_name" "connected"
+	else
+		append_status "$var_name" "unconnected"
+	fi
+}
+
+# usage: get_port_duplex $var_name $port_duplex
+get_port_duplex()
+{
+	local var_name=$1
+	local port_duplex=$2
+	
+	if [ -n "$port_duplex" ]
+	then
+		if [ "$port_duplex" == "FD" ]
+		then
+			append_status "$var_name" "FULL"
+		else
+			append_status "$var_name" "HALF"
+		fi
+	else
+		append_status "$var_name" "NONE"
+	fi
+}
+
+get_lan_status()
+{
+	local res=$(sed -n '1p' /proc/driver/rtl8367s/phy)
+	local count=0
+	for port in ${res}
+	do
+		[ $count -eq 0 ] && {
+			count=$(($count+1))
+			continue
+		}
+		get_port_status "lan_status" "$port"
+		count=$(($count+1))
+	done
+}
+
+get_lan_speed()
+{
+	local res=$(sed -n '2p' /proc/driver/rtl8367s/phy)
+	local count=0
+	local connected=0
+	for port in ${res}
+	do
+		[ $count -eq 0 ] && {
+			count=$(($count+1))
+			continue
+		}
+		connected=$(sed -n '1p' /proc/driver/rtl8367s/phy | awk -v ind=$count '{print $(ind + 1)}')
+		if [ $connected -eq 1 ]
+		then
+		get_port_speed "lan_speed" "$port"
+		else
+			get_port_speed "lan_speed" # unconnected, speed is 0
+		fi
+		count=$(($count+1))
+	done
+}
+
+get_lan_duplex()
+{
+	local res=$(sed -n '3p' /proc/driver/rtl8367s/phy)
+	local count=0
+	for port in ${res}
+	do
+		[ $count -eq 0 ] && {
+			count=$(($count+1))
+			continue
+		}
+		get_port_duplex "lan_duplex" "$port"
+		count=$(($count+1))
+	done
+}
+
+get_wan_status()
+{
+	local res=$(sed -n '1p' /proc/driver/rtl8367s/phy)
+	local count=0
+	for port in ${res}
+	do
+		[ $count -eq 0 ] && get_port_status "wan_status" "$port"
+		count=$(($count+1))
+	done
+}
+
+get_wan_speed()
+{
+	local res=$(sed -n '2p' /proc/driver/rtl8367s/phy)
+	local count=0
+	local connected=0
+	for port in ${res}
+	do
+		[ $count -eq 0 ] && {
+			connected=$(sed -n '1p' /proc/driver/rtl8367s/phy | awk -v ind=$count '{print $(ind + 1)}')
+			if [ $connected -eq 1 ]
+			then
+				get_port_speed "wan_speed" "$port"
+			else
+				get_port_speed "wan_speed" # unconnected, speed is 0
+			fi
+		}
+		count=$(($count+1))
+	done
+}
+
+get_wan_duplex()
+{
+	local res=$(sed -n '3p' /proc/driver/rtl8367s/phy)
+	local count=0
+	for port in ${res}
+	do
+		[ $count -eq 0 ] && get_port_duplex "wan_duplex" "$port"
+		count=$(($count+1))
+	done
+}
+
+
+
+case $1 in
+	"lan_status")
+		get_lan_status
+		echo -n $lan_status
+		;;
+	"wan_status")
+		get_wan_status
+		echo -n $wan_status
+		;;
+	"lan_speed")
+		get_lan_speed
+		echo -n $lan_speed
+		;;
+	"wan_speed")
+		get_wan_speed
+		echo -n $wan_speed
+		;;
+	"lan_duplex")
+		get_lan_duplex
+		echo -n $lan_duplex
+		;;
+	"wan_duplex")
+		get_wan_duplex
+		echo -n $wan_duplex
+		;;
+	"speed")
+		get_wan_speed
+		get_lan_speed
+		echo -n $wan_speed $lan_speed
+		;;
+	"duplex")
+		get_wan_duplex
+		get_lan_duplex
+		echo -n $wan_duplex $lan_duplex
+		;;
+	*)
+		echo "bad choice"
+		;;
+esac

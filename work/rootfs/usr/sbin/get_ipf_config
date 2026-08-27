@@ -1,0 +1,15 @@
+#!/bin/sh
+
+local IPLATFROM_FILE="/etc/iplatform.config"
+
+get_iplatfrom_config()
+{
+    [ -z "$1" -o ! -e "$IPLATFROM_FILE" ]  && {
+        return 1
+    }
+
+    local serialized_attr=`eval echo "$1" | sed -e '/^#/d' -e '/^$$/d' -e 's/^CONFIG_//g' -e 's/^PACKAGE_//g'`
+    grep -e "^$serialized_attr=" "$IPLATFROM_FILE" | awk -F '=' '{print $2}'
+}
+
+get_iplatfrom_config $1

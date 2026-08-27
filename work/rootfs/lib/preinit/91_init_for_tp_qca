@@ -1,0 +1,90 @@
+#!/bin/sh
+# Copyright (C) 2006 OpenWrt.org
+# Copyright (C) 2010 Vertical Communications
+
+
+copy_bdf() {
+	HW_VER=$(getfirm HW_VER)
+	PRODUCT_VER=$(getfirm HARDVERSION)
+	PRODUCT_NAME=$(getfirm MODEL)
+	REGION="$1"
+	PRODUCT_BDF_PATH="/COUNTRY_${PRODUCT_NAME}_$PRODUCT_VER"
+	COUNTRY=$(getfirm COUNTRY)
+
+	if [ -d "${PRODUCT_BDF_PATH}/${REGION}/" ]; then
+		#for AX72 2.0, SG country use  different BDF than US
+		if [ "$REGION" != "$COUNTRY" ] && [ -d "${PRODUCT_BDF_PATH}/${COUNTRY}/" ]; then
+			REGION="$COUNTRY"
+		fi
+		echo "run_init_for_tp_qca(): Copy ${PRODUCT_BDF_PATH} ${REGION} Filesystem !!!!!"
+		[ -d "${PRODUCT_BDF_PATH}/${REGION}/default/" ] && cp -pR "${PRODUCT_BDF_PATH}"/${REGION}/default/* /
+		[ -d "${PRODUCT_BDF_PATH}/${REGION}/${HW_VER}/" ] && cp -pR "${PRODUCT_BDF_PATH}"/${REGION}/${HW_VER}/* /
+	else
+		#for AX55 4.0, SG country use  different BDF than US
+		if [ "$REGION" != "$COUNTRY" ] && [ -d "/${COUNTRY}/" ]; then
+			REGION="$COUNTRY"
+		fi
+		echo "run_init_for_tp_qca(): Copy ${REGION} Filesystem !!!!!"
+		[ -d "/${REGION}/default/" ] && cp -pR /${REGION}/default/* /
+		[ -d "/${REGION}/${HW_VER}/" ] && cp -pR /${REGION}/${HW_VER}/* /
+	fi
+}
+
+run_init_for_tp_qca() {
+	echo "run_init_for_tp_qca(): start to init for tp qca router..."
+	SPECILA_ID=$(getfirm SPECIAL_ID)
+
+	if [ "$(/sbin/is_cal)" = "true" ]; then
+		rm /etc/modules.d/53-diag-char
+		[ -f "/etc/hotplug.d/iface/00-apmodel-factorymode" ] && rm /etc/hotplug.d/iface/00-apmodel-factorymode
+	fi
+
+	case "$SPECILA_ID" in
+		55530000)
+				copy_bdf US
+				;;
+		53470000)
+				copy_bdf US
+				 #should be SG, but in old code SG copy US BDF
+				;;
+		45550000)
+				copy_bdf EU
+				;;
+		4A500000) 
+				copy_bdf EU
+				#should be JP, but in old code JP copy EU BDF
+				#echo "country JP, change nss ipv4/6 config to 2k+2k." > /dev/console
+				file=$(ls /etc/modules.d/*qca-nss-drv)
+				sed -i '1 s/qca-nss-drv.*/qca-nss-drv max_ipv4_conn=2048 max_ipv6_conn=2048/g' $file
+				;;
+		43410000)
+				copy_bdf CA
+				;;
+		52550000)
+				copy_bdf RU
+				;;
+		54570000)
+				copy_bdf TW
+				;;
+		4B520000)
+				copy_bdf KR
+				;;
+		41550000)
+				copy_bdf AU
+				;;
+		45470000)
+				copy_bdf EG
+				;;
+		42520000)
+				copy_bdf BR
+				;;
+		*)
+				# default is EU
+				copy_bdf EU
+				;;
+	esac
+}
+
+
+boot_hook_add preinit_main run_init_for_tp_qca
+

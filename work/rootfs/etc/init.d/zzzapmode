@@ -1,0 +1,35 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+
+start () {
+    config_load sysmode
+    config_get mode "sysmode" "mode"
+    config_load network
+    config_get ipaddr "wan" "ipaddr"
+	need="no"
+
+	case "$mode" in
+		repeater)
+			need="yes";
+			;;
+		ap)
+			need="yes";
+			;;
+		client)
+			need="yes";
+			;;
+		multissid)
+			need="yes";
+			;;
+		*)
+			echo "sysmode $mode, no need smartip." > /dev/console
+			;;
+	esac
+
+    if [ $need = "yes" ]; then
+		echo "sysmode $mode ,start smartip." > /dev/console
+		/etc/init.d/smartip restart
+    fi
+    return 0
+}

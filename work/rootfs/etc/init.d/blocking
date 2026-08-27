@@ -1,0 +1,36 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=99
+
+init_whitelist()
+{
+	file="/proc/block/device_whitelist"
+	if [ -f "$file" ]; then
+		devices=`uci -q show antivirus_white_list | grep mask | sed $'s/\'//g'`
+
+		for line in $devices
+		do
+			len=${#line}
+			from=`expr $len - 1`
+			mask=${line:$from}
+			if [ $mask -ne '0' ]
+			then
+				echo $line
+				mac=`echo $line | cut -d \. -f 2 | sed 's/../&:/g; s/.$//'`
+				echo $mac
+				echo A $mac $mask > /proc/block/device_whitelist
+			fi
+		done
+	fi
+}
+
+start() {
+	init_whitelist
+	return 0
+}
+
+stop() {
+	
+	return 0
+}

@@ -1,0 +1,237 @@
+#!/bin/sh
+. /lib/functions.sh
+. /lib/wifi/qcawificfg80211.sh
+. /lib/debug/dbg
+. /lib/wifi/qca_wlan_var.sh
+
+DEV_NUM=2
+
+wifi_firm_info(){
+	local mac=""
+	local cfgMac=""
+	local change_flag=""
+	local wps_pin=""
+	local ssid=""
+    local sysmode=`uci get sysmode.sysmode.mode`
+	local wifi_pwd=`getfirm WIRELESS_KEY`
+
+	get_wlan_ini FEATURE_TRIBAND
+	if [ "${FEATURE_TRIBAND}" = "y" ]; then
+		DEV_NUM=3
+	fi
+
+    if [ "$sysmode" = "multissid" ];then
+        local wps_state=2
+        local suffix
+        suffix=$(getfirm MAC|cut -d "-" -f 5,6 | sed 's/-//g'|tr 'a-f' 'A-F')
+        for i in `seq 1 4`; do
+            if [ -z "$(config_get ath0${i} wps_pin)" ]; then
+                if [ -z "$wps_pin" ]; then
+                    wps_pin="$(getfirm PIN)"
+                fi
+
+                if [ -z "$ssid" ]; then
+                    ssid="$(getfirm SSID)"
+                fi
+
+                if [ $i == 1 ]; then
+                    uci set wireless.ath0${i}.ssid="${ssid}_${suffix}"
+                    uci set wireless.ath1${i}.ssid="${ssid}_${suffix}_5G"
+                else
+                    uci set wireless.ath0${i}.ssid="${ssid}_${suffix}_${i}"
+                    uci set wireless.ath1${i}.ssid="${ssid}_${suffix}_5G_${i}"
+                fi
+
+                if [ -z "$wifi_pwd" ]; then
+                    wifi_pwd=${wps_pin}
+                fi
+
+                uci set wireless.ath0${i}.wps_pin=${wps_pin}
+                uci set wireless.ath0${i}.wps_state=${wps_state}
+                uci set wireless.ath0${i}.encryption="psk"
+                uci set wireless.ath0${i}.psk_key=${wifi_pwd}
+                uci set wireless.ath1${i}.wps_pin=${wps_pin}
+                uci set wireless.ath1${i}.wps_state=${wps_state}
+                uci set wireless.ath1${i}.encryption="psk"
+                uci set wireless.ath1${i}.psk_key=${wifi_pwd}
+            fi
+        done
+        change_flag="1"
+    else
+        for i in $(seq $DEV_NUM); do
+            if [ -z "$(config_get ath$(($i-1)) wps_pin)" ]; then
+                if [ -z "$wps_pin" ]; then
+                    wps_pin="$(getfirm PIN)"
+                fi
+                if [ -z "$wifi_pwd" ]; then
+                    wifi_pwd=${wps_pin}
+                fi
+                if [ "$(config_get ath$(($i-1)) device)" = "wifi$(($i-1))" ]; then
+                    uci set wireless.ath$(($i-1)).wps_pin=${wps_pin}
+                    uci set wireless.ath$(($i-1)).encryption="psk"
+                    uci set wireless.ath$(($i-1)).psk_key=${wifi_pwd}
+                    uci set wireless.ath$(($i-1)).wps_state=2
+                    change_flag="1"
+                fi
+
+		#MultiSSID index1
+		if [ "$(config_get ath$(($i-1))7 device)" = "wifi$(($i-1))" ]; then
+			uci set wireless.ath$(($i-1)).wps_pin=${wps_pin}
+			uci set wireless.ath$(($i-1))7.encryption="psk"
+			uci set wireless.ath$(($i-1))7.psk_key=${wifi_pwd}
+			uci set wireless.ath$(($i-1)).wps_state=2
+			change_flag="1"
+		fi
+                #default security of guest network is none.
+                if [ "$(config_get ath$(($i-1))1 device)" = "wifi$(($i-1))" ]; then
+                    if [ -z "$(getfirm WIRELESS_KEY)" ]; then
+                        uci set wireless.ath$(($i-1))1.encryption="none"
+                    else
+                        uci set wireless.ath$(($i-1))1.encryption="psk"
+                        uci set wireless.ath$(($i-1))1.psk_version="rsn"
+                        uci set wireless.ath$(($i-1))1.psk_key=${wifi_pwd}
+                    fi
+                    change_flag="1"
+                fi
+                #default security of iot network is wpa2.
+                if [ "$(config_get ath$(($i-1))5 device)" = "wifi$(($i-1))" ]; then
+                    uci set wireless.ath$(($i-1))5.encryption="psk"
+                   uci set wireless.ath$(($i-1))5.psk_cipher="aes"
+                   uci set wireless.ath$(($i-1))5.psk_version="rsn"
+                   uci set wireless.ath$(($i-1))5.psk_key=${wifi_pwd}
+                   change_flag="1"
+                fi
+            fi
+        done
+    fi
+
+	local idx=0
+	local mac_5g="" flag_5g2=0
+	local mac="$(getfirm MAC)"
+
+	cd /sys/class/net/
+	[ -d wifi0 ] || load_qcawificfg80211
+	for dev in $(ls -d wifi* 2>$STDOUT); do
+		case "$(cat ${dev}/hwcaps)" in
+			*11bgn) mode_11=bgn;band="2g";;
+			*11abgn) mode_11=bgn;band="2g";;
+			*11an) mode_11=an_5;band="5g";;
+			*11an/ac) mode_11=anac_5;band="5g";;
+			*11abgn/ac) mode_11=anac_5;band="5g";;
+			*11bgn/ax) mode_11=bgnax;band="2g";;                              
+			*11an/ac/ax) mode_11=anacax_5;band="5g";; 
+		esac
+		
+		if [ "${FEATURE_TRIBAND}" = "y" -a "$band" = "5g" ]; then
+			if [ "$flag_5g2" = "0" ]; then
+				flag_5g2=1
+			else
+				band="5g_2"
+			fi
+		fi
+		
+		cfgMac="$(config_get wifi${idx} macaddr)"
+		case $band in
+			2g) mac=`mac_addr 2 $mac`;;
+			5g) mac=`mac_addr 2 $mac`;;
+			5g_2) mac=`mac_addr 2 $mac`;;
+			*) ;;
+		esac
+		mac="$(echo $mac | tr 'a-f' 'A-F')"
+		if [ -z "$cfgMac" ]; then
+			uci set wireless.wifi${idx}.macaddr=$mac
+			change_flag="1"
+		elif [ "$mac" != "$cfgMac" ]; then
+			uci set wireless.wifi${idx}.macaddr=$mac
+			change_flag="1"
+		else
+			:
+		fi
+		if [ -z "$(config_get wifi${idx} band)" -o "$(config_get wifi${idx} band)" != ${band} ] || [ "$(uci get factory.random_ssid.enable)" = "yes" ]; then
+			uci set wireless.wifi${idx}.hwmode=${mode_11}
+			uci set wireless.wifi${idx}.band=${band}
+			change_flag="1"
+			if [ -z "$ssid" ]; then
+				ssid="$(getfirm SSID)"
+			fi
+			local suffix
+			suffix=$(getfirm MAC|cut -d "-" -f 5,6 | sed 's/-//g'|tr 'a-f' 'A-F')
+
+			if [ "${FEATURE_TRIBAND}" = "n" ]; then
+				[ "$band" = "5g" ] && suffix="${suffix}_${band//g/G}"
+			else
+				[ "$band" = "5g" ] && suffix="${suffix}_5G-1"
+				[ "$band" = "5g_2" ] && suffix="${suffix}_5G-2"
+			fi
+			
+            #Only when it is router or ap mode, wireless needs ssid pre-configuration.
+            [ "$sysmode" = "router" -o "$sysmode" = "ap" -o "$sysmode" = "repeater" ] && {
+                if [ "$(config_get ath${idx} device)" = "wifi${idx}" ]; then
+                    uci set wireless.ath${idx}.ssid="${ssid}_${suffix}"
+                    #uci set wireless.ath${idx}.ssid="${ssid}_HOME_${band//g/G}"
+                fi
+                if [ "$(config_get ath${idx}1 device)" = "wifi${idx}" ]; then
+                    uci set wireless.ath${idx}1.ssid="${ssid}_Guest_${suffix}"
+                    #uci set wireless.ath${idx}1.ssid="${ssid}_GUEST_${band//g/G}"
+                fi
+                if [ "$(config_get ath${idx}5 device)" = "wifi${idx}" ]; then
+                    uci set wireless.ath${idx}5.ssid="${ssid}_IoT_${suffix}"
+                fi
+                if [ "$(config_get ath${idx}7 device)" = "wifi${idx}" ]; then
+                    uci set wireless.ath${idx}7.ssid="${ssid}_MultiSSID_${suffix}"
+                fi
+            }
+		elif [ -z "$(config_get ath${idx}5 encryption)" -o -z "$(config_get ath${idx}5 psk_key)" ]; then
+			change_flag="1"
+
+			if [ -z "$wps_pin" ]; then
+				wps_pin="$(getfirm PIN)"
+			fi
+			if [ -z "$wifi_pwd" ]; then
+				wifi_pwd=${wps_pin}
+			fi
+			#default security of iot network is wpa2.
+			if [ "$(config_get ath${idx}5 device)" = "wifi${idx}" ]; then
+				uci set wireless.ath${idx}5.encryption="psk"
+				uci set wireless.ath${idx}5.psk_cipher="aes"
+				uci set wireless.ath${idx}5.psk_version="rsn"
+				uci set wireless.ath${idx}5.psk_key=${wifi_pwd}
+			fi
+
+			if [ -z "$ssid" ]; then
+				ssid="$(getfirm SSID)"
+			fi
+			local suffix
+			suffix=$(getfirm MAC|cut -d "-" -f 5,6 | sed 's/-//g'|tr 'a-f' 'A-F')
+
+			[ "$band" = "5g" ] && suffix="${suffix}_${band//g/G}"
+			
+			if [ "$(config_get ath${idx}5 device)" = "wifi${idx}" ]; then
+				uci set wireless.ath${idx}5.ssid="${ssid}_IoT_${suffix}"
+			fi
+		fi
+		idx=$(($idx+1))
+	done
+	if [ -z "$(config_get wps model_name)" ]; then
+		local model="$(getfirm MODEL)"
+		uci set wireless.wps.model_name="${model}"
+		change_flag="1"
+	fi
+	if [ -z "$(config_get wps wps_manufacturer)" -o -z "$(config_get wps wps_manufacturer_url)" ]; then
+		local firm="$(getfirm FIRM)"
+		local website="$(getfirm WEBSITE)"
+		uci set wireless.wps.wps_manufacturer=${firm}
+		uci set wireless.wps.wps_manufacturer_url=${website}
+		change_flag="1"
+	fi
+	if [ "$change_flag" = "1" ]; then
+		if [ "$(uci get factory.factorymode.enable)" = "yes" ]; then
+			uci commit wireless
+		else
+			wifi_commit
+		fi
+	fi
+}
+
+config_load wireless
+wifi_firm_info

@@ -1,0 +1,83 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+
+. /lib/iot_security/client_isolate.sh
+
+start() {
+	local system_mode=$(uci get sysmode.sysmode.mode)
+	local isolate_enable=$(uci get iot_security.iot_security.enable)
+	local ac_dn="/proc/iot_filter/access_deny"
+	local trans_tpap_support=$(uci get profile.@trans[0].tpap -c "/etc/profile.d" -q)
+
+	if [ ${isolate_enable} = "on" ]; then
+		isolate_enable=1
+	else
+		isolate_enable=0
+	fi
+	
+	local br_lan_mac=$(cat /proc/iot_filter/br_lan_mac)
+	if [ "${br_lan_mac}" == "00:00:00:00:00:00" ]; then
+		local lan_mac=$(getfirm MAC)
+		lan_mac=${lan_mac//-/:}
+		echo $lan_mac > /proc/iot_filter/br_lan_mac
+		if [ -e $ac_dn ]; then
+			echo 4 tcp 80 > $ac_dn
+			echo 4 tcp 443 > $ac_dn
+			echo 4 tcp 20001 > $ac_dn
+			echo 4 tcp 139 > $ac_dn
+			echo 4 tcp 445 > $ac_dn
+			echo 4 tcp 21 > $ac_dn
+			echo 4 tcp 20 > $ac_dn
+			echo 4 tcp 8200 > $ac_dn
+			echo 4 tcp 2222 > $ac_dn
+			echo 4 tcp 20005 > $ac_dn
+			[ "$trans_tpap_support" == "yes" ] && echo 4 tcp 30001 > $ac_dn
+			
+			echo 4 udp 20002 > $ac_dn
+			echo 4 udp 137 > $ac_dn
+			echo 4 udp 138 > $ac_dn
+			
+			echo 6 tcp 80 > $ac_dn
+			echo 6 tcp 443 > $ac_dn
+			echo 6 tcp 20001 > $ac_dn
+			echo 6 tcp 139 > $ac_dn
+			echo 6 tcp 445 > $ac_dn
+			echo 6 tcp 21 > $ac_dn
+			echo 6 tcp 20 > $ac_dn
+			echo 6 tcp 8200 > $ac_dn
+			echo 6 tcp 2222 > $ac_dn
+			echo 6 tcp 20005 > $ac_dn
+			[ "$trans_tpap_support" == "yes" ] && echo 6 tcp 30001 > $ac_dn
+			
+			echo 6 udp 20002 > $ac_dn
+			echo 6 udp 137 > $ac_dn
+			echo 6 udp 138 > $ac_dn
+		fi		
+	fi
+	
+	# check client isolate flag
+	local cur_isolate_flag=$(cat /proc/iot_filter/iot_isolate)
+	if [ "${system_mode}" == "router" ]; then
+		if [ "${cur_isolate_flag}" != "${isolate_enable}" ]; then
+			echo $isolate_enable > /proc/iot_filter/iot_isolate
+		fi
+	else
+		if [ "${cur_isolate_flag}" != "0" ]; then
+			echo 0 > /proc/iot_filter/iot_isolate
+		fi
+	fi
+
+	# check client isolate list
+	client_isolate_config_all $system_mode $isolate_enable
+}
+
+stop(){
+	clear_tmp_file
+	client_isolate_flush
+}
+
+restart(){
+	stop
+	start
+}

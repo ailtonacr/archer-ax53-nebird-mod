@@ -1,0 +1,79 @@
+#!/bin/sh /etc/rc.common
+
+. /lib/wifi/qcawificfg80211.sh
+. /lib/wifi/qca_wlan_var.sh
+
+START=44
+STOP=90
+
+SERVICE_DAEMONIZE=1
+SERVICE_WRITE_PID=1
+
+
+wifi_led_flick() {
+	get_wlan_ini FEATURE_TRIBAND
+
+	hz=2
+	sleeptime=`expr 1000000 / $hz / 2`
+	while true
+	do
+		ledcli WIFI2G_ON
+		ledcli WIFI5G_ON
+		if [ "${FEATURE_TRIBAND}" = "y" ]; then
+			ledcli WIFI5G_2_ON
+		fi
+		usleep $sleeptime
+		ledcli WIFI2G_OFF
+		ledcli WIFI5G_OFF
+		if [ "${FEATURE_TRIBAND}" = "y" ]; then
+			ledcli WIFI5G_2_OFF
+		fi
+		usleep $sleeptime
+	done
+}
+
+start() {
+	sleep 2
+	echo "========wireless init sleep 2s========="
+	#echo 3 > /proc/sys/vm/drop_caches
+    
+	if [ "$(/sbin/is_cal)" = "true" ]; then
+		/sbin/wifi default &> /dev/null
+		/sbin/wifi_firm
+		/sbin/wifi_check_country
+		/sbin/wifi
+	else
+		# the art procedure has been moved advance for 32M DDR product.
+		# because art needs more memory than it own when finish initialization.
+		#switch_link_up
+		#cd /usr/sbin/
+		#/etc/init.d/art start
+		#cd /
+		echo "wireless do nothing"
+		wifi_led_flick &
+		ftm_qcawificfg80211
+	fi
+	return 0
+}
+
+restart() {
+	/sbin/wifi
+	return 0
+}
+
+shutdown() {
+	killall -9 hostapd
+	# do not call wifi down!
+	#/sbin/wifi down
+	return 0
+}
+
+stop() {
+	/sbin/wifi down
+	return 0
+}
+
+reload() {
+	/sbin/wifi reload
+	return 0
+}

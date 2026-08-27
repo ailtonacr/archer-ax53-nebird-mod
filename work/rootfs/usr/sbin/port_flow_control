@@ -1,0 +1,75 @@
+#!/bin/sh
+# Copyright(c) 2022 Shenzhen TP-LINK Technologies Co.Ltd.
+# file     port_flow_control
+# brief    
+# version  1.0.0
+# date     20Aug22
+# history  arg 1.0.0, 20Jun22, Create the file.
+
+if [ $# -ne 3 ]; then
+	echo "usage:port_flow_control <interface> <fc_tx> <fc_rx>" > /dev/console
+	echo "interface: lan or wan" > /dev/console
+	echo "fc_tx/rx: 1 or 0" > /dev/console
+    exit 0
+fi
+
+local interface=$1
+local rate_duplex
+local ports=$(uci get switch.$interface.ports)
+local fc_port 
+local fc_tx=$2
+local fc_rx=$3
+local fc_val=$((fc_tx<<1|fc_rx))
+local sys_mode=$(uci get sysmode.sysmode.mode)
+
+#The switch value of flow control is not exactly the same as ASYM Pause and SYM pause
+if [ $fc_val -eq 1 ];then
+	fc_val=3
+fi
+
+case $interface in
+	"wan")
+		if [ "$sys_mode" == "ap" ]; then
+			#Let the UI get the data before disconnecting
+			sleep 1
+		fi
+		rate_duplex=$(uci get portspeed.Cap1000.current)
+		;;
+	"lan")
+		#Let the UI get the data before disconnecting
+		sleep 1
+		rate_duplex="auto"	
+		;;
+	*)
+		return
+esac 
+
+case $rate_duplex in
+	"auto")
+		mask=0x11111
+		;;
+	"1000F")
+		mask=0x10000
+		;;
+	"100F")
+		mask=0x01000
+		;;
+	"100H")
+		mask=0x00100
+		;;
+	"10F")
+		mask=0x00010
+		;;
+	"10H")
+		mask=0x00001
+		;;
+	*)
+		return
+		;;
+esac
+
+for fc_port in $ports; do
+	echo fc_mode set $fc_port $mask $fc_val > /proc/driver/rtl8367s/phy
+done
+
+

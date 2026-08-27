@@ -1,0 +1,45 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright (c) 2017 Qualcomm Technologies, Inc.
+#
+# All Rights Reserved.
+# Confidential and Proprietary - Qualcomm Technologies, Inc.
+
+START=98
+
+start_diag_app()
+{
+	# local serverip=`grep -oh "serverip.*#"  /proc/cmdline  | awk -F '#' '{print $2}'`
+	/usr/sbin/diag_socket_app -a 192.168.0.100 &
+	sleep 1
+	local pid=$(pgrep diag_socket_app)
+	local loop_cnt=0
+	while [ -z "$pid" ] && [ $loop_cnt -lt 20 ]
+	do
+		echo "!!!! no diag_socket_app, restart" > /dev/kmsg
+		/usr/sbin/diag_socket_app -a 192.168.0.100 &
+		sleep 1
+		pid=$(pgrep diag_socket_app)
+		let loop_cnt+=1
+	done
+	echo "/usr/sbin/diag_socket_app started" > /dev/kmsg
+}
+
+start() {
+	# is_ftm=`grep wifi_ftm_mode /proc/cmdline | wc -l`
+	is_ftm=`/sbin/is_cal`
+
+	[ "$is_ftm" = "false" ] && start_diag_app && {
+		local loop_cnt=0
+		local pid=$(pgrep ftm)	
+		while [ -z "$pid" ] && [ $loop_cnt -lt 20 ]
+		do
+			echo "!!!! no ftm,restart" > /dev/kmsg
+			ftm -n &
+			sleep 1
+			pid=$(pgrep ftm)
+			let loop_cnt+=1
+		done
+    }
+}
+

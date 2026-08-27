@@ -1,0 +1,28 @@
+#!/bin/sh /etc/rc.common
+
+#START=50
+
+DEBUG_OUTOUT=1
+meshd_echo() {
+	if [ "$DEBUG_OUTOUT" -gt 0 ]; then
+		echo "${1}: ""$2"> /dev/console
+	fi
+}
+
+SERVICE_PATH="/usr/bin/meshd"
+start()
+{
+	${SERVICE_PATH} &
+}
+
+stop()
+{
+	meshd_echo meshd "stopping"
+	local meshd_pid=`ps|grep ${SERVICE_PATH}|grep -v 'grep'|awk '{print $1}'`
+	meshd_echo meshd "$meshd_pid"
+	if [ -n "$meshd_pid" ];then
+		for pid in $meshd_pid;do
+			kill -15 "$pid"
+		done
+	fi
+}

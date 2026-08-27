@@ -1,0 +1,25 @@
+config global '2g'
+    option enable    'off'
+    option calendar  ''
+    option active 'no'
+    option next_time 'off'
+
+config global '5g'
+    option enable    'off'
+    option calendar  ''
+    option active 'no'
+    option next_time 'off'
+
+config global '52g'
+    option enable    'off'
+    option calendar  ''
+    option active 'no'
+
+config global 'set'
+    option enable    'off'
+    option has_convert 'no'
+
+config global 'stat'
+    option active_start_time "0"
+    option wifi_schedule_duration "0"
+    config has_set_wifi_schedule "false"

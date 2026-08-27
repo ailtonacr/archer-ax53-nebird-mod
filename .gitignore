@@ -1,7 +1,7 @@
 tmp/
 /*.bin
 squashfs-root/
-rootfs/
+#rootfs/
 bin
 /*.img
 vendor/mtd-utils/mtd-utils-1.5.1/

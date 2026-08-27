@@ -1,0 +1,32 @@
+#!/bin/sh
+
+. /lib/functions.sh
+
+if [ "$INTERFACE" == "wan" -a "$ACTION" == "ifup" ]; then
+	config_load network 
+	config_get mac wan macaddr
+	ifname=$(uci get network.wan.ifname)
+	
+	for eth in ${ifname}
+	do
+		if [ ${eth:0:3} == "eth" ]; then
+			vid=${eth#*.}
+			[ -n "$vid" ] && {
+				echo set 16 "$mac" "$vid" > /proc/driver/rtl8367s/lut
+			}
+		fi
+	done
+elif  [ "$INTERFACE" == "lan" -a "$ACTION" == "ifup" ]; then
+	ifname=$(uci get network.lan.ifname)
+	mac=$(getfirm MAC)
+	
+	for eth in ${ifname}
+	do
+		if [ ${eth:0:3} == "eth" ]; then
+			vid=${eth#*.}
+			[ -n "$vid" ] && {
+				echo set 16 "$mac" "$vid" > /proc/driver/rtl8367s/lut
+			}
+		fi
+	done
+fi
