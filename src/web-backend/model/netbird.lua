@@ -21,7 +21,10 @@ end
 SETTINGS = "/tp_data/netbird/settings"
 CTL      = "/sbin/netbird-ctl"
 
--- settings keys the UI may read/write, with their type + default
+-- settings keys the UI may read/write, with their type + default.
+-- `enrolled` is runtime state: readable by the UI, but writable only through
+-- set_internal_settings(). Keeping it readonly here prevents a browser from
+-- forging enrollment state while still allowing the backend to persist it.
 KEYS = {
     enable                = { kind = "bool", default = "0" },
     enrolled              = { kind = "bool", default = "0", readonly = true },
@@ -92,11 +95,12 @@ local function valid_int(v, lo, hi)
     return n ~= nil and n >= lo and n <= hi
 end
 
--- validate a table of candidate settings; returns sanitized subset or nil,err
-function sanitize(cand)
+-- Validate a table of candidate settings. readonly keys are ignored for normal
+-- UI writes and accepted only for trusted internal state transitions.
+local function sanitize(cand, allow_readonly)
     local out = {}
     for k, spec in pairs(KEYS) do
-        if not spec.readonly and cand[k] ~= nil then
+        if cand[k] ~= nil and (allow_readonly or not spec.readonly) then
             local v = cand[k]
             local ok
             if spec.kind == "bool" then
@@ -104,14 +108,17 @@ function sanitize(cand)
                 ok = valid_bool(v)
                 if ok then out[k] = v end
             elseif spec.kind == "url" then
+                v = tostring(v or "")
                 ok = valid_url(v)
                 if ok then out[k] = v end
             elseif spec.kind == "name" then
+                v = tostring(v or "")
                 ok = valid_name(v)
-                if ok then out[k] = v or "" end
+                if ok then out[k] = v end
             elseif spec.kind == "cidr" then
+                v = tostring(v or "")
                 ok = valid_cidr(v)
-                if ok then out[k] = v or "" end
+                if ok then out[k] = v end
             elseif spec.kind == "int" then
                 ok = valid_int(v, 1, 65535)
                 if ok then out[k] = tostring(v) end
@@ -122,11 +129,7 @@ function sanitize(cand)
     return out
 end
 
-function set_settings(cand)
-    local upd, err = sanitize(cand)
-    if not upd then return nil, err end
-    local cur = read_settings()
-    for k, v in pairs(upd) do cur[k] = v end
+local function write_settings(cur)
     local lines = {}
     for k, spec in pairs(KEYS) do
         lines[#lines + 1] = k .. "=" .. (cur[k] or spec.default)
@@ -138,6 +141,36 @@ function set_settings(cand)
     end
     nixio.fs.chmod(SETTINGS, 384) -- 0600
     return get_settings()
+end
+
+function set_settings(cand)
+    local upd, err = sanitize(cand or {}, false)
+    if not upd then return nil, err end
+    local cur = read_settings()
+    for k, v in pairs(upd) do cur[k] = v end
+
+    -- A local routing permission without a CIDR would create unnecessarily
+    -- broad firewall forwarding. Require the CIDR whenever routing is enabled.
+    local advertise_lan = cur.advertise_lan or KEYS.advertise_lan.default
+    local advertise_cidr = cur.advertise_cidr or KEYS.advertise_cidr.default
+    if advertise_lan == "1" and advertise_cidr == "" then
+        return nil, "advertise_cidr required when LAN routing is enabled"
+    end
+
+    return write_settings(cur)
+end
+
+-- Trusted backend-only state transition. Only `enrolled` and `enable` may be
+-- written here; all other configuration must pass through set_settings().
+function set_internal_settings(cand)
+    local allowed = {}
+    if cand and cand.enrolled ~= nil then allowed.enrolled = cand.enrolled end
+    if cand and cand.enable ~= nil then allowed.enable = cand.enable end
+    local upd, err = sanitize(allowed, true)
+    if not upd then return nil, err end
+    local cur = read_settings()
+    for k, v in pairs(upd) do cur[k] = v end
+    return write_settings(cur)
 end
 
 ----------------------------------------------------------------------------
@@ -176,8 +209,9 @@ end
 
 function control(op, keyfile)
     if op == "enroll" then
-        return run_ex("up", "--setup-key-file", keyfile, "--management-url",
-                      (get_settings().management_url))
+        -- netbird-ctl owns management URL and runtime flag construction. The
+        -- setup key remains in the temporary 0600 file and never enters argv.
+        return run_ex("up", "--setup-key-file", keyfile)
     elseif op == "start" or op == "up" then
         return run_ex("up")
     elseif op == "stop" then
