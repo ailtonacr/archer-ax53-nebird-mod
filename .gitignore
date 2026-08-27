@@ -1,0 +1,15 @@
+tmp/
+/*.bin
+squashfs-root/
+rootfs/
+bin
+/*.img
+vendor/mtd-utils/mtd-utils-1.5.1/
+vendor/squashfs/squashfs3.0/
+vendor/squashfs4/squashfs4.2/
+# Python bytecode cache
+__pycache__/
+*.py[cod]
+*$py.class
+/tmp-ubi
+/tmp-squashfs

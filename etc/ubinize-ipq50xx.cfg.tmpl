@@ -1,0 +1,28 @@
+[kernel]
+# Volume mode (other option is static)
+mode=ubi
+# Source image
+image=@PROJECT_ROOT@/tmp-ubi/kernel.itb
+# Volume ID in UBI image
+vol_id=0
+# Allow for dynamic resize
+vol_type=static
+# Volume name
+vol_name=kernel
+
+[rootfs]
+# Volume mode (other option is static)
+mode=ubi
+# Source image
+image=@PROJECT_ROOT@/tmp-ubi/rootfs.bin
+# Volume ID in UBI image
+vol_id=1
+# Allow for dynamic resize
+vol_type=dynamic
+# Volume name
+vol_name=ubi_rootfs
+
+# No explicit vol_size -- ubinize sizes this to fit the image content.
+# `df -h` on a AX53 telnet shell confirms that ubi_rootfs mounts read-only
+# with all writes going to a tmpfs overlay, not back into this volume, so
+# there's no runtime-growth headroom to reserve for.
