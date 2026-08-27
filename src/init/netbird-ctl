@@ -31,8 +31,13 @@ up)
     nb_materialize 1 >/dev/null 2>&1 || exit 2
     nb_is_running || nb_daemon_start || exit 1
     nb_fw_access
-    run up --daemon-addr "unix://$NB_SOCK" "$@"
-    exit $?
+    # Settings are applied on every up, including enrollment. All generated
+    # flags are fixed tokens; management_url is passed as one quoted argv item.
+    run up --daemon-addr "unix://$NB_SOCK" \
+        --management-url "$(nb_mgmt_url)" $(nb_up_flags) "$@"
+    rc=$?
+    [ "$rc" -eq 0 ] || nb_fw_block
+    exit $rc
     ;;
 
 down)
@@ -57,13 +62,17 @@ restart)
     shift
     nb_ensure_settings
     nb_materialize 1 >/dev/null 2>&1 || exit 2
+    nb_is_running || nb_daemon_start || exit 1
     nb_fw_access
-    run up --daemon-addr "unix://$NB_SOCK" "$@"
-    exit $?
+    run up --daemon-addr "unix://$NB_SOCK" \
+        --management-url "$(nb_mgmt_url)" $(nb_up_flags) "$@"
+    rc=$?
+    [ "$rc" -eq 0 ] || nb_fw_block
+    exit $rc
     ;;
 
 clean)
-    # delete identity + state (keeps settings; payload partition untouched)
+    # delete identity + state (keeps settings; payload remains ephemeral)
     nb_clean
     exit 0
     ;;
