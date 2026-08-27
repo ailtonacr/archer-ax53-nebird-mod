@@ -124,9 +124,10 @@ local function write_settings(cur)
     local lines = {}
     for k, spec in pairs(KEYS) do lines[#lines + 1] = k .. "=" .. (cur[k] or spec.default) end
     fs.mkdir("/tp_data/netbird")
-    nixio.fs.chmod("/tp_data/netbird", 448)
+    -- This TP-Link nixio binding accepts chmod modes as strings, not integers.
+    nixio.fs.chmod("/tp_data/netbird", "0700")
     if not fs.writefile(SETTINGS, table.concat(lines, "\n") .. "\n") then return nil, "failed to write settings" end
-    nixio.fs.chmod(SETTINGS, 384)
+    nixio.fs.chmod(SETTINGS, "0600")
     return get_settings()
 end
 
