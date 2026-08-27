@@ -1,0 +1,23 @@
+#!/bin/sh
+# Shell entry point for the runtime NetBird CLI. The payload remains in /tmp.
+. /lib/netbird/netbird.sh
+
+case "$1" in
+    status)
+        [ -x "$NB_BIN" ] || {
+            echo "netbird: runtime payload is not available" >&2
+            exit 127
+        }
+        exec "$NB_BIN" "$@" --daemon-addr "unix://$NB_SOCK"
+        ;;
+    version|--version|help|--help)
+        [ -x "$NB_BIN" ] || {
+            echo "netbird: runtime payload is not available" >&2
+            exit 127
+        }
+        exec "$NB_BIN" "$@"
+        ;;
+    *)
+        exec /sbin/netbird-ctl "$@"
+        ;;
+esac

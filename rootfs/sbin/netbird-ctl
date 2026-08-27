@@ -1,0 +1,121 @@
+#!/bin/sh
+# netbird-ctl -- control interface for the NetBird client on TP-Link AX53.
+# Used by the LuCI backend (via fork_exec) and by /etc/init.d/netbird.
+# All mutable actions are invoked with argv (no shell interpolation of UI
+# fields); the setup key is always passed via a 0600 file, never argv/logs.
+
+. /lib/netbird/netbird.sh
+
+# run the binary WITHOUT exec so callers can add post-actions (firewall etc.)
+run() {
+    nb_materialize >/dev/null 2>&1 || return 2
+    "$NB_BIN" "$@"
+    return $?
+}
+
+case "$1" in
+daemon-ping)
+    # returns 0 when the daemon socket answers
+    [ -S "$NB_SOCK" ] || exit 1
+    nb_payload_status
+    [ $? -eq "$NB_ST_READY" ] || exit 1
+    "$NB_BIN" status -j --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1
+    exit $?
+    ;;
+
+up)
+    # self-contained connect: ensure daemon, apply firewall, connect/enroll
+    # (manual action -> force a fresh payload download attempt)
+    shift
+    nb_ensure_settings
+    nb_materialize 1 >/dev/null 2>&1 || exit 2
+    nb_is_running || nb_daemon_start || exit 1
+    nb_fw_access
+    run up --daemon-addr "unix://$NB_SOCK" "$@"
+    exit $?
+    ;;
+
+down)
+    # disconnect (daemon stays running)
+    run down --daemon-addr "unix://$NB_SOCK"
+    rc=$?
+    nb_fw_block
+    exit $rc
+    ;;
+
+stop)
+    # full stop: disconnect + stop daemon
+    run down --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1
+    nb_fw_block
+    nb_daemon_stop
+    exit 0
+    ;;
+
+restart)
+    run down --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1
+    nb_fw_block
+    shift
+    nb_ensure_settings
+    nb_materialize 1 >/dev/null 2>&1 || exit 2
+    nb_fw_access
+    run up --daemon-addr "unix://$NB_SOCK" "$@"
+    exit $?
+    ;;
+
+clean)
+    # delete identity + state (keeps settings; payload partition untouched)
+    nb_clean
+    exit 0
+    ;;
+
+status)
+    # sanitized JSON for the backend: fall back to a clear "down" blob
+    nb_payload_status
+    if [ -S "$NB_SOCK" ] && [ $? -eq "$NB_ST_READY" ]; then
+        "$NB_BIN" status -j --daemon-addr "unix://$NB_SOCK" 2>/dev/null \
+            || printf '%s\n' '{"daemonStatus":"Stopped","cliVersion":"","daemonVersion":"","management":{"url":"","connected":false,"error":"failed to query daemon"},"signal":{"url":"","connected":false},"peers":{"total":0,"connected":0},"netbirdIp":"","publicKey":"","fqdn":""}'
+    else
+        printf '%s\n' '{"daemonStatus":"Stopped","cliVersion":"","daemonVersion":"","management":{"url":"","connected":false,"error":"daemon not running"},"signal":{"url":"","connected":false},"peers":{"total":0,"connected":0},"netbirdIp":"","publicKey":"","fqdn":""}'
+    fi
+    exit 0
+    ;;
+
+log)
+    n="${2:-100}"
+    case "$n" in ''|*[!0-9]*) n=100 ;; esac
+    [ "$n" -gt 500 ] && n=500
+    tail -n "$n" "$NB_LOG" 2>/dev/null
+    ;;
+
+settings)
+    # dump our settings (no secrets) as key=value
+    nb_ensure_settings
+    sed -n 's/^\(enable\|enrolled\|management_url\|hostname\|disable_dns\|disable_firewall\|disable_client_routes\|disable_server_routes\|disable_ipv6\|network_monitor\|advertise_lan\|advertise_cidr\|wireguard_port\)=/\1=/p' \
+        "$NB_SETTINGS_FILE" 2>/dev/null
+    ;;
+
+payload-version)
+    echo "$NB_VERSION"
+    ;;
+
+payload-status)
+    # Cheap polling query: no hash, network, decode, or payload mutation.
+    nb_payload_status
+    rc=$?
+    nb_state_name "$rc"
+    exit "$rc"
+    ;;
+
+payload-verify)
+    # Explicit deep integrity check. Never called by normal UI polling.
+    nb_payload_verify
+    rc=$?
+    nb_state_name "$rc"
+    exit "$rc"
+    ;;
+
+*)
+    echo "usage: $0 {up|down|stop|restart|clean|status|log|settings|payload-version|payload-status|payload-verify|daemon-ping}" >&2
+    exit 1
+    ;;
+esac

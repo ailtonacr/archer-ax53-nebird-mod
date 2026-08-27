@@ -1,0 +1,90 @@
+#!/bin/sh /etc/rc.common
+
+START=55
+STOP=10
+
+PROG=/usr/sbin/dropbear
+PIDFILE=/var/run/devssh.pid
+HOSTKEY=/tmp/devssh_ecdsa_host_key
+PORT=2222
+
+get_lan_ip()
+{
+    local ip
+
+    ip="$(uci -q get network.lan.ipaddr)"
+
+    if [ -z "$ip" ]; then
+        ip="$(
+            ifconfig br-lan 2>/dev/null |
+            sed -ne 's/.* addr: *\([0-9.]*\).*/\1/p' |
+            head -n1
+        )"
+    fi
+
+    echo "$ip"
+}
+
+lan_is_ready()
+{
+    local ip="$1"
+
+    ifconfig br-lan 2>/dev/null |
+        grep -q "$ip"
+}
+
+start()
+{
+    local lan_ip
+    local retries=30
+
+    while [ "$retries" -gt 0 ]; do
+        lan_ip="$(get_lan_ip)"
+
+        if [ -n "$lan_ip" ] && lan_is_ready "$lan_ip"; then
+            break
+        fi
+
+        retries=$((retries - 1))
+        sleep 1
+    done
+
+    if [ -z "$lan_ip" ] || ! lan_is_ready "$lan_ip"; then
+        logger -t devssh "LAN not ready; development SSH not started"
+        return 1
+    fi
+
+    if [ ! -s "$HOSTKEY" ]; then
+        /usr/bin/dropbearkey \
+            -t ecdsa \
+            -f "$HOSTKEY" \
+            -s 521 \
+            >/dev/null 2>&1
+    fi
+
+    if [ ! -s "$HOSTKEY" ]; then
+        logger -t devssh "Unable to generate host key"
+        return 1
+    fi
+
+    logger -t devssh "Starting development SSH on ${lan_ip}:${PORT}"
+
+    "$PROG" \
+        -P "$PIDFILE" \
+        -p "${lan_ip}:${PORT}" \
+        -r "$HOSTKEY" \
+        -s \
+        -g \
+        -L \
+        -j \
+        -k \
+        -6
+}
+
+stop()
+{
+    if [ -f "$PIDFILE" ]; then
+        kill "$(cat "$PIDFILE")" 2>/dev/null || true
+        rm -f "$PIDFILE"
+    fi
+}

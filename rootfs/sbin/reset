@@ -7,5 +7,6 @@ nvrammanager -e -p ag-config
 nvrammanager -e -p  $favicon_partition
 nvrammanager -e -p  $logo_partiton
 lua -e 'require("luci.controller.admin.firmware").config_factory()'
+rm -rf /tp_data/netbird
 sleep 3
 reboot -f 
