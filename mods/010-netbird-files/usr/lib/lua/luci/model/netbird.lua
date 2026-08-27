@@ -6,7 +6,7 @@ KEYS={enable={kind="bool",default="0"},enrolled={kind="bool",default="0",readonl
 local function read_settings() local t={}; local raw=fs.readfile(SETTINGS) or ""; for line in raw:gmatch("[^\r\n]+") do local k,v=line:match("^([%w_]+)=(.*)$"); if k then t[k]=(v or ""):gsub("%s+$","") end end; return t end
 function get_settings() local c,o=read_settings(),{}; for k,s in pairs(KEYS) do o[k]=c[k] or s.default end; return o end
 local function vb(v)return v=="0" or v=="1" end
-local function vu(v) if v==nil or v=="" then return true end; return v:match("^https?://[%w%.%-]+(%.%w+)(:%d+)?(/[%w%-%.%_~/#%%&%?%=%+%,]*)?$")~=nil end
+local function vu(v) if v==nil or v=="" then return true end; if #v>2048 or v:find("%s") then return false end; local s,a=v:match("^(https?)://([^/]+)"); if not s or not a or a=="" then return false end; local h,p=a:match("^([^:]+):(%d+)$"); if not h then h=a; if a:find(":",1,true) then return false end end; if not h:match("^[%w%.%-]+$") or h:sub(1,1)=="." or h:sub(-1)=="." or h:find("..",1,true) or not h:find(".",1,true) then return false end; if p then local n=tonumber(p); if not n or n<1 or n>65535 then return false end end; local pre=s.."://"..a; local r=v:sub(#pre+1); return r=="" or r:sub(1,1)=="/" end
 local function vn(v)return v~=nil and #v<=64 and v:match("^[%w%.%-_]*$")~=nil end
 local function vc(v) if v==nil or v=="" then return true end; local ip,p=v:match("^(%d+%.%d+%.%d+%.%d+)/(%d+)$"); if not ip then return false end; for o in ip:gmatch("%d+") do local n=tonumber(o); if not n or n>255 then return false end end; p=tonumber(p); return p and p>=0 and p<=32 end
 local function vi(v,l,h)local n=tonumber(v); return n and n>=l and n<=h end
