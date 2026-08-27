@@ -49,7 +49,30 @@ end
 local function valid_bool(v) return v == "0" or v == "1" end
 local function valid_url(v)
     if v == nil or v == "" then return true end
-    return v:match("^https?://[%w%.%-]+(%.%w+)(:%d+)?(/[%w%-%.%_~/#%%&%?%=%+%,]*)?$") ~= nil
+    if #v > 2048 or v:find("%s") then return false end
+
+    -- Lua patterns are not regular expressions: repetition modifiers cannot be
+    -- used to make capture groups optional. Parse the URL in simple stages so
+    -- ordinary values such as https://netbird.ailton.dev.br are accepted.
+    local scheme, authority = v:match("^(https?)://([^/]+)")
+    if not scheme or not authority or authority == "" then return false end
+
+    local host, port = authority:match("^([^:]+):(%d+)$")
+    if not host then
+        host = authority
+        if authority:find(":", 1, true) then return false end
+    end
+    if not host:match("^[%w%.%-]+$") then return false end
+    if host:sub(1, 1) == "." or host:sub(-1) == "." or host:find("..", 1, true) then return false end
+    if not host:find(".", 1, true) then return false end
+    if port then
+        local n = tonumber(port)
+        if not n or n < 1 or n > 65535 then return false end
+    end
+
+    local prefix = scheme .. "://" .. authority
+    local rest = v:sub(#prefix + 1)
+    return rest == "" or rest:sub(1, 1) == "/"
 end
 local function valid_name(v) return v ~= nil and #v <= 64 and v:match("^[%w%.%-_]*$") ~= nil end
 local function valid_cidr(v)
