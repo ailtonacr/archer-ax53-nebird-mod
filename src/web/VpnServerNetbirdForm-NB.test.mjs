@@ -8,13 +8,14 @@ const source = fs.readFileSync(new URL("./VpnServerNetbirdForm-NB.js", import.me
 
 const timers = [];
 const requests = [];
+let failNextSettings = false;
 let response = {
   code: "connected",
   settings: {
-    enrolled: "1", management_url: "https://netbird.example", advertise_cidr: "",
+    enrolled: "1", management_url: "https://netbird.example", advertise_cidr: "192.168.10.0/24",
     disable_dns: "1", disable_firewall: "1", disable_client_routes: "1",
     disable_server_routes: "1", disable_ipv6: "1", network_monitor: "0",
-    advertise_lan: "0", enable: "1",
+    advertise_lan: "1", enable: "1",
   },
   netbird: { netbirdIp: "100.64.0.1", peersConnected: 1, peersTotal: 2 },
   payload: { state: "READY" },
@@ -23,15 +24,22 @@ const context = {
   defineComponent: value => value,
   ref: value => ({ value }),
   onMounted: fn => context.mounted = fn,
-  onUnmounted: () => {},
+  onUnmounted: fn => context.unmounted = fn,
   _h: (tag, props, children) => ({ tag, props: props || {}, children: children || [] }),
-  resolveComponent: () => null,
   setInterval: fn => { timers.push(fn); return timers.length; },
   clearInterval: () => {},
   window: { confirm: () => true },
   api: { request: async (_path, body) => {
     requests.push(body.operation);
-    return body.operation === "settings_set" ? { settings: { ...body } } : response;
+    if (body.operation === "settings_set") {
+      if (failNextSettings) {
+        failNextSettings = false;
+        throw { data: { error: "invalid value for advertise_cidr" } };
+      }
+      response = { ...response, settings: { ...response.settings, ...body } };
+      return { settings: response.settings };
+    }
+    return response;
   } },
 };
 vm.runInNewContext(source, context, { filename: "VpnServerNetbirdForm-NB.js" });
@@ -46,7 +54,7 @@ function walk(node, result = []) {
     return result;
   }
   if (!node || typeof node !== "object") return result;
-  if (node.tag === "input" || node.tag === "button") result.push(node);
+  result.push(node);
   for (const child of node.children || []) walk(child, result);
   return result;
 }
@@ -55,24 +63,37 @@ function input(tree, placeholder) {
   return walk(tree).find(node => node.tag === "input" && node.props.placeholder === placeholder);
 }
 
+function hasText(tree, text) {
+  return walk(tree).some(node => typeof node.children === "string" && node.children.includes(text));
+}
+
 let cidr = input(render(), "Ex.: 192.168.10.0/24");
 cidr.props.onInput({ target: { value: "192.168." } });
-response = { ...response, settings: { ...response.settings, advertise_cidr: "10.0.0.0/24", disable_dns: "1" } };
+response = { ...response, settings: { ...response.settings, advertise_cidr: "10.0.0.0/24" } };
 for (let i = 0; i < 3; i++) await timers[0]();
 cidr = input(render(), "Ex.: 192.168.10.0/24");
 assert.equal(cidr.props.value, "192.168.", "polling must retain a partial CIDR draft");
-
-const dns = walk(render()).find(node => node.tag === "input" && node.props.type === "checkbox");
-dns.props.onChange({ target: { checked: true } });
-for (let i = 0; i < 3; i++) await timers[0]();
-assert.equal(input(render(), "Ex.: 192.168.10.0/24").props.value, "192.168.");
-assert.equal(walk(render()).find(node => node.tag === "input" && node.props.type === "checkbox").props.checked, true);
-assert.ok(walk(render()).find(node => node.tag === "button" && node.children === "Salvar" && !node.props.disabled));
 assert.equal(requests.filter(op => op === "settings_set").length, 0, "editing must not save implicitly");
 assert.equal(render().props.class, "netbird-form", "runtime updates must not restore the loading view");
+assert.equal(typeof context.window.__netbirdSaveDraft, "function", "stock modal save bridge must be registered");
+assert.equal(walk(render()).some(node => node.tag === "button" && node.children === "Salvar"), false, "sub-form must not render a duplicate Save button");
 
-await walk(render()).find(node => node.tag === "button" && node.children === "Salvar").props.onClick();
-assert.equal(requests.filter(op => op === "settings_set").length, 1, "only Save persists the draft");
-assert.ok(walk(render()).find(node => node.tag === "button" && node.children === "Salvar" && node.props.disabled));
+await context.window.__netbirdSaveDraft();
+assert.equal(requests.filter(op => op === "settings_set").length, 1, "stock footer bridge persists the draft exactly once");
+assert.equal(input(render(), "Ex.: 192.168.10.0/24").props.value, "192.168.");
 
-console.log("draft survives runtime polling");
+// Backend error envelopes used by TP-Link's request wrapper must surface the
+// real message, and a subsequent healthy polling request must clear it.
+cidr = input(render(), "Ex.: 192.168.10.0/24");
+cidr.props.onInput({ target: { value: "bad" } });
+failNextSettings = true;
+await assert.rejects(() => context.window.__netbirdSaveDraft());
+assert.equal(hasText(render(), "invalid value for advertise_cidr"), true);
+await timers[0]();
+assert.equal(hasText(render(), "invalid value for advertise_cidr"), false, "healthy polling clears stale diagnostics");
+assert.equal(input(render(), "Ex.: 192.168.10.0/24").props.value, "bad", "failed save must preserve the user's draft");
+
+context.unmounted();
+assert.equal(context.window.__netbirdSaveDraft, undefined, "save bridge must be removed on unmount");
+
+console.log("netbird form polling/save/error behavior ok");
