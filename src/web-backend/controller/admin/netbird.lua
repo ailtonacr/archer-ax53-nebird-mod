@@ -94,9 +94,6 @@ local function op_settings_set(body)
     local preview, err = model.preview_settings(cand)
     if not preview then return error_reply("bad_request", err or "invalid settings") end
 
-    -- If NetBird is enabled, stop it while the OLD settings are still on disk.
-    -- This guarantees firewall teardown uses the old CIDR before the new CIDR
-    -- is persisted, preventing stale forwarding rules after a routing change.
     local old_stopped = false
     if prev.enable == "1" then
         local stop_out, stop_rc = model.control("stop")
@@ -136,7 +133,8 @@ local function op_enroll(body)
     local tmp = "/tmp/nb-setup-key-" .. tostring(os.time()) .. "-" .. tostring(math.random(0x7fffffff))
     local lfs = require "luci.fs"
     if not lfs.writefile(tmp, key) then return error_reply("internal", "failed to stage setup key") end
-    nixio.fs.chmod(tmp, 384)
+    -- This TP-Link nixio binding expects a textual chmod mode.
+    nixio.fs.chmod(tmp, "0600")
     local out, rc = model.control("enroll", tmp)
     nixio.fs.unlink(tmp)
     if rc ~= 0 then return error_reply("enroll_failed", (out or "enrollment failed"):gsub("%s+$", "")) end
