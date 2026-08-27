@@ -1,8 +1,7 @@
-tmp/
+/tmp/
 /*.bin
 squashfs-root/
-#rootfs/
-bin
+/bin
 /*.img
 vendor/mtd-utils/mtd-utils-1.5.1/
 vendor/squashfs/squashfs3.0/
@@ -11,6 +10,13 @@ vendor/squashfs4/squashfs4.2/
 __pycache__/
 *.py[cod]
 *$py.class
+
 /tmp-ubi
+/work
 /tmp-squashfs
 /graphify-out/
+
+# Always track the full firmware rootfs/ for historical analysis,
+# overriding any other ignore rule that might match inside it.
+!/rootfs/
+!/rootfs/**

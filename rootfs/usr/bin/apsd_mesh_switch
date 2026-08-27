@@ -1,0 +1,25 @@
+#!/bin/sh
+apsd_mesh_help() {
+    echo "Apsd handler for mesh on/off"
+    echo "Usage: apsd_mesh_switch <command> [arguments...]"
+    echo "   on: start aps"
+    echo "  off:  stop aps"
+}
+apsd_mesh_on() {
+    /etc/init.d/apsd start
+}
+apsd_mesh_off() {
+    killall -SIGINT apsd
+    hyctl detach br-lan
+}
+case "$1" in
+    on)
+        apsd_mesh_on
+        ;;
+    off)
+        apsd_mesh_off
+        ;;
+    *)
+        apsd_mesh_help
+        ;;
+esac

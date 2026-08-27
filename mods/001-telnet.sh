@@ -22,41 +22,9 @@ if [ -z "${ROOTFS_DIR:-}" ]; then
   fi
 fi
 
-echo "Patching /etc/init.d/telnet to bypass SSH/password checks..."
-cat << 'EOF' > "$ROOTFS_DIR/etc/init.d/telnet"
-#!/bin/sh /etc/rc.common
-# Copyright (C) 2006-2011 OpenWrt.org
-
-START=50
-
-has_root_pwd() {
-        local pwd=$([ -f "$1" ] && cat "$1")
-              pwd="${pwd#*root:}"
-              pwd="${pwd%%:*}"
-        test -n "${pwd#[\!x]}"
-}
-
-get_root_home() {
-        local homedir=$([ -f "$1" ] && cat "$1")
-        homedir="${homedir#*:*:0:0:*:}"
-
-        echo "${homedir%%:*}"
-}
-
-has_ssh_pubkey() {
-        ( /etc/init.d/dropbear enabled 2> /dev/null && grep -qs "^ssh-" /etc/dropbear/authorized_keys ) || \
-        ( /etc/init.d/sshd enabled 2> /dev/null && grep -qs "^ssh-" "$(get_root_home /etc/passwd)"/.ssh/authorized_keys )
-}
-
-start() {
-        # Unconditionally start telnet and bind it to the standard OpenWrt shell wrapper
-        service_start /usr/sbin/telnetd -l /bin/login.sh
-}
-
-stop() {
-        service_stop /usr/sbin/telnetd
-}
-EOF
+echo "Installing /etc/init.d/telnet (stock, conditional start)..."
+mkdir -p "$ROOTFS_DIR/etc/init.d"
+cp -a "$SCRIPT_DIR/001-telnet-files/etc/init.d/telnet" "$ROOTFS_DIR/etc/init.d/telnet"
 
 # Ensure the script remains executable
 chmod +x "$ROOTFS_DIR/etc/init.d/telnet"

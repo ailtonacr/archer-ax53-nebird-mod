@@ -1,0 +1,10 @@
+{
+  "version": "0.77.1",
+  "architecture": "linux-armv6",
+  "compression": "xz",
+  "dictionary_size": 8388608,
+  "compressed_size": 9455188,
+  "compressed_sha256": "4b0648305e5f4126fa58be391e5db995447a58d867d5d290a15b2df972c58941",
+  "uncompressed_size": 39125176,
+  "uncompressed_sha256": "6cc347b741695e6664d4ba0ba7004e823a77ab0705a4de5ebe92b290623bb8e6"
+}

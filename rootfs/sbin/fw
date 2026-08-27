@@ -72,7 +72,7 @@ esac
 
 # interface for vpn
 case "$cmd" in
-    openvpn_access|openvpn_block|pptp_access|pptp_block|l2tp_access|l2tp_block|ipsec_access|ipsec_block|wireguard_access|wireguard_block|vpnc_access_accel_handle|vpnc_block_accel_handle|openvpnc_access|openvpnc_block)
+    openvpn_access|openvpn_block|pptp_access|pptp_block|l2tp_access|l2tp_block|ipsec_access|ipsec_block|wireguard_access|wireguard_block|vpnc_access_accel_handle|vpnc_block_accel_handle|openvpnc_access|openvpnc_block|netbird_access|netbird_block)
     . ${FW_LIBDIR}/tpcmd.sh
         fw_$cmd "$@"
         exit $?

@@ -1,0 +1,153 @@
+#!/usr/bin/lua
+
+--[[
+	script used to check if group-info is valid
+]]--
+
+local dbg = require "luci.tools.debug"
+local nixio = require "nixio"
+local json = require "luci.json"
+local fs = require "nixio.fs"
+local sys       = require "luci.sys"
+
+local function __check_group_gid_valid(gid_in)
+
+	if not gid_in then
+		return false
+	end
+	local i, _, p1, p2, p3, p4, p5 = string.find(gid_in, "^(%x+)-(%x+)-(%x+)-(%x+)-(%x+)$")
+
+	if i and p1 and p2 and p3 and p4 and p5 then
+		if string.len(p1) == 8 and string.len(p2) == 4 and string.len(p3) == 4 and string.len(p4) == 4 and string.len(p5) == 12 then
+			return true
+		end
+	end
+
+	return false
+
+end
+
+local function __check_group_key_valid(key_in)
+	local TEST_DROPBEAR_PRIV_KEY_FILE = "/tmp/TEST_DROPBEAR_PRIV_KEY_FILE"
+
+	if not key_in then
+		return false
+	end
+
+	if fs.access(TEST_DROPBEAR_PRIV_KEY_FILE) then
+		os.execute("rm " .. TEST_DROPBEAR_PRIV_KEY_FILE)
+	end
+
+	local key = nixio.bin.b64decode(key_in)
+	if not key then
+		return false
+	end
+
+	local f = io.open(TEST_DROPBEAR_PRIV_KEY_FILE, "w")
+	assert(key)
+	f:write(key)
+	f:close()
+
+	local buf = sys.exec("dropbearkey -y -f " .. TEST_DROPBEAR_PRIV_KEY_FILE)
+	local lines = buf:split('\n')
+	local key_line
+	local key_b64
+	for _, line in ipairs(lines) do
+		key_b64 = line:match("^ssh%-rsa%s+(%S+)")
+		if key_b64 then
+			key_line = line
+			break
+		end
+	end
+
+	if not key_line then
+		return false
+	else
+		return true
+	end
+
+end
+
+local function preconf_check(params)
+
+	if not params or not params.key or not params.gid then
+		return false, "invalid input"
+	end
+
+	if __check_group_gid_valid(params.gid) == false then
+		return false, "gid check failed"
+	end
+
+	return __check_group_key_valid(params.key)
+end
+
+
+local function read_group_from_file(file_name)
+
+	local f
+
+	if not file_name then
+		dbg.print("invalid input file name")
+		return false, "invalid input file name"
+	end
+
+	if not fs.access(file_name) then
+		dbg.print("file not exist")
+		return false, "file not exist"
+	end
+
+	f = io.open(file_name, "r")
+	if not f then
+		dbg.print("open file error")
+		return false, "open file error"
+	end
+
+	local data = json.decode(f:read("*a"))
+	f:close()
+
+	return data or {}
+end
+
+local function write_check_group_result(params, file_name)
+	local val = "fail"
+	if params then
+		val = "success"
+	end
+	
+	local f = io.open(file_name, "w")
+	if not f then
+		return false
+	end
+	
+	f:write(val)
+	f:close()
+	
+end
+
+local function is_group_valid(group)
+	local ret
+	if not group or not group.gid or not group.key then
+		dbg.print("group is not valid")
+		return false
+	end
+	ret = preconf_check(group)
+	return ret
+end
+
+
+local input_file = arg[1]
+local output_file = arg[2]
+
+if not input_file or not output_file then
+	dbg.print(" Usage: check_group [input_file] [output_file]")
+	return
+end
+
+local group_read = read_group_from_file(input_file)
+local is_valid = is_group_valid(group_read, output_file)
+--dbg.print(is_valid)
+if is_valid then
+	write_check_group_result(true, output_file)
+else
+	write_check_group_result(false, output_file)
+end
