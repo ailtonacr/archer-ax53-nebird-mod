@@ -1,0 +1,10 @@
+#!/bin/sh
+# Copyright (C) 2006-2010 OpenWrt.org
+# Copyright (C) 2010 Vertical Communications
+
+do_mount_tp_data() {
+	/etc/tp_data.sh mount_tpdata
+}
+
+boot_hook_add preinit_mount_root do_mount_tp_data
+

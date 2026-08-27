@@ -1,0 +1,32 @@
+#!/bin/sh
+# Copyright(c) 2022 Shenzhen TP-LINK Technologies Co.Ltd.
+# file     jumbo_frame
+# brief    
+# author
+# version  1.0.0
+# date     28Dec22
+# history  arg 1.0.0, 28Dec22, fb, Create the file.
+
+if [ $# -ne 1 ]; then
+	echo "usage:jumbo_frame <state>" > /dev/console
+	echo "state: on or off" > /dev/console
+	exit 0
+fi
+
+local state=$1
+local length_switch
+local leghth_gmac
+
+if [ x"$state" = x"on" ];then
+	#switch: default;	GMAC: 9014
+	length_switch=16368
+	length_gmac=0x2336
+else
+	#switch: limited;	GMAC: default
+	length_switch=1536
+	length_gmac=0x5F6
+fi
+
+echo maxpktlen set 0 $length_switch > /proc/driver/rtl8367s/port
+echo 0 > /sys/ssdk/dev_id
+ssdk_sh port framemaxsize set 2 $length_gmac

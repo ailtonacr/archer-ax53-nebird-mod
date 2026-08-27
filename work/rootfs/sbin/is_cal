@@ -1,0 +1,105 @@
+#!/usr/bin/lua
+
+local DEBUG = 0
+local ART_VIRT = "/tmp/virtual_art.bin"
+local uci = require "luci.model.uci"
+
+local read_size = 64
+local cal_2g_offset = 0x1000
+local cal_5g_offset = 0x5000
+local cal_data_size = 0x2f20
+local file = nil
+local file_2g = nil
+local file_5g = nil
+local read_caldata_file = "false"
+local caldata_file_2g = "/lib/firmware/IPQ5018/caldata.bin"
+local caldata_file_5g = "/lib/firmware/qcn6122/caldata_1.bin"
+local dbg = nil
+local cal_2g = 0
+local cal_5g = 0
+local uci_r = uci.cursor()
+local factory_mode = uci_r:get("factory", "factorymode", "enable") or "no"
+
+
+if DEBUG == 1 then
+    dbg = require "luci.tools.debug"
+end
+
+local function LOGD(msg)
+    if DEBUG == 1 and dbg then
+        dbg.print("ART: " .. msg)
+    end
+end
+
+local function open_mtdpart()
+    local fp = nil
+    local mtd_art = io.popen("cat /proc/mtd | grep 'ART' | awk -F':' '{print $1}'")
+    LOGD("using mtd")
+    if mtd_art then
+        fp = io.open("/dev/" .. string.gsub(mtd_art:read("*all"),"\n",""), "r")
+        mtd_art:close()
+    end
+    return fp
+end
+
+if  (#arg >= 1) then
+    file = io.open(arg[1], "r")
+    LOGD("using ".. arg[1])
+elseif (factory_mode == "yes") then
+    LOGD("factory mode: 1")
+    file = open_mtdpart()
+else
+    file = io.open(ART_VIRT, "r")
+    if not file then
+        file_2g = io.open(caldata_file_2g, "r")
+        file_5g = io.open(caldata_file_5g, "r")
+        if file_2g == nil or file_5g == nil  then
+            file = open_mtdpart()
+        else
+            read_caldata_file = "true"
+        end
+    end
+    LOGD("using ".. ART_VIRT)
+end
+
+if read_caldata_file == "false" then
+    file_2g = file
+    file_5g = file
+end
+
+if file_2g == nil or file_5g == nil  then
+        print("nil file")
+else
+        if read_caldata_file == "true" then
+            file_2g:seek("set", 0)
+        else
+            file_2g:seek("set", cal_2g_offset)
+        end
+
+        local bytes_read_2g = file_2g:read(read_size)
+        for byte in string.gfind(bytes_read_2g, ".") do
+                if string.byte(byte) ~= 0xff then
+                        cal_2g = 1
+                        break
+                end
+        end
+
+        if read_caldata_file == "true" then
+            file_5g:seek("set", 0)
+        else
+            file_5g:seek("set", cal_5g_offset + cal_data_size - read_size)
+        end
+        local bytes_read_5g = file_5g:read(read_size)
+        for byte in string.gfind(bytes_read_5g, ".") do
+                if string.byte(byte) ~= 0xff then
+                        cal_5g = 1
+                        break
+                end
+        end
+
+        if cal_2g == 1 and cal_5g == 1 then
+                print("true")
+        else
+                print("false")
+        end
+end

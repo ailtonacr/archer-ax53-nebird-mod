@@ -1,0 +1,44 @@
+#!/bin/sh
+. /lib/functions.sh
+
+config_load /etc/config/network
+config_get wan_type wan wan_type
+
+## is_online: 1--online; 0--offline
+ONLINE_STATUS_FILE="/tmp/is_online"
+ONLINE_V6_STATUS_FILE="/tmp/is_online_v6"
+
+get_online_status()
+{
+	local result
+	local tryTimes=0
+	local v4status
+	local v6status
+
+## avoid read error result, re-read most 3 times
+	if [ "$wan_type" == "v6plus" ]; then
+		while [ "$v4status" != "0" -a "$v4status" != "1" ] || [ "$v6status" != "0" -a "$v6status" != "1" ] && [ $tryTimes -lt 3 ]; do
+			v6status=`cat $ONLINE_V6_STATUS_FILE`
+			v4status=`cat $ONLINE_STATUS_FILE`
+			let "tryTimes = $tryTimes + 1"
+			if [ "$v4status" == "1" -a "$v6status" == "1" ]; then
+				result="1"
+			else
+				result="0"
+			fi
+		done
+	else
+		while [ $tryTimes -lt 3 -a "$result" != "0" -a "$result" != "1" ]; do
+			result=`cat $ONLINE_STATUS_FILE`
+			let "tryTimes = $tryTimes + 1"
+		done
+	fi
+
+	if [ "$result" == "1" ]; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+get_online_status

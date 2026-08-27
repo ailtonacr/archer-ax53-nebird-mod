@@ -1,0 +1,83 @@
+#!/bin/sh /etc/rc.common
+
+START=95
+STOP=95
+SERVICE_DAEMONIZE=1
+
+T_LIBDIR=/lib/telemetry
+. $T_LIBDIR/telemetry_core.sh
+
+TLM_start() {
+	telemetry_start
+	add_monit_crontab
+}
+
+wtfast_enable_status(){
+	local mode=$(uci -q get sysmode.sysmode.mode)
+	local start_flag=0
+	local wtfast_enable=$(uci -q get gpnc.settings.enable)
+	local account_id=$(uci -q get gpnc.info.account_id)
+	#If you log in to wtfast, tokens written by wtfast are stored in /tp_data/wtfast
+	if [ "${wtfast_enable}" == "on" -a -n "$account_id" -a "${mode}" == "router" ]; then
+		start_flag=1
+	else
+		start_flag=0
+	fi
+	echo $start_flag
+}
+
+boot()
+{
+	local enable
+	local to_show
+	config_load quicksetup
+	config_get to_show quicksetup to_show "false"
+	uci set telemetry.quicksetup_info="global"
+	if [ "${to_show}" == "true" ]; then
+			uci set telemetry.quicksetup_info.is_first_onboarding=1
+	else
+			uci set telemetry.quicksetup_info.is_first_onboarding=0
+	fi
+	uci set telemetry.quicksetup_info.collect_flag=1
+	uci commit telemetry
+
+	config_load telemetry
+	config_get enable basic enable "off"
+	local start_flag=$(wtfast_enable_status)
+	local support_unauthorized_telemetry=$(uci get profile.@telemetry[0].support_unauthorized_telemetry -c "/etc/profile.d" -q)
+	if [ "${enable}" != "on" -a ${start_flag} == 0 -a "${support_unauthorized_telemetry}" != "yes" ]; then
+			return 0
+	fi
+	
+	# collect system info
+	. $T_LIBDIR/system_info.sh
+	collect_system_info &
+
+	TLM_start
+	service_start /usr/bin/telemetry
+	return 0
+}
+
+start()
+{
+	local enable
+	config_load telemetry
+	config_get enable basic enable "off"
+	local start_flag=$(wtfast_enable_status)
+	local support_unauthorized_telemetry=$(uci get profile.@telemetry[0].support_unauthorized_telemetry -c "/etc/profile.d" -q)
+	if [ "${enable}" != "on" -a ${start_flag} == 0 -a "${support_unauthorized_telemetry}" != "yes" ]; then
+			return 0
+	fi
+	
+	TLM_start
+	service_start /usr/bin/telemetry
+	return 0
+}
+
+stop()
+{
+	del_monit_crontab
+	service_stop /usr/bin/telemetry
+	return 0
+}
+

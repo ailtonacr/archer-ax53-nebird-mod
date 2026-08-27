@@ -1,0 +1,16 @@
+#!/bin/sh
+
+VAPS=$(iw dev | awk '{if ($1=="Interface" && $2 !~/^wifi*/) print $2}')
+
+#close wireless dfs
+    for vap in $VAPS; do 
+	cfg80211tool $vap vhtsubfee 0 ;
+	cfg80211tool $vap vhtsubfer 0 ;
+	cfg80211tool $vap vhtmubfee 0 ;
+	cfg80211tool $vap vhtmubfer 0 ;
+	cfg80211tool $vap he_subfee 0 ;
+	cfg80211tool $vap he_subfer 0 ;
+	cfg80211tool $vap he_mubfee 0 ;
+	cfg80211tool $vap he_mubfer 0 ;
+	cfg80211tool $vap he_dlofdma_bf 0 ;
+    done

@@ -1,0 +1,6 @@
+#!/bin/sh
+
+. /lib/functions.sh
+. /lib/basic_security/core.sh
+
+fw_spi_switch "$1"

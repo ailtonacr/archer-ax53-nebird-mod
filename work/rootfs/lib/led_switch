@@ -1,0 +1,30 @@
+#!/bin/sh
+
+is_factory_mode(){
+        uci get factory.factorymode.enable
+}
+
+if [ "$(is_factory_mode)" != "yes" ]; then
+
+#if [ "$(uci get ledctrl.NIGHT.enable)" == "off" ] ;
+#then
+    if [ "$(uci get ledctrl.GENERAL.enable)" == "on" ]
+    then
+        uci set ledctrl.GENERAL.enable="off"
+    else
+        uci set ledctrl.GENERAL.enable="on"
+    fi
+
+    uci commit ledctrl
+    ledcli GENERAL
+#fi
+
+else
+        echo "led button will lose function now!" >/dev/console
+        if [ ! -e /tmp/btn_check ]; then
+                echo 0 > /tmp/btn_check
+        fi
+        ret=$(cat /tmp/btn_check)
+        ret=$(($ret | 0x4))
+        echo $ret > /tmp/btn_check
+fi

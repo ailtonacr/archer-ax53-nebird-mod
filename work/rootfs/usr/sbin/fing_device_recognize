@@ -1,0 +1,162 @@
+#!/usr/bin/lua
+
+--local error = require "cloud_report.report_error"
+local sys   = require "luci.sys"
+local nixio = require "nixio"
+local dbg   = require "luci.tools.debug"
+local json  = require "luci.json"
+local io    = require "io"
+local uci   = require "luci.model.uci"
+
+local uci_r = uci.cursor()
+
+local homeshield_device
+local avira_status = sys.exec("uci -c /etc/profile.d get profile.@avira[0] -q")
+if type(avira_status) == "string" then
+	avira_status = string.sub(avira_status, 1, 5)
+end
+
+if avira_status == "avira" then
+	homeshield_device = true
+else
+	homeshield_device = false
+end
+
+local content_type = "Content-type: application/json"
+local url_postfix = "/v1/device-recognition/retrieve-client-type"
+local CLOUD_HOMECARE_TOKEN_FILE
+local cloud_get_token
+local service_id
+
+if homeshield_device then
+	service_id = "homeshield"
+	cloud_get_token = "cloud_getDevToken homecare"
+	CLOUD_HOMECARE_TOKEN_FILE = "/tmp/cloud/cloud_token_homecare"
+else
+	service_id = "home-wifi-system"
+	cloud_get_token = "cloud_getDevToken home_wifi_system"
+	CLOUD_HOMECARE_TOKEN_FILE = "/tmp/cloud/cloud_token_home_wifi_system"
+end
+
+
+local retry_count = 0
+local token
+local origin_url
+local fp
+local retry = false
+
+local cloud_env = uci_r:get("cloud_config", "cloud_url", "fing") or "default"
+
+if homeshield_device and cloud_env ~= "default" then
+	cloud_get_token = cloud_get_token .. "_" .. cloud_env
+	CLOUD_HOMECARE_TOKEN_FILE = CLOUD_HOMECARE_TOKEN_FILE .."_" .. cloud_env
+end
+
+function TrimStr(str)    
+    str = str or ""
+
+    if str ~= "" then
+        local tmpstr = string.gsub(str, "-", "") or ""
+        str = string.match(tmpstr, "%w+") or ""
+        str = string.upper(str) or ""
+    end
+
+    return str
+end
+
+os.execute("rm /var/log/cloud_report_fing.result")
+
+while(retry_count <= 2)
+do
+	retry_count = retry_count + 1
+	retry = false
+	if not nixio.fs.access(CLOUD_HOMECARE_TOKEN_FILE) then
+		sys.fork_exec(cloud_get_token)
+	end
+
+	if nixio.fs.access(CLOUD_HOMECARE_TOKEN_FILE) then
+		fp = io.open(CLOUD_HOMECARE_TOKEN_FILE, "r")
+		token = fp:read("*line")
+		origin_url = fp:read("*line")..url_postfix
+		fp:close()
+	else
+		-- try again when not get the homecare token
+		sys.fork_exec(cloud_get_token)
+		if nixio.fs.access(CLOUD_HOMECARE_TOKEN_FILE) then
+			fp = io.open(CLOUD_HOMECARE_TOKEN_FILE, "r")
+			token = fp:read("*line")
+			origin_url = fp:read("*line") .. url_postfix
+			fp:close()
+		else		
+			break
+		end
+	end
+
+	local data
+	if nixio.fs.access("/tmp/cloud/cloud_report_fing") then
+		fp = io.open("/tmp/cloud/cloud_report_fing", "r")
+		data = fp:read("*all")
+		fp:close()
+	end
+
+	if data == nil then
+		break
+	end
+	
+	os.execute("echo `date` >/var/log/cloud_report_fing.result")
+
+	fp = io.open("/var/log/cloud_report_fing.result", "a+")
+	if fp then
+		fp:write(string.format("%s", data))
+		fp:close()
+	end
+
+	dbg.print("[cloud-report][" .. arg[0] .. "][cloud_upload request]:", data)
+
+	local ret
+	fp = io.popen("curl --tlsv1.2 -S -l -H \"%s\" -H \"Authorization: %s\" -H \"serviceId: %s\" -X POST -k -d @/tmp/cloud/cloud_report_fing -m 5 %s 2>>/var/log/cloud_report_fing.result" % {content_type, token, service_id, origin_url})
+
+	if fp then
+		ret = fp:read("*all")
+		fp:close()
+	end
+
+	os.execute("[ ! -d /tmp/fing ] && mkdir /tmp/fing")
+
+	fp = io.open("/var/fing/update_fing_type", "w")
+	if fp then
+		fp:write(ret)
+		fp:close()
+	end
+
+	fp = io.open("/var/log/cloud_report_fing.result", "a+")
+	if fp then
+		fp:write("response: " .. ret .. "\n")
+		fp:close()
+	end
+
+	if ret == nil then
+		dbg.print("[cloud-report][" .. arg[0] .. "]:cloud_upload response nothing")
+		break
+	end
+
+	local ret_code = tonumber(json.decode(ret).code)
+	if ret_code ~= 0 then
+		os.execute("rm /var/fing/update_fing_type")
+		dbg.print("[cloud-report][" .. arg[0] .. "][cloud_upload response]: no correct response!")
+	else
+		dbg.print("[cloud-report][" .. arg[0] .. "][cloud_upload response]:", ret)
+	end
+
+	ret = json.decode(ret)
+	if ret ~= nil then
+		if tonumber(ret.code) == -5007 then
+			--refresh token and upload again
+			os.execute("rm " .. CLOUD_HOMECARE_TOKEN_FILE)
+			retry = true
+		end
+	end
+	if retry == false then
+		break
+	end
+end

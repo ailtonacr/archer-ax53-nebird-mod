@@ -1,0 +1,275 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2010 Jo-Philipp Wich
+
+START=50
+
+SERVICE_DAEMONIZE=1
+SERVICE_WRITE_PID=1
+
+UHTTPD_BIN="/usr/sbin/uhttpd"
+PX5G_BIN="/usr/sbin/px5g"
+OPENSSL_BIN="/usr/bin/openssl"
+
+append_arg() {
+	local cfg="$1"
+	local var="$2"
+	local opt="$3"
+	local def="$4"
+	local val
+
+	config_get val "$cfg" "$var"
+	[ -n "$val" -o -n "$def" ] && append UHTTPD_ARGS "$opt ${val:-$def}"
+}
+
+append_bool() {
+	local cfg="$1"
+	local var="$2"
+	local opt="$3"
+	local def="$4"
+	local val
+
+	config_get_bool val "$cfg" "$var" "$def"
+	[ "$val" = 1 ] && append UHTTPD_ARGS "$opt"
+}
+
+generate_keys() {
+	local cfg="$1"
+	local key="$2"
+	local crt="$3"
+	local days bits commonname
+
+	config_get days       "$cfg" days	"1825"
+	config_get bits       "$cfg" bits	"2048"
+	config_get commonname "$cfg" commonname	"tplinkwifi.net"
+
+	# lanip=$(ifconfig br-lan | grep Bcast | awk '{print $2}' | cut -d ":" -f2)
+	dns1="DNS.1 = $commonname"
+	# ip1="IP.1 = $lanip"
+	dns1_line=$(grep -n "DNS.1" /etc/ssl/openssl.cnf | awk '{print $1}' | cut -d ":" -f1)
+	# ip1_line=$(grep -n "IP.1" /etc/ssl/openssl.cnf | awk '{print $1}' | cut -d ":" -f1)
+
+	if [ -n "$dns1_line" ] && [ -n "$ip1_line" ]; then
+		sed -i "${dns1_line}c ${dns1}" /etc/ssl/openssl.cnf
+		# sed -i "${ip1_line}c ${ip1}" /etc/ssl/openssl.cnf
+	fi
+
+	if [ "$bits" == "1024" ]; then
+		bits=2048
+	fi
+    echo "generate key: $days $bits"
+	if [ -x "$OPENSSL_BIN" ]; then
+	{
+		# preparation according to /etc/ssl/openssl.cnf
+		CA_PATH=/etc/ssl/demoCA
+		mkdir -p $CA_PATH/private
+		mkdir -p $CA_PATH/newcerts
+		touch $CA_PATH/index.txt
+		
+		# this dates are set specifically to fix issues on Chrome for MacOS
+		startdate='200101000000Z'
+		enddate='401231000000Z'
+
+		# generate key and cert for CA
+		$OPENSSL_BIN req -x509 -newkey rsa:$bits -nodes -keyout "$CA_PATH/private/cakey.pem" -out "$CA_PATH/cacert.pem" \
+			-subj "/CN=$commonname" -days 3650 -batch >/dev/null 2>&1
+		# generate key and signing request for uhttpd host
+		$OPENSSL_BIN req -newkey rsa:$bits -nodes -keyout $UHTTPD_KEY -out $UHTTPD_CERT.csr \
+			-subj "/CN=$commonname" -batch >/dev/null 2>&1
+		# sign the signing request with CA
+		$OPENSSL_BIN ca -in $UHTTPD_CERT.csr -extensions v3_req -out $UHTTPD_CERT -create_serial -policy policy_anything -startdate $startdate -enddate $enddate -batch >/dev/null 2>&1
+
+		cp $CA_PATH/cacert.pem /etc
+
+		rm -rf $CA_PATH
+		rm -f $UHTTPD_CERT.csr
+	}
+	else
+	{
+		# generate key and cert with px5g
+	[ -x "$PX5G_BIN" ] && {
+		$PX5G_BIN selfsigned -der \
+				-days ${days:-1825} -newkey rsa:${bits:-1024} -keyout "$UHTTPD_KEY" -out "$UHTTPD_CERT" \
+				-subj /CN="${commonname:-tplinkwifi.net}" >/dev/null 2>&1
+		}
+	}
+    fi
+
+    # TODO: write to flash
+    #[ -f "$UHTTPD_CERT" -a -f "$UHTTPD_KEY" ] && {
+	#echo "write cert and key to flash"
+    #}
+}
+
+start_instance()
+{
+	UHTTPD_ARGS=""
+	UHTTPD_CERT=""
+	UHTTPD_KEY=""
+
+	local cfg="$1"
+	local realm="$(uci_get system.@system[0].hostname)"
+	local https_support="$(uci -c /etc/profile.d get profile.@https_mgnt[0].https_support)"
+	local listen http https interpreter indexes path legacy_ciphers result
+
+    echo "start_instance() $1"
+    
+	append_arg "$cfg" home "-h"
+	append_arg "$cfg" realm "-r" "${realm:-OpenWrt}"
+	append_arg "$cfg" config "-c"
+	append_arg "$cfg" cgi_prefix "-x"
+	append_arg "$cfg" lua_prefix "-l"
+	append_arg "$cfg" lua_handler "-L"
+	append_arg "$cfg" script_timeout "-t"
+	append_arg "$cfg" network_timeout "-T"
+	append_arg "$cfg" tcp_keepalive "-A"
+	append_arg "$cfg" error_page "-E"
+	append_arg "$cfg" max_requests "-n" 30
+
+	append_bool "$cfg" no_symlinks "-S" 0
+	append_bool "$cfg" no_dirlists "-D" 0
+	append_bool "$cfg" rfc1918_filter "-R" 0
+
+	config_get http "$cfg" listen_http
+	for listen in $http; do
+		append UHTTPD_ARGS "-p $listen"
+	done
+
+	#config_get interpreter "$cfg" interpreter
+	#for path in $interpreter; do
+	#	append UHTTPD_ARGS "-i $path"
+	#done
+
+	config_get indexes "$cfg" index_page
+	for path in $indexes; do
+		append UHTTPD_ARGS "-I $path"
+	done
+
+	# NOTICE: always set 
+	[ "$https_support" == "yes" ] && 
+	{
+		config_get https "$cfg" listen_https
+		config_get UHTTPD_KEY  "$cfg" key  /etc/uhttpd.key
+		config_get UHTTPD_CERT "$cfg" cert /etc/uhttpd.crt
+
+		local support_trk_enc_file=$(uci get profile.@global[0].trk_enc_file -c "/etc/profile.d" -q)
+		if [ "$support_trk_enc_file" = "true" ]; then
+			key=$(libtrkutil crypto.lua.key | head -c 64)
+			iv=$(libtrkutil crypto.lua.iv | head -c 32)
+		fi
+
+		[ -n "$https" ] && {
+			# TODO: try to load key and cert from flash		
+			nvrammanager -r /tmp/https_cert.cry -p https_cert
+			if [ "$support_trk_enc_file" = "true" ]; then
+				openssl aes-256-cbc -d -in "/tmp/https_cert.cry" -K $key -iv $iv | openssl zlib -d > /tmp/https_cert.tar
+				tar -xzf /tmp/https_cert.tar -C /tmp
+			else
+				tar -xzf /tmp/https_cert.cry -C /tmp
+			fi
+			if [ ! -s "/tmp/uhttpd.crt" ] || [ ! -s "/tmp/uhttpd.key" ] || [ ! -s "/tmp/cacert.pem" ]; then
+				echo "generate key and cert" > /dev/console
+				# generate key and cert if none		
+				[ -f "$UHTTPD_CERT" -a -f "$UHTTPD_KEY" ] && {
+					rm $UHTTPD_CERT $UHTTPD_KEY
+				}
+				[ -f "/etc/cacert.pem" ] && {
+					rm /etc/cacert.pem
+				}
+				#config_foreach generate_keys cert
+				generate_keys "TP_Cert"
+				if [ -f "/etc/uhttpd.crt" ] && [ -f "/etc/uhttpd.key" ] && [ -f "/etc/cacert.pem" ]; then
+					cd /etc && tar -czf /tmp/https_cert.tar uhttpd.crt uhttpd.key cacert.pem
+					if [ "$support_trk_enc_file" = "true" ]; then
+						openssl zlib -e -in "/tmp/https_cert.tar" | openssl aes-256-cbc -e -K $key -iv $iv > /tmp/https_cert.cry
+						nvrammanager -w /tmp/https_cert.cry -p https_cert
+					else
+						nvrammanager -w /tmp/https_cert.tar -p https_cert
+					fi
+				fi
+			else
+				if [ -s "/tmp/uhttpd.crt" ]; then
+					cp /tmp/uhttpd.crt /etc/uhttpd.crt
+				fi
+				if [ -s "/tmp/uhttpd.key" ]; then
+					cp /tmp/uhttpd.key /etc/uhttpd.key
+				fi
+				if [ -s "/tmp/cacert.pem" ]; then
+					cp /tmp/cacert.pem /etc/cacert.pem
+				fi
+				if [ ! -s "/etc/uhttpd.crt" ] || [ ! -s "/etc/uhttpd.key" ] || [ ! -s "/etc/cacert.pem" ]; then
+					# generate key and cert if none		
+					[ -f "$UHTTPD_CERT" -a -f "$UHTTPD_KEY" ] && {
+						rm $UHTTPD_CERT $UHTTPD_KEY
+					}
+					[ -f "/etc/cacert.pem" ] && {
+						rm /etc/cacert.pem
+					}
+					#config_foreach generate_keys cert
+					generate_keys "TP_Cert"
+				fi
+			fi
+			
+
+			[ -f "$UHTTPD_CERT" -a -f "$UHTTPD_KEY" ] && {
+				append_arg "$cfg" cert "-C"
+				append_arg "$cfg" key  "-K"
+				config_get legacy_ciphers "$cfg" "ciphers"
+
+				if [ -n "$legacy_ciphers" ]; then
+				{
+					local disable_ciphers=":!SSLv2 :!SSLv3 :!TLSv1 :!RC4"
+					for cur_cipher in $disable_ciphers
+					do
+						result=$(echo $legacy_ciphers | grep $cur_cipher)
+						if [[ "$result" == "" ]]
+						then
+							echo "add $cur_cipher to uhttpd progress" > /dev/console
+							legacy_ciphers="$legacy_ciphers$cur_cipher"
+						fi
+					done
+
+					append UHTTPD_ARGS "-N $legacy_ciphers"
+				}
+				else
+				{
+					append UHTTPD_ARGS "-N ALL:+AES256:!DES:!3DES:!aNULL:!MD5:!SSLv2:!SSLv3:!TLSv1:!RC4"
+				}
+				fi
+
+				for listen in $https; do
+					append UHTTPD_ARGS "-s $listen"
+				done
+			}
+		}
+	}
+
+	SERVICE_PID_FILE=/var/run/uhttpd_${cfg}.pid
+	service_start $UHTTPD_BIN -f $UHTTPD_ARGS
+
+	# Check if daemon is running, if not then
+	# re-execute in foreground to display error.
+	#sleep 1 && service_check $UHTTPD_BIN || \
+	#	$UHTTPD_BIN -f $UHTTPD_ARGS
+}
+
+stop_instance()
+{
+	local cfg="$1"
+
+	SERVICE_PID_FILE=/var/run/uhttpd_${cfg}.pid
+	service_stop $UHTTPD_BIN
+}
+
+boot() {
+	start &
+}
+
+start() {
+	config_load uhttpd
+	config_foreach start_instance uhttpd
+}
+
+stop() {
+	config_load uhttpd
+	config_foreach stop_instance uhttpd
+}

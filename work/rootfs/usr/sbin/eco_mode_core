@@ -1,0 +1,43 @@
+#!/bin/sh
+#according uci config set wifi power mode and schedule
+
+local enable=$(uci -q get eco_mode.eco_mode.enable)
+local power_mode=$(uci -q get eco_mode.eco_mode.power_mode)
+local time_start=$(uci -q get eco_mode.eco_mode.time_start)
+local time_end=$(uci -q get eco_mode.eco_mode.time_end)
+
+time_to_minutes(){
+    local time=$1
+    local hours=${time%:*}
+    local minutes=${time#*:}
+    hours="${hours#"${hours%%[!0]*}"}"
+    minutes="${minutes#"${minutes%%[!0]*}"}"
+    echo $((hours * 60 + minutes))
+}
+
+if [ $enable = "off" ]; then
+    tsched_conf -D eco-mode
+    tsched_conf -u eco-mode
+    power_mode_set "strong"
+else 
+    if [ $power_mode = "strong" ]; then
+        tsched_conf -D eco-mode
+        tsched_conf -u eco-mode
+    else
+        t_start=$(time_to_minutes $time_start)
+        t_end=$(time_to_minutes $time_end)
+
+        if [ $t_start -lt $t_end ]; then
+            duration=$(printf "[\"%s\",\"%s\"]" $time_start $time_end)
+        elif [ $t_end == 0 ]; then
+            duration=$(printf "[\"%s\",\"24:00\"]" $time_start)
+        else
+            duration=$(printf "[\"%s\",\"24:00\"],[\"00:00\",\"%s\"]" $time_start $time_end)
+        fi
+
+        TIME_SCHEDULE=$(printf "{\"sun\":[%s],\"mon\":[%s],\"tue\":[%s],\"wed\":[%s],\"thu\":[%s],\"fri\":[%s],\"sat\":[%s]}" $duration $duration $duration $duration $duration $duration $duration)
+        tsched_conf -D eco-mode
+        tsched_conf -a eco-mode ECO $TIME_SCHEDULE "1"
+        tsched_conf -u eco-mode
+    fi
+fi

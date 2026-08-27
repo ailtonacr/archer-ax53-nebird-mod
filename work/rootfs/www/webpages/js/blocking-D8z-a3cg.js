@@ -1,0 +1,1 @@
+var e=(e=>(e[e.Pause=1]="Pause",e[e.TimeUp=2]="TimeUp",e[e.BedTime=3]="BedTime",e[e.Blocked=4]="Blocked",e))(e||{}),i=(e=>(e.TimeUp="1",e.AccessDenied="2",e.UnsafeWebsite="3",e.BedTime="4",e.InternetBlocked="5",e))(i||{}),s=(e=>(e.Time="time",e.Website="website",e))(s||{});export{s as A,i as B,e as P};

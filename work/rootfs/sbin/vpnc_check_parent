@@ -1,0 +1,16 @@
+#!/bin/sh
+
+# $1: parent interface
+[ -n "$1" ] && [ "$1" != "mobile" ] && {
+    local wan_type="$(uci get network.wan.wan_type)"
+    case "$wan_type" in
+        static|dhcp|dslite|v6plus)
+            [ "$1" != "wan" ] && return 1
+            ;;
+        *) # pppoe/pptp/l2tp/share
+            [ "$1" != "internet" ] && return 1
+            ;;
+    esac
+}
+
+return 0

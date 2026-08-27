@@ -1,0 +1,7 @@
+#!/usr/bin/lua
+
+local config = require "luci.sys.config"
+config.remodel_re_merge()
+
+
+

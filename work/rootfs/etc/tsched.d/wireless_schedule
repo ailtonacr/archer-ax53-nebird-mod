@@ -1,0 +1,36 @@
+#!/bin/sh
+
+WIRELESS_SCHEDULE_LIBDIR=/lib/wifi
+. ${WIRELESS_SCHEDULE_LIBDIR}/wireless_schedule_func.sh
+
+. /lib/functions.sh
+. /lib/config/uci.sh
+
+cmd=$1
+shift
+
+case $cmd in
+	*ACTIVE)
+		local band="$1"
+		local enable=$(uci -q get wireless_schedule."$band".enable)
+		if [ "$enable" = "off" ]; then
+			/etc/init.d/wireless_schedule restart
+		else
+			local ntp_type
+			ntp_type=$(uci -q get system.ntp.type)
+			if [ "$ntp_type" = "auto" ]; then
+				wireless_schedule_handle_active "$band"
+			fi
+		fi
+		;;
+
+    *DORM)
+			local band="$1"
+			wireless_schedule_handle_dorm "$band"
+		;;
+
+	*RESET)
+			echo "nothing need to do"
+		;;
+esac
+

@@ -1,0 +1,114 @@
+{
+	"param": {
+		"profile": 2,
+		"multi_channel_support": false,
+		"guest_network_support": false,
+		"ts_support": false,
+		"ts_def_pcp": 0,
+		"prim_vlan_id": 10,
+		"sec_vlan_id": 20,
+		"devname": "Archer AX53",
+		"manufacturer_name": "TP-Link",
+		"manufacturer_model": "AX53 V1.0",
+		"webui_url": "tplinkwifi.net",
+		"dbglevel": 0,
+		"1905_trace_module": 0,
+		"1905_trace_level": 0,
+		"ap_capability": {
+			"sup_steer": true,
+			"sup_usta_chan": false,
+			"sup_usta_nonechan": false
+		},
+		"backhaul_type": "unknown"
+	},
+	"interfaces": {
+		"re": {
+			"br-lan": {"type": "bridge"},
+			"eth1.2": {"type": "ether"},
+			"eth1.3": {"type": "ether"},
+			"eth1.4": {"type": "ether"},
+			"eth1.5": {"type": "ether"},
+			"ath02": {"type": "wireless", "map_type": "bSTA", "vap": "ath02", "band":"2.4g"},
+			"ath0": {"type": "wireless", "map_type": "fBSS", "vap": "ath0", "band":"2.4g"},
+			"ath03": {"type": "wireless", "map_type": "bBSS", "vap": "ath03", "band":"2.4g"},
+			"ath01": {"type": "wireless", "map_type": "fBSS", "guest": true, "vap": "ath01", "band":"2.4g"},
+			"ath12": {"type": "wireless", "map_type": "bSTA", "vap": "ath12", "band":"5g"},
+			"ath1": {"type": "wireless", "map_type": "fBSS", "vap": "ath1", "band":"5g"},
+			"ath13": {"type": "wireless", "map_type": "bBSS", "vap": "ath13", "band":"5g"},
+			"ath11": {"type": "wireless", "map_type": "fBSS", "guest": true, "vap": "ath11", "band":"5g"}
+		},
+		"ap": {
+			"br-lan": {"type": "bridge"},
+			"eth1.2": {"type": "ether"},
+			"eth1.3": {"type": "ether"},
+			"eth1.4": {"type": "ether"},
+			"eth1.5": {"type": "ether"},
+			"eth1.4094": {"type": "ether"},
+			"ath0": {"type": "wireless", "map_type": "fBSS", "vap": "ath0", "band":"2.4g"},
+			"ath03": {"type": "wireless", "map_type": "bBSS", "vap": "ath03", "band":"2.4g"},
+			"ath01": {"type": "wireless", "map_type": "fBSS", "guest": true, "vap": "ath01", "band":"2.4g"},
+			"ath04": {"type": "wireless", "map_type": "bBSS", "priv_bh": true},
+			"ath1": {"type": "wireless", "map_type": "fBSS", "vap": "ath1", "band":"5g"},
+			"ath13": {"type": "wireless", "map_type": "bBSS", "vap": "ath13", "band":"5g"},
+			"ath11": {"type": "wireless", "map_type": "fBSS", "guest": true, "vap": "ath11", "band":"5g"},
+			"ath14": {"type": "wireless", "map_type": "bBSS", "priv_bh": true}
+		},
+		"router": {
+			"br-lan": {"type": "bridge"},
+			"eth1.2": {"type": "ether"},
+			"eth1.3": {"type": "ether"},
+			"eth1.4": {"type": "ether"},
+			"eth1.5": {"type": "ether"},
+			"ath02": {"type": "wireless", "map_type": "bSTA", "vap": "ath02", "band":"2.4g"},
+			"ath0": {"type": "wireless", "map_type": "fBSS", "vap": "ath0", "band":"2.4g"},
+			"ath03": {"type": "wireless", "map_type": "bBSS", "vap": "ath03", "band":"2.4g"},
+			"ath01": {"type": "wireless", "map_type": "fBSS", "guest": true, "vap": "ath01", "band":"2.4g"},
+			"ath04": {"type": "wireless", "map_type": "bBSS", "priv_bh": true},
+			"ath12": {"type": "wireless", "map_type": "bSTA", "vap": "ath12", "band":"5g"},
+			"ath1": {"type": "wireless", "map_type": "fBSS", "vap": "ath1", "band":"5g"},
+			"ath13": {"type": "wireless", "map_type": "bBSS", "vap": "ath13", "band":"5g"},
+			"ath11": {"type": "wireless", "map_type": "fBSS", "guest": true, "vap": "ath11", "band":"5g"},
+			"ath14": {"type": "wireless", "map_type": "bBSS", "priv_bh": true}
+		}
+	},
+	"radio": {
+		"wifi1": {
+			"band": "5g",
+			"vap":"wifi1",
+			"radio_capability": {
+				"max_bss_support": 3,
+				"nss": 2,
+				"HT_enable": true,
+				"HT_sgi_20_support": true,
+				"HT_sgi_40_support": true,
+				"HT_40_support": true,
+				"VHT_enable": true,
+				"VHT_tx_mcs_map": 65530,
+				"VHT_rx_mcs_map": 65530,
+				"VHT_sgi_80_support": true,
+				"VHT_sgi_160_support": true,
+				"VHT_80p80_support": false,
+				"VHT_160_support": false,
+				"VHT_SU_beamformer_support": true,
+				"VHT_MU_beamformer_support": true
+			},
+			"vap_list":["ath1", "ath12", "ath11", "ath13", "ath14"]
+		},
+		"wifi0": {
+			"band": "2.4g",
+			"vap":"wifi0",
+			"radio_capability": {
+				"max_bss_support": 3,
+				"nss": 2,
+				"HT_enable": true,
+				"HT_sgi_20_support": true,
+				"HT_sgi_40_support": true,
+				"HT_40_support": true,
+				"VHT_enable": false
+			},
+			"vap_list":["ath0", "ath02", "ath01", "ath03", "ath04"]
+		}
+	}
+}
+
+

@@ -1,0 +1,131 @@
+#!/usr/bin/lua
+
+local https = require "cloud_req.cloud_https"
+local dbg   = require "luci.tools.debug"
+local retry_cnts = 3
+
+local ROOT_CA_NAME = "TP-LINK SYSTEM DEVICE ROOT CA"
+
+local DAC_ROOT_PATH = "/etc/tss/root_ca.pem"
+local DAC_INTER_PATH = "/etc/tss/intermediate_ca.pem"
+local DAC_ENTITY_PATH = "/etc/tss/entity_ca.pem"
+
+local function dac_write_file(filename, data)
+	if nil == data then
+		return false
+	end
+	local file = io.open(filename, "w")
+    if file then
+        file:write(data)
+        file:close()
+    else
+        dbg.print("Error opening " .. filename .. " file")
+        return false
+    end
+
+	return true
+end
+
+function dac_apply(csr)
+	if nil == csr then
+		dbg.print("empty csr\n")
+		return 0, nil
+	end
+
+	local res, data = https.cloud_https_get_devicetoken("nbu.cvm-server")
+
+	if res ~= 0 then
+		return -1, "failed"
+	end
+
+	local httpinfo = {}
+	local req = {}
+	httpinfo.method = "POST"
+	httpinfo.url = data.url .. "/v1/certificate/device/apply"
+
+	req.deviceToken = data.token
+	req.csr = csr
+
+	local res, data = https.cloud_https_getinfo_dispatch("spec", httpinfo, req)
+	if res ~= 0 then
+		return res, "failed"
+	end
+
+	return res, data
+end
+
+function dac_get_ca(ca_name_list)
+	if nil == ca_name_list[1] then
+		dbg.print("empty ca list\n")
+		return 0, nil
+	end
+	dbg.dumptable(ca_name_list)
+
+	local res, data = https.cloud_https_get_devicetoken("nbu.cvm-server")
+	
+	if res ~= 0 then
+		return -1, "failed"
+	end
+
+	local httpinfo = {}
+	local req = {}
+	httpinfo.method = "POST"
+	httpinfo.url = data.url .. "/v1/certificate/get-ca"
+
+	req.deviceToken = data.token
+	req.caNameList = ca_name_list
+
+	local res, data = https.cloud_https_getinfo_dispatch("spec", httpinfo, req)
+	if res ~= 0 then
+		return res, "failed"
+	end
+
+	return res, data
+end
+
+function dac_update_api(csr, ca_name, new_root)
+	local ca_name_list = {}
+	local new_inter = false
+	local new_entity = false
+	local ret = 0
+
+	local certificateEntity = nil
+	local certificateChainInter = nil
+	local certificateChainRoot = nil
+
+	if nil ~= csr then
+		ret, data = dac_apply(csr)
+		if ret == 0 and data.result ~= nil then
+			dbg.print("get entity ca success\n")
+			certificateEntity = data.result.certificate
+			local startPos, endPos = string.find(data.result.certificateChain, "-----BEGIN CERTIFICATE-----", string.len("-----BEGIN CERTIFICATE-----"), true) 
+			certificateChainRoot = string.sub(data.result.certificateChain, startPos)
+			certificateChainInter = string.sub(data.result.certificateChain, 1, startPos - 1)
+		end
+	else
+		if nil ~= ca_name then
+			table.insert(ca_name_list, ca_name .. " CA")
+		end
+		if new_root then
+			table.insert(ca_name_list, ROOT_CA_NAME)
+		end
+		ret, data = dac_get_ca(ca_name_list)
+		if ret == 0 and data.result ~= nil then
+			dbg.print("get ca chain success\n")
+			for _, obj in ipairs(data.result.caList) do
+				if obj.caName == ROOT_CA_NAME then
+					certificateChainRoot = obj.caCertificate
+				else
+					certificateChainInter = obj.caCertificate
+				end
+			end
+		end
+	end
+
+	new_root = dac_write_file(DAC_ROOT_PATH, certificateChainRoot)
+	new_inter = dac_write_file(DAC_INTER_PATH, certificateChainInter)
+	new_entity = dac_write_file(DAC_ENTITY_PATH, certificateEntity)
+
+	return ret, new_root, new_inter, new_entity
+
+end

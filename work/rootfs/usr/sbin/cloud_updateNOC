@@ -1,0 +1,49 @@
+#!/usr/bin/lua
+
+-- get noc from cloud and update.
+
+local nocmgnt = require "cloud_req.cloud_NOC_manage"
+
+-- tpap api
+function check_user_noc(username_hash)
+    return nocmgnt.noc_check_role(1, username_hash)
+end
+
+-- tpap api
+function update_noc(username, role)
+    role = role or 0
+    if role < 0 or role > 1 then
+        return -1, "role invalid"
+    end
+
+    local user = {}
+    user.role = role
+    user.cloudUserName = username
+
+    if nocmgnt.noc_get(1, user) then
+        local tpap = require "libtpap"
+        tpap.clean_auth_cache()
+        return 0, "success"
+	end
+    return -1, "cloud apply failed"
+end
+
+function check_all_noc()
+    return nocmgnt.noc_flush(1)
+end
+
+function main(params)
+    if nil == params[1] then
+        check_all_noc()
+        return
+    end
+
+    if "role" == params[1] then
+        check_user_noc(params[2])
+    elseif "update" == params[1] then
+        update_noc(params[2], tonumber(params[3]))
+    end
+
+end
+
+main(arg)

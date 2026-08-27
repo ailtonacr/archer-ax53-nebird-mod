@@ -1,0 +1,10 @@
+#!/bin/sh
+
+local model=`getfirm MODEL`
+
+if [ "$model" == "Archer AX53HP" ] ; then
+	uci set locale.sysinfo.model="AX3000 High Power Gigabit Wi-Fi 6 Router"
+	echo locale.sysinfo.model="AX3000 High Power Gigabit Wi-Fi 6 Router" > /dev/console
+    uci commit
+fi
+

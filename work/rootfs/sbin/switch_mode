@@ -1,0 +1,164 @@
+#!/bin/sh
+
+switch_mode_lock() {
+	echo " =========================== SWITCH MODE LOCK =========================="  >/dev/console
+	touch /var/run/switch_mode.lock
+}
+
+switch_mode_unlock() {
+	rm /var/run/switch_mode.lock
+	echo " ========================== SWITCH MODE UNLOCK =========================" >/dev/console
+}
+
+switch_mode_clean_feature_info() {
+	local support_easymesh=$(uci get profile.@onemesh[0].easymesh_support -c "/etc/profile.d" -q)
+	if [ "$support_easymesh" == "yes" ]; then
+		echo "-----------------switch-mode clean feature-info--------------" >/dev/console
+		lua -e 'require("luci.controller.admin.cloud_account").cloud_check_and_clean_feature()'
+	fi
+}
+
+rtoa() {
+	local section_line
+
+	# lock to disable saveconfig otherwhere
+	switch_mode_lock
+	
+	nvrammanager -r /tmp/user-config -p user-config
+	nvrammanager -w /tmp/user-config -p router-config
+	nvrammanager -r /tmp/ap-config -p ap-config
+	if [ -s "/tmp/ap-config" ];then
+		nvrammanager -w /tmp/ap-config -p user-config
+		echo "-----------------ap-config is not null--------------" >/dev/console
+	else
+		section_line=$(uci show|grep 'sysmode.ap'|wc -l)
+		if [ $section_line -gt 1 ];then
+			echo "-----------------section line gt 1--------------" >/dev/console
+			switch_mode_oldway
+			nvrammanager -r /tmp/ap-config -p user-config
+			nvrammanager -w /tmp/ap-config -p ap-config
+		else
+			echo "-----------------section line lt 1--------------" >/dev/console
+			nvrammanager -r /tmp/ap-def-config -p ap-def-config
+			nvrammanager -w /tmp/ap-def-config -p ap-config
+			nvrammanager -w /tmp/ap-def-config -p user-config
+			remodel_ap_merge
+		fi
+		echo "-----------------ap-config is null--------------" >/dev/console
+	fi
+	echo "-------------sync start----------" >/dev/console
+	sync_mode_file
+	echo "-------------sync end----------" >/dev/console
+	rm -f /tmp/user-config /tmp/ap-config /tmp/ap-def-config 
+	switch_mode_clean_feature_info
+	reboot
+}
+
+# from router to repeater,and no repeater to router
+rtor() {
+	switch_mode_lock
+	echo "---------merge router to repeater config------------" > /dev/console
+	merge_rtor_configs
+	sleep 3
+	echo "---------merge router to repeater config completed, reboot ... ------------" > /dev/console
+	switch_mode_clean_feature_info
+	reboot
+}
+
+ator() {
+	# lock to disable saveconfig otherwhere
+	switch_mode_lock
+	
+	nvrammanager -r /tmp/user-config -p user-config
+	nvrammanager -w /tmp/user-config -p ap-config
+	nvrammanager -r /tmp/router-config -p router-config
+	if [ -s "/tmp/router-config" ]; then
+		nvrammanager -w /tmp/router-config -p user-config
+	else
+		echo "-----------------router-config is null--------------" >/dev/console
+		switch_mode_oldway
+		nvrammanager -r /tmp/router-config -p user-config
+		nvrammanager -w /tmp/router-config -p router-config
+	fi
+	sync_mode_file
+	rm -f /tmp/user-config /tmp/router-config
+	reboot
+}
+
+rtor_ui() {
+	local old_sysmode="router"
+	local new_sysmode="repeater"
+	local old_config="router-config"
+	local new_config="re-def-config"
+
+	new_def_config="re-def-config"
+	echo "-----------------switch from $old_sysmode to $new_sysmode--------------" >/dev/console
+
+	# lock to disable saveconfig otherwhere
+	switch_mode_lock
+
+	nvrammanager -r "/tmp/user-config" -p "user-config"
+	nvrammanager -w "/tmp/user-config" -p "$old_config"
+	nvrammanager -r "/tmp/$new_config" -p "$new_config"
+	if [ -s "/tmp/$new_config" ];then
+		nvrammanager -w "/tmp/$new_config" -p "user-config"
+		echo "-----------------new_config $new_config is not null--------------" >/dev/console
+	else
+		echo "-----------------new_config $new_config is null, can't change to repeater, reset to factory--------------" >/dev/console
+		lua -e "require 'luci.controller.admin.firmware'.config_factory({all = 'true'})"
+	fi
+	echo "-------------remodel re merge start----------" >/dev/console
+	remodel_re_merge
+	echo "-------------remodel re merge end----------" >/dev/console
+
+	echo "-------------sync start----------" >/dev/console
+	sync_mode_file
+	echo "-------------sync end----------" >/dev/console
+	rm -f /tmp/user-config /tmp/$new_config /tmp/$new_def_config
+	switch_mode_clean_feature_info
+	reboot
+}
+
+ator_ui() {
+	local old_sysmode="ap"
+	local new_sysmode="repeater"
+	local old_config="ap-config"
+	local new_config="re-def-config"
+
+	new_def_config="re-def-config"
+	echo "-----------------switch from $old_sysmode to $new_sysmode--------------" >/dev/console
+
+	# lock to disable saveconfig otherwhere
+	switch_mode_lock
+
+	nvrammanager -r "/tmp/user-config" -p "user-config"
+	nvrammanager -w "/tmp/user-config" -p "$old_config"
+	nvrammanager -r "/tmp/$new_config" -p "$new_config"
+	if [ -s "/tmp/$new_config" ];then
+		nvrammanager -w "/tmp/$new_config" -p "user-config"
+		echo "-----------------new_config $new_config is not null--------------" >/dev/console
+	else
+		echo "-----------------new_config $new_config is null, can't change to repeater, reset to factory--------------" >/dev/console
+		lua -e "require 'luci.controller.admin.firmware'.config_factory({all = 'true'})"
+	fi
+	echo "-------------remodel re merge start----------" >/dev/console
+	remodel_re_merge
+	echo "-------------remodel re merge end----------" >/dev/console
+
+	echo "-------------sync start----------" >/dev/console
+	sync_mode_file
+	echo "-------------sync end----------" >/dev/console
+	rm -f /tmp/user-config /tmp/$new_config /tmp/$new_def_config
+	switch_mode_clean_feature_info
+	reboot
+}
+
+act=$1
+case "$act" in
+	rtoa)	    rtoa ;;
+	ator)	    ator ;;
+	rtor)		rtor ;;
+	rtor_ui)    rtor_ui ;;
+	ator_ui)    ator_ui ;;
+	*)	    ;;
+esac

@@ -1,0 +1,27 @@
+#!/bin/sh /etc/rc.common
+
+START=09
+
+insmod_trk() {
+    dir=/lib/modules/iplatform
+    mod=ktrk.ko
+    devId=$(getfirm DEV_ID)
+    if [ ! -e ${dir}/${mod} ]; then
+        echo $mod" not found."
+        return;
+    fi
+    if [ -z $devId ]; then
+        echo "devId is null"
+    else
+        mknod /dev/derive_key c 229 0
+        insmod ${dir}/${mod} deviceid=$devId
+    fi
+}
+
+start() {
+        insmod_trk
+}
+
+stop() {
+        [ -d /sys/module/ktrk ] && rmmod ktrk
+}

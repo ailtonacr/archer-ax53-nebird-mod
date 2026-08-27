@@ -1,0 +1,22 @@
+#!/bin/sh /etc/rc.common
+
+START=99z
+SERVICE_DAEMONIZE=1
+
+start()
+{
+	local product_name=$(uci get system.system.hostname)
+	if [ "$product_name" = "Archer_Air_R5" ]; then
+		if [ "$(/sbin/is_cal)" != "true" ]; then
+			return
+		fi
+	fi
+
+	service_start /usr/bin/switch_led
+}
+
+stop()
+{
+	service_stop /usr/bin/switch_led
+}
+

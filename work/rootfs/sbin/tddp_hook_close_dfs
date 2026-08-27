@@ -1,0 +1,6 @@
+#!/bin/sh
+
+VAPS=$(iw dev | awk '{if ($1=="Interface" && $2 !~/^wifi*/) print $2}')
+
+#close wireless dfs
+    for vap in $VAPS; do cfg80211tool $vap set_cactimeout 0 ; done;

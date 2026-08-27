@@ -1,0 +1,8 @@
+#!/bin/sh
+
+if [ "$INTERFACE" == "lan"  -a "$ACTION" == "ifup" ]; then
+	if [ -f /tmp/need_to_reset_vlanid ]; then
+		/sbin/wifi vlan &
+		rm -rf /tmp/need_to_reset_vlanid
+	fi
+fi

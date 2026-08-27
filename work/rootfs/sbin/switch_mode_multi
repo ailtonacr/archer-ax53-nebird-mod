@@ -1,0 +1,95 @@
+#!/bin/sh
+
+switch_mode_lock() {
+	echo " =========================== SWITCH MODE LOCK =========================="  >/dev/console
+	touch /var/run/switch_mode.lock
+}
+
+switch_mode_unlock() {
+	rm /var/run/switch_mode.lock
+	echo " ========================== SWITCH MODE UNLOCK =========================" >/dev/console
+}
+
+switch_sysmode() {
+	local old_sysmode=$1
+	local new_sysmode=$2
+	local old_config
+	local old_def_config
+	local new_config
+	local new_def_config
+
+	if [ "$old_sysmode" == "ap" ];then
+		old_config="ap-config"
+		old_def_config="ap-def-config"
+	elif [ "$old_sysmode" == "repeater" ];then
+		old_config="repeater-config"
+		old_def_config="repeater-def-config"	
+	elif [ "$old_sysmode" == "multissid" ];then
+		old_config="multissid-config"
+		old_def_config="multissid-def-config"		
+	elif [ "$old_sysmode" == "client" ];then
+		old_config="client-config"
+		old_def_config="client-def-config"		
+	else
+		echo "invalid old_sysmode,exit now"
+		exit 1
+	fi
+
+	if [ "$new_sysmode" == "ap" ];then
+		new_config="ap-config"
+		new_def_config="ap-def-config"	
+	elif [ "$new_sysmode" == "repeater" ];then
+		new_config="repeater-config"
+		new_def_config="repeater-def-config"		
+	elif [ "$new_sysmode" == "multissid" ];then
+		new_config="multissid-config"
+		new_def_config="multissid-def-config"		
+	elif [ "$new_sysmode" == "client" ];then
+		new_config="client-config"
+		new_def_config="client-def-config"			
+	else
+		echo "invalid new_sysmode,exit now"
+		exit 1
+	fi
+	
+	echo "-----------------switch from $old_sysmode to $new_sysmode--------------" >/dev/console
+	
+	# lock to disable saveconfig otherwhere
+	switch_mode_lock
+	
+	nvrammanager -r "/tmp/user-config" -p "user-config"
+	nvrammanager -w "/tmp/user-config" -p "$old_config"
+	nvrammanager -r "/tmp/$new_config" -p "$new_config"
+	if [ -s "/tmp/$new_config" ];then
+		nvrammanager -w "/tmp/$new_config" -p "user-config"
+		echo "-----------------new_config $new_config is not null--------------" >/dev/console
+	else
+		nvrammanager -r "/tmp/$new_def_config" -p "$new_def_config"
+		nvrammanager -w "/tmp/$new_def_config" -p "$new_config"
+		nvrammanager -w "/tmp/$new_def_config" -p "user-config"
+		echo "-----------------new_config $new_config is null--------------" >/dev/console
+	fi
+	echo "-------------sync start----------" >/dev/console
+	sync_mode_file
+	echo "-------------sync end----------" >/dev/console
+	rm -f /tmp/user-config /tmp/$new_config /tmp/$new_def_config 
+	reboot
+}
+
+
+old_mode="$1"
+new_mode="$2"
+[ "$old_mode" != "ap" -a "$old_mode" != "repeater" -a "$old_mode" != "multissid" -a "$old_mode" != "client" ] && \
+echo "Invalid old_mode!!" && \
+exit 1
+
+[ "$new_mode" != "ap" -a "$new_mode" != "repeater" -a "$new_mode" != "multissid" -a "$new_mode" != "client" ] && \
+echo "Invalid new_mode!!" && \
+exit 1
+
+[ "$old_mode" == "$new_mode" ] && \
+echo "sysmode not changed, old_mode:$old_mode" && \
+exit 0
+
+
+switch_sysmode $old_mode $new_mode

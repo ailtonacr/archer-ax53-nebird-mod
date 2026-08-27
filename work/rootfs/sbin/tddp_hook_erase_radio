@@ -1,0 +1,13 @@
+#!/bin/sh
+
+find_mtd() {
+	local MTD="$(grep "\"$1\"" /proc/mtd | awk -F: '{print $1}')"
+	local PREFIX=/dev/
+
+	echo "${MTD:+$PREFIX$MTD}"
+}
+
+radio=$(find_mtd 0:ART)
+
+[ -e $radio ] && mtd erase $radio
+

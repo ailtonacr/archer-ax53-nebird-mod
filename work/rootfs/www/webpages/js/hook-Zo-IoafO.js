@@ -1,0 +1,1 @@
+import{g as a,l as e}from"./update-store-DQkZxaRI.js";import{r as t,e as o}from"./vendor-BrE4IMR2.js";function s(){const s=t("en_US"),r=t("");return o((async()=>{await(async()=>{try{const{locale:e,model:t}=await a();s.value=e,r.value=t}catch(t){s.value="en_US"}await e(s.value)})()})),{deviceModel:r}}export{s as u};

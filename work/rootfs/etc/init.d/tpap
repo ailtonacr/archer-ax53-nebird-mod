@@ -1,0 +1,68 @@
+#!/bin/sh /etc/rc.common
+
+# must be earlier than dropbear
+START=49
+STOP=50
+
+SERVICE_DAEMONIZE=1
+PROG=/usr/bin/tpapsvr
+NAME=tpapsvr
+
+local TM_TPAP_PATH=/tmp/tpap
+
+TPAP_SUPPORT="v1"
+PATH_TPAP_SUPPORT="/tmp/tpap_support"
+
+noc_check_schedule() {
+    local CRON_FILE="/etc/crontabs/root"
+    local TMP_CRONTAB="/tmp/noc_cron"
+    local NOC_SBIN="/usr/sbin/cloud_updateNOC"
+
+    local hour=0
+    local munite=$(randomNum 119)
+    if [ "$munite" -ge 60 ];then
+        hour=$(((hour+1)%24))
+        munite=$((munite-60))
+    fi
+    local crontab_cmd="${munite} ${hour} * * * ${NOC_SBIN}"
+
+    local cron_item=`grep "${NOC_SBIN}" ${CRON_FILE}`
+    [ "${cron_item}" != "${crontab_cmd}" ] && {
+                    echo "${crontab_cmd}" > ${TMP_CRONTAB}
+                    crontab -l | grep -v "${NOC_SBIN}" | cat - "${TMP_CRONTAB}" | crontab -
+                    rm -f ${TMP_CRONTAB}
+    }
+}
+
+boot() {
+    if [ ! -d $TM_TPAP_PATH ]; then
+        mkdir $TM_TPAP_PATH
+    fi
+
+	if [ ! -f $PATH_TPAP_SUPPORT ]; then
+		echo $TPAP_SUPPORT > $PATH_TPAP_SUPPORT
+	fi
+
+	tpap_sync_spake
+
+	noc_check_schedule
+
+    start "$@"
+}
+
+start()
+{
+	service_start ${PROG}
+}
+
+stop()
+{
+	service_stop ${PROG}
+}
+
+restart()
+{
+	stop
+	sleep 1
+	start
+}

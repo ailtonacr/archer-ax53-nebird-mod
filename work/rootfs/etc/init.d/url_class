@@ -1,0 +1,93 @@
+#!/bin/sh /etc/rc.common
+# Copyright (C) 2012-2019 TPLINK
+
+START=80
+STOP=25
+
+CRON_TASK_SCRIPT=/etc/monit/monit_proclist
+
+add_cron(){
+	local replace=$(sed -n '/^#local url_class/p' "$CRON_TASK_SCRIPT")
+	local line_num=$(awk '/^#local url_class/{print NR}' "$CRON_TASK_SCRIPT")
+	
+	if [ -n "$replace" ];then
+		sed -i "${line_num}c ${replace#*#}" "$CRON_TASK_SCRIPT"
+	fi
+}
+
+del_cron(){
+	local replace=$(sed -n '/^local url_class/p' "$CRON_TASK_SCRIPT")
+	local line_num=$(awk '/^local url_class/{print NR}' "$CRON_TASK_SCRIPT")
+	
+	if [ -n "$replace" ];then
+		sed -i "${line_num}c #$replace" "$CRON_TASK_SCRIPT"
+	fi
+}
+
+read_from_partition(){
+    if [ ! -f "/tmp/auc_tp.session" ];then
+        nvrammanager -r /tmp/auc_tp_session.tar.gz -p auc_data
+        tar -zxf /tmp/auc_tp_session.tar.gz -C /tmp/
+        rm /tmp/auc_tp_session.tar.gz 
+    fi
+}
+
+write_to_partition(){
+    if [ -f "/tmp/auc_tp.session" ];then
+        tar -zcf /tmp/auc_tp_session.tar.gz /tmp/auc_tp.session
+        nvrammanager -w /tmp/auc_tp_session.tar.gz -p auc_data
+        rm /tmp/auc_tp_session.tar.gz 
+    fi
+}
+
+start() {
+	export LD_LIBRARY_PATH=/usr/lib/avira:$LD_LIBRARY_PATH
+	
+	local mode=$(uci get sysmode.sysmode.mode)
+	if [ "x$mode" != "xrouter" ]; then
+		return
+	fi
+
+	read_from_partition
+	add_cron
+
+	local auc_service="tplink"
+	local cloud_features=$(uci get profile.@avira[0].homeshield_cloud_features_api -c "/etc/profile.d" -q)
+	if [ "${cloud_features}" == "yes" ]; then
+		local avira_status=$(uci get avira.info.libauc)
+		if [ "$avira_status" = "on" ] ; then
+			auc_service="avira"
+		fi
+	else
+		local avira_status=$(uci get avira.info.status)
+		if [ "$avira_status" = "available" ] || [ "$avira_status" = "libauc_available" ]; then
+			auc_service="avira"
+		fi
+	fi
+
+	local auc_web_Protection_service="auc"
+	local support_auc_secure=$(uci get profile.@avira[0].support_auc_secure -c "/etc/profile.d" -q)
+	if [ "${support_auc_secure}" == "yes" ]; then
+		local avira_web_Protection_status=$(uci get avira.info.aucsecure)
+		if [ "$avira_web_Protection_status" = "on" ]; then
+			auc_web_Protection_service="avira"
+		elif [ "$avira_web_Protection_status" = "local" ]; then
+			auc_web_Protection_service="local"
+		fi
+	fi
+
+	service_start /usr/sbin/url-class -s $auc_service -w $auc_web_Protection_service
+	
+	[ -e /etc/init.d/avira_accel_support ] && {
+		/etc/init.d/avira_accel_support restart
+	}	
+}
+
+stop() {
+	del_cron
+	service_stop /usr/sbin/url-class
+
+	[ -e /etc/init.d/avira_accel_support ] && {
+		/etc/init.d/avira_accel_support restart
+	}	
+}

@@ -1,0 +1,156 @@
+#!/bin/sh
+#
+# Copyright (c) 2014 TP-LINK Technologies Co., Ltd.
+#
+# All Rights Reserved.
+#
+. /lib/debug/dbg
+
+#
+#include file
+#
+
+. /lib/functions.sh
+. /usr/share/libubox/jshn.sh
+
+wifi_onemesh_search(){
+
+	local operation=$1
+	local sysmode=`uci get sysmode.sysmode.mode`
+
+	init_config_vif_name
+	local vifs=$CONFIG_VAPS
+	local mac_list=
+
+	[ "$sysmode" != "router" ] && return
+
+	for ifname in $vifs; do
+		if [ "$operation" = "start" ];then
+			#uci set onemesh.$ifname.enable="on"
+			#ubus call wifix update '{"vname":"'$ifname'"}'
+			uci set wireless.$ifname.enable="on"
+			uci set wireless.$ifname.disabled='0'
+			/sbin/wifix.sh vap restart $ifname
+			cfg80211tool $ifname maccmd 3
+			cfg80211tool $ifname maccmd 0
+		elif [ "$operation" = "stop" ];then
+			result=$(wlanconfig $ifname list sta | grep '..:..:..:..:..:..' | awk '{print $1}')
+			local mac_list=
+			for i in $result;do
+				cfg80211tool $ifname addmac $i
+			done
+			cfg80211tool $ifname maccmd 1
+		elif [ "$operation" = "cancel" ];then
+			#uci set onemesh.$ifname.enable="off"
+			#ubus call wifix update '{"vname":"'$ifname'"}'
+			uci set wireless.$ifname.enable="off"
+			uci set wireless.$ifname.disabled='1'
+			/sbin/wifix.sh vap restart $ifname
+		fi
+	done
+
+	if [ "$operation" = "start" ];then
+		config_vap_monitor start $vifs &
+		# Add tpie
+		vendor_oui="001d0f"
+		tpie_mac=`getfirm MAC|cut -d "-" -f 1-6 | sed 's/-//g'`
+		random_suffix="7859"
+		config_get gp_id_rand onemesh group_id
+		gp_id_rand=${gp_id_rand:0:4}
+		[ -n "$gp_id_rand" ] && random_suffix=$gp_id_rand
+		for ifname in $vifs; do
+			config_get onemesh_ie "$ifname" onemesh_ie
+			if [ "$onemesh_ie" = "on" ]; then
+				wlanconfig "$ifname" vendorie add len 30 oui $vendor_oui pcap_data 1001670000${tpie_mac}${tpie_mac}${random_suffix}0000${tpie_mac:8:4}00010000 ftype_map 18
+			fi
+		done
+	elif [ "$operation" = "cancel" ];then
+		config_vap_monitor cancel $vifs &
+		ubus call map meshd '{"action":"clear_white"}'
+		ubus call tdpServer onemesh_clean_devices '{}'
+		ubus call tdpServer onemesh_probe '{}' &
+	fi
+}
+
+config_vap_monitor() {
+	local action=$1
+	local vifs=$2
+
+	if [ "$action" = "start" ];then
+		local timer=0
+
+		while [ $timer -lt 20 ]
+		do
+			for ifname in $vifs; do
+				bssid=$(ifconfig $ifname | grep HWaddr | awk '{print $NF}')
+				if [-n "$bssid"];then
+					break
+				fi
+			done
+			if [ -z "$bssid" ];then
+				echo "========NO CONFIG VAP UP=======" > /dev/console
+				break
+			fi
+			sleep 15
+			timer=$(($timer+1))
+		done
+		if [ $timer -ge 20 ];then
+			wifi_onemesh_search cancel
+		fi
+		return
+
+	elif [ "$action" = "cancel" ];then
+		pid=$(ps -w|grep "/usr/sbin/onemesh_search" |grep -v "grep" |awk '{print $1}')
+		if [ -n "pid" ];then
+			for p in ${pid}; do
+				kill -9 $p
+			done
+		fi
+	fi
+}
+
+init_config_vif_name() {
+	# load wireless configuration
+	DEVICES=
+	config_cb() {
+		local type="$1"
+		local section="$2"
+
+		# section start
+		case "$type" in
+			wifi-device)
+				append DEVICES "$section"
+				config_set "$section" vifs ""
+			;;
+		esac
+
+		# section end
+		config_get TYPE "$CONFIG_SECTION" TYPE
+		case "$TYPE" in
+			wifi-iface)
+				config_get device "$CONFIG_SECTION" device
+				config_get vifs "$device" vifs
+				append vifs "$CONFIG_SECTION"
+				config_set "$device" vifs "$vifs"
+			;;
+		esac
+	}
+	config_load "${cfgfile:-wireless}"
+
+	# match config vaps
+	for dev in $DEVICES; do
+			config_get vifs "${dev}" vifs
+			for vif in $vifs; do
+				config_get mode $vif mode
+				config_get ifname $vif ifname
+				config_get onemesh_config $vif onemesh_config
+				if [ "$mode" = "ap" -a "$onemesh_config" != "" ]; then
+					append CONFIG_VAPS "$ifname"
+				fi
+			done
+	done
+	echo "======CONFIG VAPS: $CONFIG_VAPS" > /dev/console
+}
+
+CONFIG_VAPS=
+wifi_onemesh_search $*

@@ -1,0 +1,48 @@
+#!/bin/sh
+
+local power_mode=$1
+
+if [ "$power_mode" == "strong" ]; then
+	## thermal
+	#/etc/init.d/thermal restart
+	echo "============now switch to strong mode===========" > /dev/console
+	if [ "$(getfirm MODEL)" == "Archer AX56" ]; then
+		thermaltool -i wifi0 -set -dc 100 -lo0 -100 -hi0 100 -off0 0
+		thermaltool -i wifi0 -set -dc 100 -lo1 95 -hi1 105 -off1 30
+	else
+		thermaltool -i wifi0 -set -dc 100 -lo0 -100 -hi0 115 -off0 0
+		thermaltool -i wifi0 -set -dc 100 -lo1 112 -hi1 118 -off1 30
+	fi
+	thermaltool -i wifi1 -set -dc 100 -lo0 -100 -hi0 100 -off0 0
+	thermaltool -i wifi1 -set -dc 100 -lo1 95 -hi1 105 -off1 30
+
+elif [ "$power_mode" == "medium" ]; then
+	## thermal
+
+	echo "============now switch to medium mode===========" > /dev/console
+	if [ "$(getfirm MODEL)" == "Archer AX56" ]; then
+		thermaltool -i wifi0 -set -dc 100 -lo0 -100 -hi0 100 -off0 30
+	else
+		thermaltool -i wifi0 -set -dc 100 -lo0 -100 -hi0 115 -off0 30
+	fi
+	thermaltool -i wifi1 -set -dc 100 -lo0 -100 -hi0 100 -off0 30
+
+elif [ "$power_mode" == "weak" ]; then
+	## thermal
+	echo "============now switch to weak mode===========" > /dev/console
+	if [ "$(getfirm MODEL)" == "Archer AX56" ]; then
+		thermaltool -i wifi0 -set -dc 100 -lo0 -100 -hi0 100 -off0 50
+		thermaltool -i wifi0 -set -dc 100 -lo1 95 -hi1 105 -off1 50
+	else
+		thermaltool -i wifi0 -set -dc 100 -lo0 -100 -hi0 115 -off0 50
+		thermaltool -i wifi0 -set -dc 100 -lo1 112 -hi1 118 -off1 50
+	fi
+	thermaltool -i wifi1 -set -dc 100 -lo0 -100 -hi0 100 -off0 50
+	thermaltool -i wifi1 -set -dc 100 -lo1 95 -hi1 105 -off1 50
+
+else
+	echo "unsupported power mode type" > /dev/console
+fi
+
+thermaltool -i wifi0 -get > /dev/console
+thermaltool -i wifi1 -get > /dev/console

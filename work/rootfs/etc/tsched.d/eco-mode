@@ -1,0 +1,48 @@
+#!/bin/sh
+. /lib/config/uci.sh
+
+cmd=$1
+
+case $cmd in
+	*ACTIVE)
+		local ntp_type
+		ntp_type=$(uci -q get system.ntp.type)
+		if [ "$ntp_type" = "auto" ]; then
+			local power_mode=$(uci get eco_mode.eco_mode.power_mode)
+			power_mode_set $power_mode
+			local cur_time=$(cat /proc/uptime | awk  '{printf "%.0f\n", $1}')
+			uci_toggle_state eco_mode eco_mode active_start_time "$cur_time"
+			uci commit
+		fi
+	;;
+
+	*DORM)
+		power_mode_set "strong"
+		local cur_time=$(cat /proc/uptime | awk  '{printf "%.0f\n", $1}')
+		local active_start_time=$(uci -P /tmp/state get eco_mode.eco_mode.active_start_time)
+		local power_mode_duration=$(uci get eco_mode.eco_mode.power_mode_duration)
+		if [ $active_start_time != 0 ] && [ -n "$active_start_time" ]; then 
+			if [ $((cur_time-active_start_time)) -gt 0 ]; then
+				uci set eco_mode.eco_mode.power_mode_duration=$(((cur_time-active_start_time)/60+power_mode_duration))
+				uci commit
+				uci_commit_flash
+			fi
+			uci_toggle_state eco_mode eco_mode active_start_time 0
+		fi
+	;;
+
+	*RESET)
+		local cur_time=$(cat /proc/uptime | awk  '{printf "%.0f\n", $1}')
+		local active_start_time=$(uci -P /tmp/state get eco_mode.eco_mode.active_start_time)
+		local power_mode_duration=$(uci get eco_mode.eco_mode.power_mode_duration)
+		if [ $active_start_time != 0 ] && [ -n "$active_start_time" ]; then
+			if [ $((cur_time-active_start_time)) -gt 0 ]; then
+				uci set eco_mode.eco_mode.power_mode_duration=$(((cur_time-active_start_time)/60+power_mode_duration))
+				uci commit
+				uci_commit_flash
+			fi
+			uci_toggle_state eco_mode eco_mode active_start_time 0
+		fi
+		power_mode_set "strong"
+	;;
+esac

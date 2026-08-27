@@ -1,0 +1,5 @@
+#!/bin/sh
+local product_name=$(getfirm MODEL | tr -d ' ')
+local product_ver=$(getfirm HARDVERSION | tr '.' '_')
+local combined_name="${product_name}_${product_ver}"
+echo ${combined_name#"Archer"}

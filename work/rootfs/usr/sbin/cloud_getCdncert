@@ -1,0 +1,40 @@
+#!/usr/bin/lua
+
+local cloud_getFirmware = require "cloud_req.cloud_getFirmware"
+local dbg   = require "luci.tools.debug"
+
+local ret = nil
+local data = {}
+local retrycount = 1
+
+ret, data= cloud_getFirmware.get_cdncert(retrycount)
+
+-- connection error
+if ret == -1000 then
+	--params error, check your params
+	dbg.print("connection error: -1000")
+	os.exit(1)
+elseif ret == -5000 then
+	dbg.print("connection error: -5000")
+	os.exit(2)
+elseif ret ~= 0 then
+	dbg.print("ret = %s" % {ret})
+	os.exit(3)
+end
+
+-- cdn方案获取证书
+if data.result then
+	os.execute("touch /etc/certificate/cloud_cdn.cer")
+	local calist = data.result.caList
+	for i = 1, #calist do
+		local item = calist[i].caCertificate
+		item = string.gsub(item, "\n", "~")
+		os.execute("echo %s >> /etc/certificate/cloud_cdn.cer" % {item})
+		os.execute("sed -i 's/~/\\n/g' /etc/certificate/cloud_cdn.cer")
+		dbg.print("no error_code, all ok")
+		os.exit(0)
+	end
+else
+	dbg.print("Device id no found")
+	os.exit(3)
+end

@@ -1,0 +1,66 @@
+#!/bin/sh /etc/rc.common
+#
+# Copyright (C) 2022 Tp-link.com
+# Author: Yang Huiting <yanghuiting@tp-link.com.hk>
+# Date: 23Sep.22
+
+#USE_PROCD=1
+
+START=99
+STOP=99
+PROG="/usr/sbin/sad"
+start() {
+    local is_support=$(uci get profile.@wireless[0].support_smart_antenna -c /etc/profile.d)
+    if [ "$is_support" != "yes" ];then
+        echo  "smart_antenna is not support, return" > /dev/console
+        return 0
+    fi
+
+    echo "smart_antenna start service" > /dev/console
+    sa_mode=`uci get wireless.smart_antenna.mode`
+
+    if [ `uci get sysmode.sysmode.mode` = "repeater" ]; then
+        echo "sysmode changed to repeater, smart_antenna change to auto mode" > /dev/console
+        sa_mode="auto";
+    fi
+
+    if [ `uci get factory.factorymode.enable` = "yes" ]; then
+        echo "factory mode, smart_antenna change to horizontal mode" > /dev/console
+        sa_mode="horizontal";
+    fi
+
+    case $sa_mode in
+        "auto")
+            echo "smart_antenna change to auto mode" > /dev/console
+            #procd_open_instance
+            #procd_set_param command ${PROG}
+            #procd_close_instance
+            service_start ${PROG}
+            ;;
+        "horizontal")
+            echo "smart_antenna change to horizontal mode" > /dev/console
+            echo 0 > /sys/class/leds/chain0_5g/brightness
+            echo 0 > /sys/class/leds/chain1_5g/brightness
+            ;;
+        "vertical")
+            echo "smart_antenna change to vertical mode" > /dev/console
+            echo 1 > /sys/class/leds/chain0_5g/brightness
+            echo 1 > /sys/class/leds/chain1_5g/brightness
+            ;;
+    esac
+
+    return 0
+}
+
+stop() {
+    echo "smart_antenna stop service" > /dev/console
+    service_stop ${PROG}
+    
+    return 0           
+}
+
+restart() {
+    echo "smart_antenna restart service" > /dev/console
+    stop
+    start
+}

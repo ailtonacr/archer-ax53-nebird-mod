@@ -1,0 +1,27 @@
+#!/bin/sh
+
+[ "$DEVICE" == "lo" ] && exit 0
+
+. /lib/functions.sh
+
+config_load sysmode
+config_get sysmode sysmode mode
+
+[ "$sysmode" = "router" ] && exit 0
+
+#wan if in Router mode is exactly the lan if in AP mode.
+LANIF=$(uci get profile.@wan[0].wan_ifname -c "/etc/profile.d" -q)
+
+[ "$INTERFACE" == "lan" -a "$ACTION" == "ifup" ] && {
+	if [ "$sysmode" = "ap" -o "$sysmode" = "multissid" ];then
+		#firstly, let bridge forward igmp report.
+		echo 2 > /sys/class/net/br-lan/brif/$LANIF/multicast_router
+		#secondly, let mcs pass it instead of dropping it.
+		mcsctl -s br-lan route specify $LANIF
+	elif [ "$sysmode" = "repeater" -o "$sysmode" = "client" ];then
+		#flood doesn't mean mcs flood all igmp pkts to all ports. it means mcs alway let them pass.
+		mcsctl -s br-lan route flood
+		#it is ok to do so, cause wa3001 has only 1 wired port. flood is acceptable when no querier exists.
+		echo 0 > /sys/class/net/br-lan/bridge/multicast_querier
+	fi
+}

@@ -1,0 +1,36 @@
+#!/bin/sh
+. /lib/functions.sh
+
+DFT_WAN_IFNAME="eth1.4094"
+DFT_LAN_IFNAMES="1-eth1.2 2-eth1.3 3-eth1.4 4-eth1.5"
+
+get_ifname_speed()
+{
+	local ifname=$1
+	local lan_ifs
+	local speed=0
+
+	if [ "${ifname}" == "${DFT_WAN_IFNAME}" ]; then
+		speed=$(eval "status wan_speed  | awk '{print \$1}'")
+		echo ${speed}
+		return ${speed}
+	fi
+
+	local net_port # 1, 2 (LAN1, LAN2)
+	lan_ifs="$(uci_get_state iptv core viface)" # 1-eth1.2, 2-eth1.3
+	[ -z "${lan_ifs}" ] && lan_ifs=${DFT_LAN_IFNAMES}
+
+	for lan_if in ${lan_ifs}; do
+		local tmp_if=${lan_if##*-} # eth1.2
+		if [ "${tmp_if}" == "${ifname}" ]; then
+			net_port=${lan_if%%-*} # 1
+			speed=$(eval "status lan_speed  | awk '{print \$${net_port}}'")
+			break
+		fi
+	done
+
+	echo ${speed}
+	return ${speed}
+}
+
+get_ifname_speed $1

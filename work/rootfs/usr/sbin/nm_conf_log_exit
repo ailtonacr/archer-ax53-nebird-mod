@@ -1,0 +1,5 @@
+#!/bin/sh
+NM_CONF_LOG_SAVE_BIN="/usr/sbin/nm_conf_log_save"
+crontab -l | grep -v "$NM_CONF_LOG_SAVE_BIN" | crontab -
+
+

@@ -1,0 +1,24 @@
+#!/usr/bin/env lua
+local accmgnt   = require "luci.model.accountmgnt"
+local uci_r     = require("luci.model.uci").cursor()
+local dbg       = require "luci.tools.debug"
+local mesh      = require "luci.controller.admin.onemesh"
+local ACCCFG  = "accountmgnt"
+
+local acc_list = {}
+uci_r:foreach("accountmgnt", "account",
+    function(section)
+        acc_list[#acc_list + 1] = uci_r:get_all(ACCCFG, section[".name"])
+    end
+)
+
+for _, acc in ipairs(acc_list) do
+    accmgnt.tpap_authmgnt_sync(acc.username, acc.password)
+end
+
+local enc_usr = uci_r:get("onemesh", "onemesh_pri_sync", "username") or ""
+local enc_pwd = uci_r:get("onemesh", "onemesh_pri_sync", "password") or ""
+
+if "" ~= enc_usr then
+    mesh.slave_check_slave_key_pake(enc_usr, enc_pwd)
+end

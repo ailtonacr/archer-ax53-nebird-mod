@@ -1,0 +1,23 @@
+#!/usr/bin/lua
+
+local acc = require "luci.model.accountmgnt"
+local sys = require "luci.sys"
+local dbg = require "luci.tools.debug"
+local uci = require "luci.model.uci"
+local uci_r = uci.cursor()
+
+dbg.print("checkRePasswd go")
+
+if arg[1] then
+    local pwd = uci_r:get("accountmgnt", "admin", "password") or nil
+    if nil == pwd then
+        return
+    end
+
+    local check = acc.check_str("admin",arg[1])
+    local set_by_user = uci_r:get("accountmgnt", "admin", "set_by_user") or "no"
+    if false ~= check and "no" == set_by_user then
+        uci_r:delete("accountmgnt", "admin", "password")
+        uci_r:commit("accountmgnt")
+    end 
+end
