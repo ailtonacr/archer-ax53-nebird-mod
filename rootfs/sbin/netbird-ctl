@@ -1,5 +1,9 @@
 #!/bin/sh
 # netbird-ctl -- control interface for the NetBird client on TP-Link AX53.
+# Used by the LuCI backend (via fork_exec) and by /etc/init.d/netbird.
+# All mutable actions are invoked with argv (no shell interpolation of UI
+# fields); the setup key is always passed via a 0600 file, never argv/logs.
+
 . /lib/netbird/netbird.sh
 
 run() {
