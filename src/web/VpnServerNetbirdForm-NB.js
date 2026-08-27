@@ -1,4 +1,4 @@
-import { d as defineComponent, r as ref, e as onMounted, O as onUnmounted, h as _h, q as resolveComponent } from "./vendor-BrE4IMR2.js";
+import { d as defineComponent, r as ref, e as onMounted, O as onUnmounted, h as _h } from "./vendor-BrE4IMR2.js";
 import { s as api } from "./update-store-DQkZxaRI.js";
 
 const NB = "/admin/netbird";
@@ -16,8 +16,20 @@ function nbReq(operation, extra) {
 function errMsg(e) {
   if (!e) return "unknown error";
   if (typeof e === "string") return e;
-  if (e.response && e.response.data && e.response.data.error) return e.response.data.error;
-  if (e.message) return e.message;
+
+  const responseData = e.response && e.response.data;
+  const candidates = [
+    responseData && responseData.data && responseData.data.error,
+    responseData && responseData.error,
+    e.data && e.data.data && e.data.data.error,
+    e.data && e.data.error,
+    e.error,
+    e.message,
+    e.errorcode,
+  ];
+  for (const value of candidates) {
+    if (typeof value === "string" && value) return value;
+  }
   return "unknown error";
 }
 
@@ -36,6 +48,7 @@ export default defineComponent({
     const message = ref("");
     const error = ref("");
     const showLog = ref(false);
+    const dirty = ref(false);
     let statusRequestPending = false;
 
     function copySettings(value) {
@@ -46,21 +59,23 @@ export default defineComponent({
       if (!draft.value) return;
       draft.value[key] = value;
       dirty.value = true;
+      message.value = "";
     }
 
-    const dirty = ref(false);
-
-    async function load() {
+    async function load(clearStaleError = true) {
       if (statusRequestPending) return;
       statusRequestPending = true;
       try {
         const r = await nbReq("status");
         settings.value = r.settings || null;
-        // Runtime polling must never replace a draft that the user is editing.
-        if (!draft.value && r.settings) draft.value = copySettings(r.settings);
+        // Polling may refresh runtime state, but never overwrite an active edit.
+        if (r.settings && (!draft.value || !dirty.value)) {
+          draft.value = copySettings(r.settings);
+        }
         netbird.value = r.netbird || {};
         payload.value = r.payload || {};
         status.value = r.code;
+        if (clearStaleError) error.value = "";
       } catch (e) {
         error.value = errMsg(e);
       } finally {
@@ -68,8 +83,11 @@ export default defineComponent({
       }
     }
 
-    async function saveDraft() {
-      if (!draft.value || !dirty.value) return;
+    // This is also exposed to the stock modal footer. It intentionally throws
+    // after rendering the backend error so the parent dialog does not close on
+    // a failed NetBird save.
+    async function persistDraft() {
+      if (!draft.value || !dirty.value) return settings.value;
       busy.value = true;
       error.value = "";
       message.value = "";
@@ -78,71 +96,99 @@ export default defineComponent({
         settings.value = r.settings || settings.value;
         draft.value = copySettings(settings.value);
         dirty.value = false;
-        message.value = "saved";
+        message.value = "Configuração salva";
+        return settings.value;
       } catch (e) {
         error.value = errMsg(e);
+        throw e;
       } finally {
         busy.value = false;
-        await load();
+        await load(false);
       }
     }
 
     async function enroll() {
       if (!setupKey.value) return;
-      busy.value = true;
-      error.value = "";
-      message.value = "";
       try {
-        await nbReq("enroll", { setup_key: setupKey.value, management_url: draft.value.management_url });
+        // Persist management URL and feature flags before the first `up` so the
+        // enrollment uses exactly what is visible in the form.
+        if (dirty.value) await persistDraft();
+        busy.value = true;
+        error.value = "";
+        message.value = "";
+        const r = await nbReq("enroll", {
+          setup_key: setupKey.value,
+          management_url: draft.value.management_url,
+        });
         setupKey.value = "";
-        message.value = "enrolled";
+        settings.value = r.settings || settings.value;
+        draft.value = null;
+        dirty.value = false;
+        message.value = "Enrollment concluído";
       } catch (e) {
         error.value = errMsg(e);
       } finally {
         busy.value = false;
-        await load();
+        await load(false);
       }
     }
 
     async function control(op) {
+      if (dirty.value) {
+        error.value = "Salve as alterações antes de iniciar, parar ou reiniciar.";
+        return;
+      }
       busy.value = true;
       error.value = "";
+      message.value = "";
       try {
         await nbReq(op);
+        draft.value = null;
+        message.value = op === "stop" ? "NetBird parado" : op === "restart" ? "NetBird reiniciado" : "NetBird iniciado";
       } catch (e) {
         error.value = errMsg(e);
       } finally {
         busy.value = false;
-        await load();
+        await load(false);
       }
     }
 
     async function reEnroll() {
-      if (!window.confirm("Re-enroll removes the current NetBird identity and requires a new setup key. Continue?")) return;
+      if (!window.confirm("Refazer o enrollment remove a identidade NetBird atual e exige uma nova chave. Continuar?")) return;
       busy.value = true;
+      error.value = "";
+      message.value = "";
       try {
         await nbReq("clean");
-        updateDraft("enable", "0");
-        await saveDraft();
+        setupKey.value = "";
+        draft.value = null;
+        dirty.value = false;
         status.value = "enrollment_required";
+        message.value = "Identidade removida; informe uma nova chave de configuração.";
       } catch (e) {
         error.value = errMsg(e);
       } finally {
         busy.value = false;
-        await load();
+        await load(false);
       }
     }
 
     async function removeProfile() {
-      if (!window.confirm("Delete the NetBird client? This stops the process and removes its configuration.")) return;
+      if (!window.confirm("Excluir o cliente NetBird? Isso para o processo e remove sua identidade/configuração persistente.")) return;
       busy.value = true;
+      error.value = "";
+      message.value = "";
       try {
         await nbReq("clean");
+        setupKey.value = "";
+        draft.value = null;
+        dirty.value = false;
+        message.value = "Cliente NetBird removido";
       } catch (e) {
         error.value = errMsg(e);
       } finally {
         busy.value = false;
-        await load();
+        await load(false);
       }
     }
 
@@ -159,23 +205,26 @@ export default defineComponent({
     }
 
     const STATUS_LABEL = {
-      connected: "Connected",
-      connecting: "Connecting",
-      disconnected: "Disconnected",
-      disabled: "Disabled",
-      enrollment_required: "Enrollment required",
-      payload_missing: "Payload not ready",
-      stopped: "Stopped",
-      error: "Error",
+      connected: "Conectado",
+      connecting: "Conectando",
+      disconnected: "Desconectado",
+      disabled: "Desativado",
+      enrollment_required: "Enrollment necessário",
+      payload_missing: "Componente indisponível",
+      stopped: "Parado",
+      error: "Erro",
     };
 
+    const bridgeSave = function () { return persistDraft(); };
     let timer = null;
     onMounted(function () {
+      window.__netbirdSaveDraft = bridgeSave;
       load();
       timer = setInterval(load, 5000);
     });
     onUnmounted(function () {
       if (timer) clearInterval(timer);
+      if (window.__netbirdSaveDraft === bridgeSave) delete window.__netbirdSaveDraft;
     });
 
     function field(label, node) {
@@ -272,36 +321,32 @@ export default defineComponent({
         toggleBox("Monitor de rede", "network_monitor", false),
       ];
       const lanFields = [
-        toggleBox("Anunciar rede local", "advertise_lan", false),
-        field("Rede local / CIDR",
+        toggleBox("Permitir roteamento da LAN", "advertise_lan", false),
+        field("Rede LAN permitida / CIDR",
         _h("input", {
           type: "text",
           value: s.advertise_cidr || "",
-          disabled: props.disabled || busy.value,
+          disabled: props.disabled || busy.value || s.advertise_lan !== "1",
           class: "netbird-input",
           placeholder: "Ex.: 192.168.10.0/24",
           onInput: function (ev) { updateDraft("advertise_cidr", ev.target.value); },
-        }))
+        })),
+        _h("div", { class: "netbird-feedback text-text-400" }, "Esta opção habilita e restringe o encaminhamento local no AX53. A Network/Resource correspondente também deve existir no NetBird Management com este AX53 selecionado como routing peer."),
       ];
 
       const actions = [];
-      actions.push(_h("button", {
-        type: "button",
-        disabled: props.disabled || busy.value || !dirty.value,
-        class: "netbird-button netbird-button-primary",
-        onClick: saveDraft,
-      }, "Salvar"));
       if (st !== "connected") {
-        actions.push(_h("button", { type: "button", disabled: props.disabled || busy.value, class: "netbird-button netbird-button-primary", onClick: function () { control("start"); } }, "Iniciar"));
+        actions.push(_h("button", { type: "button", disabled: props.disabled || busy.value || dirty.value, class: "netbird-button netbird-button-primary", onClick: function () { control("start"); } }, "Iniciar"));
       } else {
-        actions.push(_h("button", { type: "button", disabled: props.disabled || busy.value, class: "netbird-button netbird-button-primary", onClick: function () { control("stop"); } }, "Parar"));
-        actions.push(_h("button", { type: "button", disabled: props.disabled || busy.value, class: "netbird-button netbird-button-secondary", onClick: function () { control("restart"); } }, "Reiniciar"));
+        actions.push(_h("button", { type: "button", disabled: props.disabled || busy.value || dirty.value, class: "netbird-button netbird-button-primary", onClick: function () { control("stop"); } }, "Parar"));
+        actions.push(_h("button", { type: "button", disabled: props.disabled || busy.value || dirty.value, class: "netbird-button netbird-button-secondary", onClick: function () { control("restart"); } }, "Reiniciar"));
       }
       actions.push(_h("button", { type: "button", disabled: props.disabled || busy.value, class: "netbird-button netbird-button-secondary", onClick: fetchLog }, "Logs"));
       actions.push(_h("button", { type: "button", disabled: props.disabled || busy.value, class: "netbird-button netbird-button-danger", onClick: removeProfile }, "Excluir"));
 
       const feedback = [];
       if (st === "payload_missing") feedback.push(_h("div", { class: "netbird-feedback text-text-400" }, "O componente do NetBird será baixado automaticamente quando necessário."));
+      if (dirty.value) feedback.push(_h("div", { class: "netbird-feedback text-text-400" }, "Há alterações não salvas. Use SALVAR no rodapé deste diálogo."));
       if (message.value) feedback.push(_h("div", { class: "netbird-feedback text-text-200" }, message.value));
       if (error.value) feedback.push(_h("div", { class: "netbird-feedback netbird-feedback-error" }, error.value));
       if (showLog.value) feedback.push(_h("pre", { class: "netbird-log" }, log.value || "(vazio)"));
@@ -311,7 +356,7 @@ export default defineComponent({
         _h("section", { class: "netbird-section netbird-connection" }, [_h("h3", { class: "netbird-heading" }, "Estado da conexão")].concat(statusRows)),
         _h("section", { class: "netbird-section" }, [_h("h3", { class: "netbird-heading" }, "Servidor NetBird")].concat(serverFields)),
         _h("section", { class: "netbird-section" }, [_h("h3", { class: "netbird-heading" }, "Recursos"), _h("div", { class: "netbird-feature-grid" }, featureFields)]),
-        _h("section", { class: "netbird-section" }, [_h("h3", { class: "netbird-heading" }, "Compartilhamento da LAN")].concat(lanFields)),
+        _h("section", { class: "netbird-section" }, [_h("h3", { class: "netbird-heading" }, "Roteamento da LAN")].concat(lanFields)),
         _h("section", { class: "netbird-section" }, [_h("h3", { class: "netbird-heading" }, "Ações"), _h("div", { class: "netbird-actions" }, actions)]),
         feedback.length ? _h("section", { class: "netbird-section netbird-diagnostics" }, [_h("h3", { class: "netbird-heading" }, "Diagnóstico")].concat(feedback)) : null,
       ]);
