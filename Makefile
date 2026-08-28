@@ -12,13 +12,19 @@ STOCK ?= stock_decrypted.bin
 BUILD_NO := $(shell test -f BUILD && tr -d '[:space:]' < BUILD || echo 1)
 FIRMWARE_OUTPUT ?= work/Archer-AX53-NetBird-build-$(BUILD_NO).bin
 
-.PHONY: all tools clean firmware
+.PHONY: all tools clean firmware test-netbird
 
 all: $(TARGET)
 
 $(TARGET): $(SRCS)
 	mkdir -p bin
 	$(CC) $(CFLAGS) $(SRCS) -o $(TARGET) $(LDFLAGS)
+
+# Offline tests only. Deliberately no GitHub Actions: this target is run by the
+# local firmware build and can also be invoked explicitly during development.
+test-netbird:
+	node src/web/VpnServerNetbirdForm-NB.test.mjs
+	python3 scripts/test-netbird-contracts.py .
 
 # Build a complete AX53 firmware from a decrypted stock image.
 # apply-mods.sh already runs the NetBird frontend patcher, so it must not be
@@ -31,7 +37,7 @@ $(TARGET): $(SRCS)
 #   soft_ver:<stock-base>-netbird mod Build N
 #   /etc/netbird-build -> build number + git commit/branch + UTC timestamp
 # The BUILD counter advances only after the output image exists successfully.
-firmware: $(TARGET)
+firmware: $(TARGET) test-netbird
 	@bash -o pipefail -c 'set -e; \
 		BUILD_NO="$$(tr -d "[:space:]" < BUILD)"; \
 		case "$$BUILD_NO" in ""|*[!0-9]*) echo "Error: BUILD must contain a positive integer" >&2; exit 1;; esac; \
@@ -51,17 +57,23 @@ firmware: $(TARGET)
 		case "$$STAMPED_VERSION" in *"-netbird mod Build $$BUILD_NO") : ;; *) echo "Error: unexpected stamped soft version: $$STAMPED_VERSION" >&2; exit 1;; esac; \
 		echo "=== [4/6] Verifying modified rootfs before repack ==="; \
 		grep -q "NetBird adapter for TP-Link" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua || { echo "Error: NetBird VPN adapter missing from rootfs" >&2; exit 1; }; \
+		grep -q "patch_dispatch_upvalues" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua || { echo "Error: hardened NetBird dispatcher adapter missing from rootfs" >&2; exit 1; }; \
+		grep -q "request_context" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua || { echo "Error: NetBird request-envelope parser missing from rootfs" >&2; exit 1; }; \
 		test -f rootfs/usr/lib/lua/luci/netbird/vpn_stock.lua || { echo "Error: preserved stock VPN controller missing outside LuCI controller tree" >&2; exit 1; }; \
 		test ! -e rootfs/usr/lib/lua/luci/controller/admin/vpn_stock.lua || { echo "Error: legacy vpn_stock.lua remains in LuCI controller tree and would break dispatch" >&2; exit 1; }; \
 		grep -q "/usr/lib/lua/luci/netbird/vpn_stock.lua" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua || { echo "Error: VPN adapter points at wrong stock-controller path" >&2; exit 1; }; \
+		cmp -s src/init/netbird.sh rootfs/lib/netbird/netbird.sh || { echo "Error: packaged netbird.sh drifted from canonical source" >&2; exit 1; }; \
+		cmp -s src/init/netbird-ctl rootfs/sbin/netbird-ctl || { echo "Error: packaged netbird-ctl drifted from canonical source" >&2; exit 1; }; \
+		cmp -s src/init/netbird.init rootfs/etc/init.d/netbird || { echo "Error: packaged netbird init drifted from canonical source" >&2; exit 1; }; \
 		python3 -c "from pathlib import Path; p=Path(\"rootfs/usr/lib/lua/luci/netbird/vpn_stock.lua\"); assert p.read_bytes()[:4] == b\"\\x1bLua\", f\"invalid stock VPN bytecode header: {p.read_bytes()[:4]!r}\""; \
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Ações NetBird" || { echo "Error: current native NetBird frontend missing from rootfs" >&2; exit 1; }; \
 		if zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "__netbirdSaveDraft"; then echo "Error: legacy NetBird save bridge still present in rootfs" >&2; exit 1; fi; \
 		grep -Fxq "build=$$BUILD_NO" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong build number" >&2; exit 1; }; \
 		grep -Fxq "display_version=$$STAMPED_VERSION" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong display version" >&2; exit 1; }; \
-		echo "    ok native VPN adapter"; \
+		echo "    ok native VPN adapter + dispatcher/request hardening"; \
 		echo "    ok preserved stock VPN controller outside LuCI controller tree"; \
 		echo "    ok no invalid vpn_stock.lua under luci/controller"; \
+		echo "    ok canonical runtime sources packaged without drift"; \
 		echo "    ok current NetBird frontend"; \
 		echo "    ok build identity: $$STAMPED_VERSION"; \
 		echo "=== [5/6] Repacking firmware ==="; \
