@@ -51,14 +51,17 @@ firmware: $(TARGET)
 		case "$$STAMPED_VERSION" in *"-netbird mod Build $$BUILD_NO") : ;; *) echo "Error: unexpected stamped soft version: $$STAMPED_VERSION" >&2; exit 1;; esac; \
 		echo "=== [4/6] Verifying modified rootfs before repack ==="; \
 		grep -q "NetBird adapter for TP-Link" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua || { echo "Error: NetBird VPN adapter missing from rootfs" >&2; exit 1; }; \
-		test -f rootfs/usr/lib/lua/luci/controller/admin/vpn_stock.lua || { echo "Error: preserved stock VPN controller missing from rootfs" >&2; exit 1; }; \
-		python3 -c "from pathlib import Path; p=Path(\"rootfs/usr/lib/lua/luci/controller/admin/vpn_stock.lua\"); assert p.read_bytes()[:4] == b\"\\x1bLua\", f\"invalid stock VPN bytecode header: {p.read_bytes()[:4]!r}\""; \
+		test -f rootfs/usr/lib/lua/luci/netbird/vpn_stock.lua || { echo "Error: preserved stock VPN controller missing outside LuCI controller tree" >&2; exit 1; }; \
+		test ! -e rootfs/usr/lib/lua/luci/controller/admin/vpn_stock.lua || { echo "Error: legacy vpn_stock.lua remains in LuCI controller tree and would break dispatch" >&2; exit 1; }; \
+		grep -q "/usr/lib/lua/luci/netbird/vpn_stock.lua" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua || { echo "Error: VPN adapter points at wrong stock-controller path" >&2; exit 1; }; \
+		python3 -c "from pathlib import Path; p=Path(\"rootfs/usr/lib/lua/luci/netbird/vpn_stock.lua\"); assert p.read_bytes()[:4] == b\"\\x1bLua\", f\"invalid stock VPN bytecode header: {p.read_bytes()[:4]!r}\""; \
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Ações NetBird" || { echo "Error: current native NetBird frontend missing from rootfs" >&2; exit 1; }; \
 		if zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "__netbirdSaveDraft"; then echo "Error: legacy NetBird save bridge still present in rootfs" >&2; exit 1; fi; \
 		grep -Fxq "build=$$BUILD_NO" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong build number" >&2; exit 1; }; \
 		grep -Fxq "display_version=$$STAMPED_VERSION" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong display version" >&2; exit 1; }; \
 		echo "    ok native VPN adapter"; \
-		echo "    ok preserved stock VPN controller"; \
+		echo "    ok preserved stock VPN controller outside LuCI controller tree"; \
+		echo "    ok no invalid vpn_stock.lua under luci/controller"; \
 		echo "    ok current NetBird frontend"; \
 		echo "    ok build identity: $$STAMPED_VERSION"; \
 		echo "=== [5/6] Repacking firmware ==="; \
