@@ -1,12 +1,11 @@
--- NetBird runtime/diagnostic controller for TP-Link Archer AX53 V1.
+-- NetBird profile/runtime controller for TP-Link Archer AX53 V1.
 --
--- VPN profile CRUD is intentionally NOT owned by this route. Create/read/
--- update/delete and list-level enable/disable go through TP-Link's native
--- /admin/vpn?form=server controller, which is extended by the NetBird adapter.
--- This endpoint is restricted to NetBird-specific runtime operations such as
--- status, enrollment, logs and payload diagnostics. Legacy settings/control
--- operations remain temporarily for compatibility with already flashed builds
--- but the current UI does not use them for profile CRUD.
+-- Hardware validation on Build 3 proved that TP-Link's compiled
+-- /admin/vpn?form=server dispatcher does not call replacement Lua handlers
+-- (adapter trace stayed dispatcher patched=0 and no add/get/modify handler was
+-- reached). NetBird therefore keeps the stock VPN Client UI, but its profile
+-- CRUD/control is owned explicitly by this dedicated endpoint. Stock VPN types
+-- continue to use TP-Link's untouched /admin/vpn controller.
 module("luci.controller.admin.netbird", package.seeall)
 
 local nixio = require "nixio"
@@ -14,6 +13,9 @@ local http   = require "luci.http"
 local lfs    = require "luci.fs"
 local model  = require "luci.model.netbird"
 local controller = require "luci.model.controller"
+
+local SETTINGS = "/tp_data/netbird/settings"
+local TRAFFIC_STATE = "/tmp/netbird-traffic.state"
 
 function index() entry({"admin", "netbird"}, call("_index")).leaf = true end
 function _index() return controller._index(dispatch) end
@@ -28,14 +30,50 @@ local function scalar(v)
     if v == nil then return nil end
     return tostring(v)
 end
+
+local function bool01(v, fallback)
+    if v == nil then return fallback end
+    if v == true or v == 1 or v == "1" or v == "on" or v == "true" or v == "enabled" then return "1" end
+    if v == false or v == 0 or v == "0" or v == "off" or v == "false" or v == "disabled" then return "0" end
+    return fallback
+end
+
 local function request_value(body, key)
     if body and body[key] ~= nil then return scalar(body[key]) end
     return http.formvalue(key)
 end
+
+local PROFILE_KEYS = {
+    management_url = "scalar",
+    hostname = "scalar",
+    disable_dns = "bool",
+    disable_firewall = "bool",
+    disable_client_routes = "bool",
+    disable_server_routes = "bool",
+    disable_ipv6 = "bool",
+    network_monitor = "bool",
+    advertise_lan = "bool",
+    advertise_cidr = "scalar",
+    wireguard_port = "scalar",
+    enable = "bool",
+}
+
 local function request_settings(body)
-    local cand, src = {}, body or http.formvaluetable() or {}
-    for k, v in pairs(src) do
-        if k ~= "operation" and k ~= "setup_key" then cand[k] = scalar(v) end
+    local src = body or http.formvaluetable() or {}
+    local cand = {}
+    for key, kind in pairs(PROFILE_KEYS) do
+        local value = src[key]
+        if value == nil then value = http.formvalue(key) end
+        if value ~= nil then
+            cand[key] = kind == "bool" and bool01(value, nil) or scalar(value)
+        end
+    end
+    -- The native-looking form exposes both enable and enabled across different
+    -- TP-Link bundle paths. Accept enabled only as a fallback.
+    if cand.enable == nil then
+        local enabled = src.enabled
+        if enabled == nil then enabled = http.formvalue("enabled") end
+        if enabled ~= nil then cand.enable = bool01(enabled, nil) end
     end
     return cand
 end
@@ -53,10 +91,6 @@ local function classify(settings, status)
 end
 
 local function identity_present()
-    -- Disconnected/Idle/Down alone do not prove enrollment. Only reconcile a
-    -- positive enrolled state when a persistent NetBird identity/config also
-    -- exists. This prevents an empty/cleaned profile from becoming enrolled=1
-    -- merely because a stopped daemon returned a generic disconnected state.
     local raw = lfs.readfile("/tp_data/netbird/default.json") or ""
     return raw:match("%S") ~= nil
 end
@@ -80,13 +114,11 @@ local function reconcile_runtime(settings, status)
     return settings
 end
 
--- Keep sampling state in /tmp only. The counters themselves come from the
--- kernel's wt0 interface and therefore do not add any persistent NAND writes.
-local TRAFFIC_STATE = "/tmp/netbird-traffic.state"
 local function read_number(path)
     local raw = lfs.readfile(path)
     return tonumber(raw and raw:match("(%d+)") or "") or 0
 end
+
 local function traffic_sample()
     local uptime = lfs.readfile("/proc/uptime") or ""
     local now = tonumber(uptime:match("^([%d%.]+)")) or 0
@@ -131,16 +163,23 @@ local function op_status()
         }
     end
     return reply({
-        code = classify(settings, st), settings = settings, netbird = nb,
-        profileExists = lfs.access("/tp_data/netbird/settings") and true or false,
+        code = classify(settings, st),
+        settings = settings,
+        netbird = nb,
+        profileExists = lfs.access(SETTINGS) and true or false,
         traffic = traffic_sample(),
-        payload = { version = model.payload_version(), state = model.payload_state(), provisioned = model.payload_ok() },
+        payload = {
+            version = model.payload_version(),
+            state = model.payload_state(),
+            provisioned = model.payload_ok(),
+        },
     })
 end
 
-local function op_settings_get() return reply({ settings = model.get_settings() }) end
+local function op_settings_get()
+    return reply({ settings = model.get_settings(), profileExists = lfs.access(SETTINGS) and true or false })
+end
 
--- Legacy compatibility only. Native UI CRUD no longer calls this operation.
 local function op_settings_set(body)
     local cand = request_settings(body)
     local prev = model.get_settings()
@@ -167,21 +206,24 @@ local function op_settings_set(body)
         out, rc = model.control("start")
         if rc == 0 then cur = model.set_internal_settings({ enrolled = "1", enable = "1" }) or cur end
     end
-
     if rc ~= nil and rc ~= 0 then
         return error_reply("apply_failed", "settings saved but apply failed: " .. (out or "start failed"):gsub("%s+$", ""))
     end
-    return reply({ settings = cur })
+    return reply({ settings = cur, profileExists = true })
+end
+
+local function op_profile_delete()
+    model.control("stop")
+    model.control("clean")
+    nixio.fs.unlink(SETTINGS)
+    nixio.fs.unlink(TRAFFIC_STATE)
+    return reply({ result = "ok", profileExists = false })
 end
 
 local function op_enroll(body)
     local key = request_value(body, "setup_key")
     if not key or key == "" then return error_reply("bad_request", "setup key required") end
-
-    -- Management URL and profile flags MUST already have been saved through the
-    -- native /admin/vpn?form=server CRUD flow. Enrollment is an action, not a
-    -- second profile persistence path.
-    if not lfs.access("/tp_data/netbird/settings") then
+    if not lfs.access(SETTINGS) then
         return error_reply("profile_required", "save the NetBird VPN profile before enrollment")
     end
 
@@ -196,13 +238,14 @@ local function op_enroll(body)
     return reply({ result = "ok", settings = cur })
 end
 
--- Legacy compatibility for old UI bundles. Current list-level enable/disable
--- goes through the native VPN controller adapter.
 local function op_control(op)
     local out, rc = model.control(op)
     if rc ~= 0 then return error_reply("control_failed", (out or op):gsub("%s+$", "")) end
-    if op == "start" or op == "restart" then model.set_internal_settings({ enrolled = "1", enable = "1" })
-    elseif op == "stop" then model.set_internal_settings({ enable = "0" }) end
+    if op == "start" or op == "restart" then
+        model.set_internal_settings({ enrolled = "1", enable = "1" })
+    elseif op == "stop" then
+        model.set_internal_settings({ enable = "0" })
+    end
     return reply({ result = "ok", output = out and out:gsub("%s+$", "") or "" })
 end
 
@@ -218,6 +261,7 @@ local function op_log(body)
     local n = request_value(body, "lines") or "100"
     return reply({ lines = model.log(tonumber(n) or 100) })
 end
+
 local function op_payload_status()
     return reply({ version = model.payload_version(), provisioned = model.payload_ok(), state = model.payload_state() })
 end
@@ -228,6 +272,7 @@ function dispatch(body)
         if op == "status" then return op_status()
         elseif op == "settings_get" then return op_settings_get()
         elseif op == "settings_set" then return op_settings_set(body)
+        elseif op == "profile_delete" then return op_profile_delete()
         elseif op == "enroll" then return op_enroll(body)
         elseif op == "start" or op == "stop" or op == "restart" then return op_control(op)
         elseif op == "clean" then return op_clean()
