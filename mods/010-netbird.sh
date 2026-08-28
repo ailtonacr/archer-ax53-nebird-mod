@@ -27,6 +27,7 @@ fi
 [ -d "$ROOTFS_DIR" ] || { echo "Error: rootfs dir does not exist: $ROOTFS_DIR" >&2; exit 1; }
 
 FILES="$SCRIPT_DIR/010-netbird-files"
+RUNTIME_SRC="$PROJECT_ROOT/src/init"
 R="$ROOTFS_DIR"
 WEB_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_web.py"
 NB_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird.lua"
@@ -37,11 +38,18 @@ echo "### NetBird native VPN Client integration ###"
 echo "    rootfs: $R"
 
 echo "[1/8] copying NetBird runtime files into rootfs ..."
-# The large NetBird ELF is deliberately absent here. Runtime materialization
-# downloads the pinned XZ payload to /tmp; only the tiny CLI wrapper/decoder
-# and integration files belong in squashfs.
-(cd "$FILES" && cp -a --parents lib/netbird/netbird.sh sbin/netbird-ctl sbin/xzmini \
-   usr/bin/netbird etc/init.d/netbird "$R/")
+# Shell runtime sources are canonical under src/init/. Do not keep hand-edited
+# copies in mods/010-netbird-files: that previously allowed the audited source
+# and the firmware payload to diverge. The mods directory now owns only payload
+# artifacts without an equivalent source file (xzmini and the tiny CLI wrapper).
+for f in netbird.sh netbird-ctl netbird.init; do
+  [ -f "$RUNTIME_SRC/$f" ] || { echo "Error: missing canonical runtime source $RUNTIME_SRC/$f" >&2; exit 1; }
+done
+mkdir -p "$R/lib/netbird" "$R/sbin" "$R/etc/init.d"
+cp "$RUNTIME_SRC/netbird.sh" "$R/lib/netbird/netbird.sh"
+cp "$RUNTIME_SRC/netbird-ctl" "$R/sbin/netbird-ctl"
+cp "$RUNTIME_SRC/netbird.init" "$R/etc/init.d/netbird"
+(cd "$FILES" && cp -a --parents sbin/xzmini usr/bin/netbird "$R/")
 
 # Canonical LuCI sources live under src/web-backend. Do not copy stale mirrored
 # controller/model files from mods/010-netbird-files.
@@ -53,6 +61,10 @@ cp "$NB_MODEL" "$R/usr/lib/lua/luci/model/netbird.lua"
 
 chmod 0755 "$R/sbin/netbird-ctl" "$R/sbin/xzmini" "$R/usr/bin/netbird" "$R/etc/init.d/netbird" 2>/dev/null || true
 chmod 0644 "$R/lib/netbird/netbird.sh" "$R/usr/lib/lua/luci/controller/admin/netbird.lua" "$R/usr/lib/lua/luci/model/netbird.lua" 2>/dev/null || true
+
+cmp -s "$RUNTIME_SRC/netbird.sh" "$R/lib/netbird/netbird.sh" || { echo "Error: packaged netbird.sh differs from canonical source" >&2; exit 1; }
+cmp -s "$RUNTIME_SRC/netbird-ctl" "$R/sbin/netbird-ctl" || { echo "Error: packaged netbird-ctl differs from canonical source" >&2; exit 1; }
+cmp -s "$RUNTIME_SRC/netbird.init" "$R/etc/init.d/netbird" || { echo "Error: packaged netbird init differs from canonical source" >&2; exit 1; }
 
 echo "[2/8] adapting the native TP-Link VPN controller for NetBird ..."
 [ -f "$VPN_ADAPTER" ] || { echo "Error: missing $VPN_ADAPTER" >&2; exit 1; }
@@ -91,10 +103,18 @@ fi
 # bytecode has been safely preserved at the non-controller path above.
 rm -f "$LEGACY_VPN_STOCK"
 
+# Syntax-check source Lua when the build host provides luac. This is optional
+# because the build environment itself does not require a host Lua runtime.
+if command -v luac >/dev/null 2>&1; then
+  luac -p "$VPN_ADAPTER" "$NB_CONTROLLER" "$NB_MODEL"
+fi
+
 cp "$VPN_ADAPTER" "$VPN_CONTROLLER"
 chmod 0644 "$VPN_CONTROLLER" "$VPN_STOCK" 2>/dev/null || true
 
 grep -q '/usr/lib/lua/luci/netbird/vpn_stock.lua' "$VPN_CONTROLLER" || { echo "Error: VPN adapter stock path is incorrect" >&2; exit 1; }
+grep -q 'patch_dispatch_upvalues' "$VPN_CONTROLLER" || { echo "Error: VPN adapter dispatcher hardening missing" >&2; exit 1; }
+grep -q 'request_context' "$VPN_CONTROLLER" || { echo "Error: VPN adapter request-envelope parser missing" >&2; exit 1; }
 [ ! -e "$LEGACY_VPN_STOCK" ] || { echo "Error: legacy vpn_stock.lua remains in LuCI controller tree" >&2; exit 1; }
 
 echo "[3/8] patching VPN Client frontend ..."
@@ -105,7 +125,7 @@ python3 "$WEB_PATCHER" "$R"
 
 echo "[4/8] adding CIDR-scoped fw_netbird_access/block ..."
 if ! grep -q "# NetBird v2 CIDR-scoped" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
-  cat >> "$R/lib/firewall/tpcmd.sh" <<'EOF'
+  cat >> "$R/lib/firewall/tpcmd.sh" <<'FIREWALL_EOF'
 
 # NetBird v2 CIDR-scoped -- later definition intentionally overrides v1.
 fw_netbird_access(){
@@ -147,7 +167,7 @@ fw_netbird_block(){
     fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0" }
     fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10" }
 }
-EOF
+FIREWALL_EOF
 else
   echo "    (CIDR-scoped override already present, skipping)"
 fi
