@@ -1,18 +1,23 @@
 -- NetBird adapter for TP-Link's native VPN Client controller.
 --
 -- This file is installed as luci.controller.admin.vpn while the original
--- compiled TP-Link controller is preserved as vpn_stock.lua.  We execute the
--- stock chunk first, retain every stock handler, and override only the server
--- handlers needed for the NetBird profile.  Therefore the HTTP contract stays
--- on the native /admin/vpn?form=server route and every non-NetBird VPN type is
--- delegated unchanged to TP-Link's implementation.
+-- compiled TP-Link controller is preserved OUTSIDE luci/controller/. LuCI's
+-- controller indexer scans every *.lua file below that tree and requires the
+-- declared module name to match the file path. Keeping a backup there as
+-- controller/admin/vpn_stock.lua therefore breaks the entire LuCI dispatch
+-- tree because the stock bytecode still declares luci.controller.admin.vpn.
+--
+-- We execute the stock chunk first, retain every stock handler, and override
+-- only the server handlers needed for the NetBird profile. Therefore the HTTP
+-- contract stays on the native /admin/vpn?form=server route and every
+-- non-NetBird VPN type is delegated unchanged to TP-Link's implementation.
 module("luci.controller.admin.vpn", package.seeall)
 
 local http    = require "luci.http"
 local fs      = require "luci.fs"
 local nbmodel = require "luci.model.netbird"
 
-local STOCK = "/usr/lib/lua/luci/controller/admin/vpn_stock.lua"
+local STOCK = "/usr/lib/lua/luci/netbird/vpn_stock.lua"
 local ok, err = pcall(dofile, STOCK)
 if not ok then
     error("failed to load stock VPN controller: " .. tostring(err))
@@ -169,7 +174,7 @@ local function save_profile(t)
     local saved, save_err = nbmodel.set_settings(cand)
     if not saved then return nil, save_err or "failed to save NetBird profile" end
 
-    -- Native CRUD owns the requested enabled state.  Only start automatically
+    -- Native CRUD owns the requested enabled state. Only start automatically
     -- after enrollment; otherwise saving a profile must never trigger SSO.
     if saved.enable == "1" and saved.enrolled == "1" then
         local out, rc = nbmodel.control("start")
@@ -202,7 +207,7 @@ local function delete_profile()
     return true
 end
 
--- The TP-Link controller exposes these handlers from the module.  Keep their
+-- The TP-Link controller exposes these handlers from the module. Keep their
 -- native names/signatures and use varargs so minor firmware signature changes
 -- do not affect delegation of stock VPN types.
 function get_server_info(...)
@@ -259,7 +264,7 @@ function enable_server(...)
 end
 
 -- Some stock handlers resolve a record through _find_item before calling the
--- operation-specific function.  Supplying the native NetBird record here keeps
+-- operation-specific function. Supplying the native NetBird record here keeps
 -- that path on /admin/vpn as well, while delegating every other lookup.
 function _find_item(...)
     if request_is_netbird(...) then return profile_info() end
@@ -267,6 +272,6 @@ function _find_item(...)
     return nil
 end
 
--- Keep the stock dispatcher and route registration.  The overridden module
+-- Keep the stock dispatcher and route registration. The overridden module
 -- handlers above are resolved by the stock controller at request time.
 if stock.vpn_dispatch then vpn_dispatch = stock.vpn_dispatch end
