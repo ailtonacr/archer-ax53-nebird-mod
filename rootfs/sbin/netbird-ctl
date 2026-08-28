@@ -8,6 +8,22 @@ run() {
     return $?
 }
 
+nb_bool_arg() {
+    local key="$1" flag="$2" def="${3:-0}" value
+    value="$(nb_get "$NB_SETTINGS_FILE" "$key" "$def")"
+    if [ "$value" = "1" ]; then printf '%s\n' "${flag}=true"; else printf '%s\n' "${flag}=false"; fi
+}
+
+nb_runtime_up_flags() {
+    printf '%s ' \
+        "$(nb_bool_arg disable_dns --disable-dns 1)" \
+        "$(nb_bool_arg disable_firewall --disable-firewall 1)" \
+        "$(nb_bool_arg disable_client_routes --disable-client-routes 1)" \
+        "$(nb_bool_arg disable_server_routes --disable-server-routes 1)" \
+        "$(nb_bool_arg disable_ipv6 --disable-ipv6 1)" \
+        "$(nb_bool_arg network_monitor --network-monitor 0)"
+}
+
 case "$1" in
 daemon-ping)
     [ -S "$NB_SOCK" ] || exit 1
@@ -22,7 +38,7 @@ up)
     nb_materialize 1 >/dev/null 2>&1 || exit 2
     nb_is_running || nb_daemon_start || exit 1
     nb_fw_access
-    run up --daemon-addr "unix://$NB_SOCK" --management-url "$(nb_mgmt_url)" $(nb_up_flags) "$@"
+    run up --daemon-addr "unix://$NB_SOCK" --management-url "$(nb_mgmt_url)" $(nb_runtime_up_flags) "$@"
     rc=$?
     [ "$rc" -eq 0 ] || nb_fw_block
     exit $rc
@@ -47,7 +63,7 @@ restart)
     nb_materialize 1 >/dev/null 2>&1 || exit 2
     nb_is_running || nb_daemon_start || exit 1
     nb_fw_access
-    run up --daemon-addr "unix://$NB_SOCK" --management-url "$(nb_mgmt_url)" $(nb_up_flags) "$@"
+    run up --daemon-addr "unix://$NB_SOCK" --management-url "$(nb_mgmt_url)" $(nb_runtime_up_flags) "$@"
     rc=$?
     [ "$rc" -eq 0 ] || nb_fw_block
     exit $rc
