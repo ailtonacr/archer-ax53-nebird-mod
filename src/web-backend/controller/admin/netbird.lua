@@ -3,6 +3,7 @@ module("luci.controller.admin.netbird", package.seeall)
 
 local nixio = require "nixio"
 local http   = require "luci.http"
+local lfs    = require "luci.fs"
 local model  = require "luci.model.netbird"
 local controller = require "luci.model.controller"
 
@@ -62,6 +63,38 @@ local function reconcile_runtime(settings, status)
     return settings
 end
 
+-- Keep sampling state in /tmp only. The counters themselves come from the
+-- kernel's wt0 interface and therefore do not add any persistent NAND writes.
+local TRAFFIC_STATE = "/tmp/netbird-traffic.state"
+local function read_number(path)
+    local raw = lfs.readfile(path)
+    return tonumber(raw and raw:match("(%d+)") or "") or 0
+end
+local function traffic_sample()
+    local uptime = lfs.readfile("/proc/uptime") or ""
+    local now = tonumber(uptime:match("^([%d%.]+)")) or 0
+    local rx = read_number("/sys/class/net/wt0/statistics/rx_bytes")
+    local tx = read_number("/sys/class/net/wt0/statistics/tx_bytes")
+    local upload, download = 0, 0
+
+    local prev = lfs.readfile(TRAFFIC_STATE) or ""
+    local pts, prx, ptx = prev:match("^([%d%.]+)%s+(%d+)%s+(%d+)")
+    pts, prx, ptx = tonumber(pts), tonumber(prx), tonumber(ptx)
+    if pts and prx and ptx and now > pts and rx >= prx and tx >= ptx then
+        local dt = now - pts
+        download = (rx - prx) / dt
+        upload = (tx - ptx) / dt
+    end
+
+    lfs.writefile(TRAFFIC_STATE, string.format("%.3f %d %d\n", now, rx, tx))
+    return {
+        uploadSpeed = math.floor(upload + 0.5),
+        downloadSpeed = math.floor(download + 0.5),
+        txBytes = tx,
+        rxBytes = rx,
+    }
+end
+
 local function op_status()
     local settings = model.get_settings()
     local st = model.status()
@@ -82,6 +115,7 @@ local function op_status()
     end
     return reply({
         code = classify(settings, st), settings = settings, netbird = nb,
+        traffic = traffic_sample(),
         payload = { version = model.payload_version(), state = model.payload_state(), provisioned = model.payload_ok() },
     })
 end
@@ -134,7 +168,6 @@ local function op_enroll(body)
     end
 
     local tmp = "/tmp/nb-setup-key-" .. tostring(os.time()) .. "-" .. tostring(math.random(0x7fffffff))
-    local lfs = require "luci.fs"
     if not lfs.writefile(tmp, key) then return error_reply("internal", "failed to stage setup key") end
     -- This TP-Link nixio binding expects a textual chmod mode.
     nixio.fs.chmod(tmp, "0600")
