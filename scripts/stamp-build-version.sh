@@ -42,6 +42,9 @@ case "$command" in
     test -n "$current_soft" || { echo "Error: soft_ver missing from $soft_file" >&2; exit 1; }
 
     base_version="${current_soft%% *}"
+    # If somebody intentionally uses a previously modded image as STOCK,
+    # avoid producing names such as 1.7.1-netbird-netbird.
+    base_version="${base_version%%-netbird*}"
     case "$base_version" in
       ''|*[!0-9A-Za-z._-]*) echo "Error: unexpected base soft version: '$base_version'" >&2; exit 1 ;;
     esac
