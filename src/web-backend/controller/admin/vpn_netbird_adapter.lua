@@ -8,13 +8,16 @@
 -- tree because the stock bytecode still declares luci.controller.admin.vpn.
 --
 -- We execute the stock chunk first, retain every stock handler, and override
--- only the server handlers needed for the NetBird profile. Therefore the HTTP
--- contract stays on the native /admin/vpn?form=server route and every
--- non-NetBird VPN type is delegated unchanged to TP-Link's implementation.
+-- only the server handlers needed for the NetBird profile. The adapter also
+-- patches dispatcher upvalues by function identity when the stock bytecode
+-- captured handlers in locals/tables. This keeps the stock HTTP envelope while
+-- making interception independent of whether the vendor dispatcher resolves
+-- handlers globally or through closures.
 module("luci.controller.admin.vpn", package.seeall)
 
 local http    = require "luci.http"
 local fs      = require "luci.fs"
+local json    = require "luci.json"
 local nbmodel = require "luci.model.netbird"
 
 local STOCK = "/usr/lib/lua/luci/netbird/vpn_stock.lua"
@@ -36,13 +39,21 @@ local stock = {
 }
 
 local SETTINGS = "/tp_data/netbird/settings"
+local TRACE_FILE = "/tmp/netbird-vpn-adapter.log"
 local NB_KEY = "netbird"
 local NB_TYPE = "netbird"
+local MAX_SCAN_DEPTH = 6
 
 local function scalar(v)
     if type(v) == "table" then return v[#v] end
     if v == nil then return nil end
     return tostring(v)
+end
+
+local function normalized(v)
+    local s = scalar(v)
+    if not s then return nil end
+    return s:lower()
 end
 
 local function bool01(v, fallback)
@@ -58,6 +69,17 @@ local function each_arg(...)
     return out
 end
 
+-- Minimal diagnostics live only in /tmp. Never record request bodies, setup
+-- keys, passwords, cookies or stok values. Only fixed event names and bounded
+-- internal errors/operation labels are written.
+local function trace(event, detail)
+    local f = io.open(TRACE_FILE, "a")
+    if not f then return end
+    local msg = tostring(detail or ""):gsub("[%c]", " "):sub(1, 240)
+    f:write(os.date("%Y-%m-%dT%H:%M:%S"), " ", tostring(event or "event"), " ", msg, "\n")
+    f:close()
+end
+
 local function request_body()
     local ok_body, body = pcall(http.formvaluetable)
     return ok_body and type(body) == "table" and body or {}
@@ -65,28 +87,112 @@ end
 
 local function table_is_netbird(t)
     if type(t) ~= "table" then return false end
-    local key = scalar(t.key or t.id or t.name)
-    local typ = scalar(t.type or t.proto or t.vpntype or t.client_type)
+    local key = normalized(t.key or t.id or t.name)
+    local typ = normalized(t.type or t.proto or t.vpntype or t.client_type)
     return key == NB_KEY or typ == NB_TYPE
 end
 
-local function request_is_netbird(...)
-    for _, v in ipairs(each_arg(...)) do
-        if type(v) == "string" and v == NB_KEY then return true end
-        if table_is_netbird(v) then return true end
-    end
-    local body = request_body()
-    return table_is_netbird(body) or scalar(http.formvalue("key")) == NB_KEY or scalar(http.formvalue("type")) == NB_TYPE
+local function decode_json_table(value)
+    if type(value) ~= "string" then return nil end
+    local first = value:match("^%s*(.)")
+    if first ~= "{" and first ~= "[" then return nil end
+    local ok_json, decoded = pcall(json.decode, value)
+    if ok_json and type(decoded) == "table" then return decoded end
+    return nil
 end
 
-local function first_table(...)
-    for _, v in ipairs(each_arg(...)) do
-        if type(v) == "table" and (v.key ~= nil or v.type ~= nil or v.server ~= nil or v.management_url ~= nil) then
-            return v
+local scan_value
+local PRIORITY_KEYS = {
+    "new", "data", "profile", "server", "item", "record", "value",
+    "form", "params", "payload", "config", "old",
+}
+
+-- Find a NetBird profile through both flat requests and the nested/serialized
+-- envelopes commonly used by TP-Link update-store. `new` is intentionally
+-- preferred over `old` for update requests.
+local function scan_table(t, seen, depth)
+    if type(t) ~= "table" or depth > MAX_SCAN_DEPTH then return nil end
+    seen = seen or {}
+    if seen[t] then return nil end
+    seen[t] = true
+
+    if table_is_netbird(t) then return t end
+
+    for _, key in ipairs(PRIORITY_KEYS) do
+        if t[key] ~= nil then
+            local found = scan_value(t[key], seen, depth + 1)
+            if found then return found end
         end
     end
+
+    for key, value in pairs(t) do
+        local prioritized = false
+        for _, pkey in ipairs(PRIORITY_KEYS) do
+            if key == pkey then prioritized = true break end
+        end
+        if not prioritized and (type(value) == "table" or type(value) == "string") then
+            local found = scan_value(value, seen, depth + 1)
+            if found then return found end
+        end
+    end
+    return nil
+end
+
+scan_value = function(value, seen, depth)
+    if depth > MAX_SCAN_DEPTH then return nil end
+    if type(value) == "table" then return scan_table(value, seen, depth) end
+    local decoded = decode_json_table(value)
+    if decoded then return scan_table(decoded, seen, depth) end
+    return nil
+end
+
+local function request_operation(body)
+    body = type(body) == "table" and body or {}
+    return normalized(body.operation or body.action or body.method)
+        or normalized(http.formvalue("operation"))
+        or normalized(http.formvalue("action"))
+        or normalized(http.formvalue("method"))
+        or "unknown"
+end
+
+local function direct_request_is_netbird()
+    local key = normalized(http.formvalue("key") or http.formvalue("id") or http.formvalue("name"))
+    local typ = normalized(http.formvalue("type") or http.formvalue("proto") or http.formvalue("vpntype") or http.formvalue("client_type"))
+    return key == NB_KEY or typ == NB_TYPE
+end
+
+local function request_context(...)
     local body = request_body()
-    return body
+    local profile, source
+
+    for i, value in ipairs(each_arg(...)) do
+        profile = scan_value(value, {}, 0)
+        if profile then source = "arg" .. tostring(i); break end
+    end
+
+    if not profile then
+        profile = scan_value(body, {}, 0)
+        if profile then source = "body" end
+    end
+
+    if not profile then
+        -- formvaluetable() implementations vary across TP-Link builds. Probe
+        -- common envelope fields individually as a compatibility fallback.
+        for _, key in ipairs(PRIORITY_KEYS) do
+            local raw = http.formvalue(key)
+            profile = scan_value(raw, {}, 0)
+            if profile then source = "form:" .. key; break end
+        end
+    end
+
+    local is_netbird = profile ~= nil or direct_request_is_netbird()
+    return {
+        body = body,
+        profile = profile or body,
+        is_netbird = is_netbird,
+        source = source or (is_netbird and "direct" or "none"),
+        operation = request_operation(body),
+    }
 end
 
 local function profile_exists()
@@ -169,6 +275,14 @@ local function candidate_from(t)
     return cand
 end
 
+local function safe_netbird(label, fn)
+    local ok_call, a, b = pcall(fn)
+    if ok_call then return a, b end
+    local msg = tostring(a or "unknown NetBird adapter error"):gsub("[%c]", " "):sub(1, 240)
+    trace("error:" .. label, msg)
+    return nil, "NetBird " .. label .. " failed: " .. msg
+end
+
 local function save_profile(t)
     local cand = candidate_from(t)
     local saved, save_err = nbmodel.set_settings(cand)
@@ -211,7 +325,11 @@ end
 -- native names/signatures and use varargs so minor firmware signature changes
 -- do not affect delegation of stock VPN types.
 function get_server_info(...)
-    if request_is_netbird(...) then return profile_info() end
+    local ctx = request_context(...)
+    if ctx.is_netbird then
+        trace("get", ctx.operation .. ":" .. ctx.source)
+        return safe_netbird("get", profile_info)
+    end
     if stock.get_server_info then return stock.get_server_info(...) end
     return nil
 end
@@ -229,35 +347,50 @@ function get_server_list(...)
 end
 
 function client_add_server(...)
-    if request_is_netbird(...) then return save_profile(first_table(...)) end
+    local ctx = request_context(...)
+    if ctx.is_netbird then
+        trace("add", ctx.operation .. ":" .. ctx.source)
+        return safe_netbird("add", function() return save_profile(ctx.profile) end)
+    end
     if stock.client_add_server then return stock.client_add_server(...) end
     return nil
 end
 
 function client_modify_server(...)
-    if request_is_netbird(...) then return save_profile(first_table(...)) end
+    local ctx = request_context(...)
+    if ctx.is_netbird then
+        trace("modify", ctx.operation .. ":" .. ctx.source)
+        return safe_netbird("modify", function() return save_profile(ctx.profile) end)
+    end
     if stock.client_modify_server then return stock.client_modify_server(...) end
     return nil
 end
 
 function client_delete_server(...)
-    if request_is_netbird(...) then return delete_profile() end
+    local ctx = request_context(...)
+    if ctx.is_netbird then
+        trace("delete", ctx.operation .. ":" .. ctx.source)
+        return safe_netbird("delete", delete_profile)
+    end
     if stock.client_delete_server then return stock.client_delete_server(...) end
     return nil
 end
 
 function enable_server(...)
-    if request_is_netbird(...) then
-        local t = first_table(...)
+    local ctx = request_context(...)
+    if ctx.is_netbird then
+        local t = type(ctx.profile) == "table" and ctx.profile or {}
         local value = t.enable
         if value == nil then value = t.enabled end
+        if value == nil then value = http.formvalue("enable") or http.formvalue("enabled") end
         if value == nil then
             local args = each_arg(...)
             for _, v in ipairs(args) do
                 if v == "on" or v == "off" or v == "1" or v == "0" or type(v) == "boolean" then value = v end
             end
         end
-        return set_enabled(value)
+        trace("enable", ctx.operation .. ":" .. ctx.source)
+        return safe_netbird("enable", function() return set_enabled(value) end)
     end
     if stock.enable_server then return stock.enable_server(...) end
     return nil
@@ -267,11 +400,70 @@ end
 -- operation-specific function. Supplying the native NetBird record here keeps
 -- that path on /admin/vpn as well, while delegating every other lookup.
 function _find_item(...)
-    if request_is_netbird(...) then return profile_info() end
+    local ctx = request_context(...)
+    if ctx.is_netbird then return profile_info() end
     if stock._find_item then return stock._find_item(...) end
     return nil
 end
 
--- Keep the stock dispatcher and route registration. The overridden module
--- handlers above are resolved by the stock controller at request time.
+-- Some vendor Lua bytecode versions capture handler functions into dispatcher
+-- upvalues or handler tables during module initialization. Merely replacing the
+-- globals is insufficient in that case. Patch only values that are EXACTLY one
+-- of the captured stock handler functions, preserving every unrelated upvalue.
+local function patch_handler_table(t, replacements, seen, depth)
+    if type(t) ~= "table" or depth > 3 then return 0 end
+    seen = seen or {}
+    if seen[t] then return 0 end
+    seen[t] = true
+    local changed = 0
+    for key, value in pairs(t) do
+        local replacement = replacements[value]
+        if replacement then
+            t[key] = replacement
+            changed = changed + 1
+        elseif type(value) == "table" then
+            changed = changed + patch_handler_table(value, replacements, seen, depth + 1)
+        end
+    end
+    return changed
+end
+
+local function patch_dispatch_upvalues()
+    if type(stock.vpn_dispatch) ~= "function" then return 0 end
+    if type(debug) ~= "table" or type(debug.getupvalue) ~= "function" or type(debug.setupvalue) ~= "function" then
+        trace("dispatcher", "debug-upvalues-unavailable")
+        return 0
+    end
+
+    local replacements = {}
+    if type(stock.get_server_info) == "function" then replacements[stock.get_server_info] = get_server_info end
+    if type(stock.get_server_list) == "function" then replacements[stock.get_server_list] = get_server_list end
+    if type(stock.client_add_server) == "function" then replacements[stock.client_add_server] = client_add_server end
+    if type(stock.client_modify_server) == "function" then replacements[stock.client_modify_server] = client_modify_server end
+    if type(stock.client_delete_server) == "function" then replacements[stock.client_delete_server] = client_delete_server end
+    if type(stock.enable_server) == "function" then replacements[stock.enable_server] = enable_server end
+    if type(stock._find_item) == "function" then replacements[stock._find_item] = _find_item end
+
+    local changed, i = 0, 1
+    while true do
+        local name, value = debug.getupvalue(stock.vpn_dispatch, i)
+        if not name then break end
+        local replacement = replacements[value]
+        if replacement then
+            debug.setupvalue(stock.vpn_dispatch, i, replacement)
+            changed = changed + 1
+        elseif type(value) == "table" then
+            changed = changed + patch_handler_table(value, replacements, {}, 0)
+        end
+        i = i + 1
+    end
+    trace("dispatcher", "patched=" .. tostring(changed))
+    return changed
+end
+
+patch_dispatch_upvalues()
+
+-- Keep the stock dispatcher itself so its request/response envelope remains
+-- byte-for-byte vendor-owned. The adapter handlers above are visible either as
+-- globals or through the patched captured references.
 if stock.vpn_dispatch then vpn_dispatch = stock.vpn_dispatch end
