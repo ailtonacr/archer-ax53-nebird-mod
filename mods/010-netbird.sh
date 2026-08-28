@@ -15,10 +15,16 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 if [ -z "${ROOTFS_DIR:-}" ]; then
-  if [ -d "squashfs-root" ]; then ROOTFS_DIR="squashfs-root"
-  elif [ -d "rootfs" ]; then ROOTFS_DIR="rootfs"
+  if [ -d "rootfs" ]; then ROOTFS_DIR="$PROJECT_ROOT/rootfs"
+  elif [ -d "squashfs-root" ]; then ROOTFS_DIR="$PROJECT_ROOT/squashfs-root"
   else echo "Error: no rootfs dir" >&2; exit 1; fi
+else
+  case "$ROOTFS_DIR" in
+    /*) ;;
+    *) ROOTFS_DIR="$PROJECT_ROOT/$ROOTFS_DIR" ;;
+  esac
 fi
+[ -d "$ROOTFS_DIR" ] || { echo "Error: rootfs dir does not exist: $ROOTFS_DIR" >&2; exit 1; }
 
 FILES="$SCRIPT_DIR/010-netbird-files"
 R="$ROOTFS_DIR"
@@ -28,13 +34,14 @@ NB_MODEL="$PROJECT_ROOT/src/web-backend/model/netbird.lua"
 VPN_ADAPTER="$PROJECT_ROOT/src/web-backend/controller/admin/vpn_netbird_adapter.lua"
 
 echo "### NetBird native VPN Client integration ###"
+echo "    rootfs: $R"
 
 echo "[1/8] copying NetBird runtime files into rootfs ..."
 # The large NetBird ELF is deliberately absent here. Runtime materialization
 # downloads the pinned XZ payload to /tmp; only the tiny CLI wrapper/decoder
 # and integration files belong in squashfs.
 (cd "$FILES" && cp -a --parents lib/netbird/netbird.sh sbin/netbird-ctl sbin/xzmini \
-   usr/bin/netbird etc/init.d/netbird "$PROJECT_ROOT/$R/")
+   usr/bin/netbird etc/init.d/netbird "$R/")
 
 # Canonical LuCI sources live under src/web-backend. Do not copy stale mirrored
 # controller/model files from mods/010-netbird-files.
@@ -71,12 +78,9 @@ echo "[3/8] patching VPN Client frontend ..."
 [ -f "$WEB_PATCHER" ] || { echo "Error: missing $WEB_PATCHER" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required for frontend patching" >&2; exit 1; }
 command -v node >/dev/null 2>&1 || { echo "Error: node is required for frontend syntax validation" >&2; exit 1; }
-python3 "$WEB_PATCHER" "$PROJECT_ROOT/$R"
+python3 "$WEB_PATCHER" "$R"
 
 echo "[4/8] adding CIDR-scoped fw_netbird_access/block ..."
-# Append a v2 override even when an older NetBird function already exists in a
-# previously patched rootfs. Shell uses the last function definition, which
-# makes this idempotent and safely upgrades broad wt0<->LAN rules.
 if ! grep -q "# NetBird v2 CIDR-scoped" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
   cat >> "$R/lib/firewall/tpcmd.sh" <<'EOF'
 
@@ -91,7 +95,6 @@ fw_netbird_access(){
     fw_s_add 4 f INPUT ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
     fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
 
-    # Remove legacy broad forwarding before installing scoped rules.
     fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif" }
     fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0" }
     fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10" }
@@ -154,9 +157,6 @@ for f in lib/netbird/netbird.sh sbin/netbird-ctl sbin/xzmini usr/bin/netbird etc
   [ -f "$R/$f" ] && echo "    ok  $f" || { echo "    MISSING $f" >&2; exit 1; }
 done
 
-# The adapter must be text and the preserved controller must remain Lua bytecode
-# (ESC 'Lua' header). This prevents accidentally preserving an older adapter as
-# the stock implementation on a fresh build.
 grep -q 'NetBird adapter for TP-Link' "$R/usr/lib/lua/luci/controller/admin/vpn.lua" || {
   echo "Error: native VPN adapter validation failed" >&2; exit 1;
 }
