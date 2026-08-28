@@ -1,4 +1,5 @@
-#!/bin/bash -e
+#!/bin/bash
+set -euo pipefail
 #
 # apply-mods.sh -- discovers and applies everything in mods/ against the
 # selected unpacked rootfs tree, in order.
@@ -8,7 +9,7 @@
 # to directory auto-detection remains useful for older standalone workflows.
 #
 # Naming convention inside mods/:
-#   NNN-description.sh        -- run directly via `bash`, in sort -V order
+#   NNN-description.sh        -- run directly via bash -e, in sort -V order
 #   NNN.patch / NNN-desc.patch -- applied via vendor/apply_patches.sh
 #                                  against the selected rootfs, as a single batch
 #
@@ -38,8 +39,6 @@ if [ -n "${ROOTFS_DIR:-}" ]; then
     exit 1
   }
 elif [ -d "rootfs" ]; then
-  # The current AX53 UBIFS pipeline always unpacks to rootfs/. Prefer it over a
-  # stale squashfs-root/ left by unrelated/legacy experiments.
   ROOTFS_DIR="$PROJECT_ROOT/rootfs"
 elif [ -d "squashfs-root" ]; then
   ROOTFS_DIR="$PROJECT_ROOT/squashfs-root"
@@ -115,7 +114,9 @@ if [ ${#valid_scripts[@]} -gt 0 ]; then
   echo "=== Running ${#sorted_scripts[@]} mod script(s) ==="
   for s in "${sorted_scripts[@]}"; do
     echo "--- $(basename "$s") ---"
-    bash "$s"
+    # Explicit -e is required because invoking `bash script.sh` does not honor
+    # options written in the script's shebang (e.g. #!/bin/bash -e).
+    bash -e "$s"
   done
 fi
 
