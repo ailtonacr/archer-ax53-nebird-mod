@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Offline frontend bundle patcher for native NetBird VPN Client integration.
 
-NetBird is presented as a real VPN Client type, but CRUD stays on TP-Link's
-native /admin/vpn?form=server flow.  The dedicated /admin/netbird endpoint is
+NetBird is presented as a real VPN Client type and CRUD stays on TP-Link's
+native /admin/vpn?form=server flow. The dedicated /admin/netbird endpoint is
 used only by the custom form for NetBird-specific runtime/diagnostic actions
 (status, enrollment and logs).
 
@@ -49,6 +49,12 @@ STOCK_SAVE = '"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
 LEGACY_SAVE = 'it.Netbird===i.type?window.__netbirdSaveDraft?await window.__netbirdSaveDraft():(()=>{throw new Error("NetBird form unavailable")})():"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
 LEGACY_SAVE_SKIP = 'it.Netbird!==i.type&&("add"===n.type?await Ce(i):await ne(i,n.tableItem))'
 
+# The stock serializer knows only TP-Link's built-in VPN types. Extend it for
+# NetBird instead of bypassing the stock update path. Returning a plain clone
+# preserves the custom form fields while the request still goes to /admin/vpn.
+R_MARKER = 'function R(e){'
+R_NATIVE = 'function R(e){if(e&&e.type===u.Netbird)return{...e,key:e.key||"netbird",type:u.Netbird,server:e.management_url||e.server||""};'
+
 
 def migrate_model(text):
     text = text.replace(LEGACY_UPDATE, STOCK_UPDATE)
@@ -56,6 +62,15 @@ def migrate_model(text):
     text = text.replace(LEGACY_NB_EXPORT_PREFIX + 'export{_ as A', 'export{_ as A')
     text = text.replace('j as z,nbStatus as nbA,nbSettingsSet as nbB,nbEnroll as nbC,nbControl as nbD,nbLog as nbE};', 'j as z};')
     return text
+
+
+def add_native_serializer(text, name):
+    if R_NATIVE in text:
+        return text
+    count = text.count(R_MARKER)
+    if count != 1:
+        raise RuntimeError(f"{name}: expected exactly one stock serializer marker {R_MARKER!r}, found {count}")
+    return text.replace(R_MARKER, R_NATIVE, 1)
 
 
 def migrate_vpn_page(text):
@@ -119,7 +134,7 @@ def write_js(path, is_gzip, text):
     open(path, "wb").write(payload)
 
 
-def apply_file(root, rel, is_gzip, patches, migrate=None):
+def apply_file(root, rel, is_gzip, patches, migrate=None, post=None):
     path = os.path.join(root, rel)
     if not os.path.exists(path):
         raise RuntimeError(f"missing {path}")
@@ -127,6 +142,8 @@ def apply_file(root, rel, is_gzip, patches, migrate=None):
     if migrate:
         text = migrate(text)
     text = patch_text(text, patches, rel)
+    if post:
+        text = post(text, rel)
     check_js(rel, text)
     write_js(path, is_gzip, text)
     print(f"  patched {rel} ({len(text)} bytes)")
@@ -168,6 +185,8 @@ def assert_native_crud(root):
 
     if STOCK_UPDATE not in model or STOCK_DELETE not in model:
         raise RuntimeError("stock VPN update/delete paths were not restored")
+    if R_NATIVE not in model:
+        raise RuntimeError("NetBird native serializer was not installed")
     if STOCK_LIST not in page or STOCK_SAVE not in page:
         raise RuntimeError("stock VPN list/save paths were not restored")
 
@@ -177,7 +196,7 @@ def main():
     print(f"Patching frontend bundles under {root} ...")
     apply_file(root, f"{JS}/update-store-DQkZxaRI.js.gz", True, UPDATE_STORE)
     apply_file(root, f"{JS}/util-JEiJiY0O.js", False, UTIL)
-    apply_file(root, f"{JS}/model-CI6Gt3Hz.js.gz", True, [], migrate=migrate_model)
+    apply_file(root, f"{JS}/model-CI6Gt3Hz.js.gz", True, [], migrate=migrate_model, post=add_native_serializer)
     apply_file(root, f"{JS}/index-DTNtPvwx.js.gz", True, VPNPAGE, migrate=migrate_vpn_page)
 
     src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VpnServerNetbirdForm-NB.js")
