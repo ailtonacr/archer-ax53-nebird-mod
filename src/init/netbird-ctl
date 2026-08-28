@@ -78,9 +78,12 @@ clean)
     ;;
 
 status)
-    # sanitized JSON for the backend: fall back to a clear "down" blob
+    # sanitized JSON for the backend: fall back to a clear "down" blob.
+    # Preserve nb_payload_status' result before running any shell test; `$?`
+    # would otherwise be overwritten by `[ -S ... ]`.
     nb_payload_status
-    if [ -S "$NB_SOCK" ] && [ $? -eq "$NB_ST_READY" ]; then
+    payload_rc=$?
+    if [ "$payload_rc" -eq "$NB_ST_READY" ] && [ -S "$NB_SOCK" ]; then
         "$NB_BIN" status -j --daemon-addr "unix://$NB_SOCK" 2>/dev/null \
             || printf '%s\n' '{"daemonStatus":"Stopped","cliVersion":"","daemonVersion":"","management":{"url":"","connected":false,"error":"failed to query daemon"},"signal":{"url":"","connected":false},"peers":{"total":0,"connected":0},"netbirdIp":"","publicKey":"","fqdn":""}'
     else
