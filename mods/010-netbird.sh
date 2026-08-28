@@ -57,22 +57,45 @@ chmod 0644 "$R/lib/netbird/netbird.sh" "$R/usr/lib/lua/luci/controller/admin/net
 echo "[2/8] adapting the native TP-Link VPN controller for NetBird ..."
 [ -f "$VPN_ADAPTER" ] || { echo "Error: missing $VPN_ADAPTER" >&2; exit 1; }
 VPN_CONTROLLER="$R/usr/lib/lua/luci/controller/admin/vpn.lua"
-VPN_STOCK="$R/usr/lib/lua/luci/controller/admin/vpn_stock.lua"
+VPN_STOCK_DIR="$R/usr/lib/lua/luci/netbird"
+VPN_STOCK="$VPN_STOCK_DIR/vpn_stock.lua"
+LEGACY_VPN_STOCK="$R/usr/lib/lua/luci/controller/admin/vpn_stock.lua"
 [ -f "$VPN_CONTROLLER" ] || { echo "Error: missing stock VPN controller $VPN_CONTROLLER" >&2; exit 1; }
+mkdir -p "$VPN_STOCK_DIR"
 
-# Preserve the original compiled TP-Link controller exactly once. On repeated
-# builds vpn.lua is already our text adapter, so the immutable stock bytecode
-# remains in vpn_stock.lua and must never be overwritten by the adapter.
+# LuCI indexes every *.lua file below luci/controller and verifies that the
+# module declared inside matches the path. The preserved TP-Link bytecode still
+# declares luci.controller.admin.vpn, so storing it as controller/admin/
+# vpn_stock.lua makes the entire dispatcher return HTTP 500. Preserve the stock
+# chunk outside the controller tree and load it explicitly with dofile().
 if [ ! -f "$VPN_STOCK" ]; then
-  cp -p "$VPN_CONTROLLER" "$VPN_STOCK"
-  echo "    preserved stock controller as vpn_stock.lua"
+  if [ -f "$LEGACY_VPN_STOCK" ]; then
+    cp -p "$LEGACY_VPN_STOCK" "$VPN_STOCK"
+    echo "    migrated legacy stock controller backup outside controller tree"
+  else
+    python3 - "$VPN_CONTROLLER" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+if p.read_bytes()[:4] != b'\x1bLua':
+    raise SystemExit("Error: vpn.lua is already an adapter but no preserved stock controller was found")
+PY
+    cp -p "$VPN_CONTROLLER" "$VPN_STOCK"
+    echo "    preserved stock controller outside controller tree"
+  fi
 else
-  echo "    stock controller already preserved"
+  echo "    stock controller already preserved outside controller tree"
 fi
+
+# A legacy backup in controller/admin is fatal to LuCI controller indexing even
+# if the adapter itself never requires() it. Remove it from the image after the
+# bytecode has been safely preserved at the non-controller path above.
+rm -f "$LEGACY_VPN_STOCK"
+
 cp "$VPN_ADAPTER" "$VPN_CONTROLLER"
 chmod 0644 "$VPN_CONTROLLER" "$VPN_STOCK" 2>/dev/null || true
 
-grep -q 'vpn_stock.lua' "$VPN_CONTROLLER" || { echo "Error: VPN adapter was not installed" >&2; exit 1; }
+grep -q '/usr/lib/lua/luci/netbird/vpn_stock.lua' "$VPN_CONTROLLER" || { echo "Error: VPN adapter stock path is incorrect" >&2; exit 1; }
+[ ! -e "$LEGACY_VPN_STOCK" ] || { echo "Error: legacy vpn_stock.lua remains in LuCI controller tree" >&2; exit 1; }
 
 echo "[3/8] patching VPN Client frontend ..."
 [ -f "$WEB_PATCHER" ] || { echo "Error: missing $WEB_PATCHER" >&2; exit 1; }
@@ -152,15 +175,18 @@ ln -sfn "../init.d/netbird" "$R/etc/rc.d/S99netbird" 2>/dev/null || true
 echo "[8/8] verifying installed files ..."
 for f in lib/netbird/netbird.sh sbin/netbird-ctl sbin/xzmini usr/bin/netbird etc/init.d/netbird \
          usr/lib/lua/luci/controller/admin/netbird.lua usr/lib/lua/luci/model/netbird.lua \
-         usr/lib/lua/luci/controller/admin/vpn.lua usr/lib/lua/luci/controller/admin/vpn_stock.lua \
+         usr/lib/lua/luci/controller/admin/vpn.lua usr/lib/lua/luci/netbird/vpn_stock.lua \
          www/webpages/js/VpnServerNetbirdForm-NB.js.gz; do
   [ -f "$R/$f" ] && echo "    ok  $f" || { echo "    MISSING $f" >&2; exit 1; }
 done
 
+[ ! -e "$R/usr/lib/lua/luci/controller/admin/vpn_stock.lua" ] || {
+  echo "Error: controller-tree vpn_stock.lua would break LuCI indexing" >&2; exit 1;
+}
 grep -q 'NetBird adapter for TP-Link' "$R/usr/lib/lua/luci/controller/admin/vpn.lua" || {
   echo "Error: native VPN adapter validation failed" >&2; exit 1;
 }
-python3 - "$R/usr/lib/lua/luci/controller/admin/vpn_stock.lua" <<'PY'
+python3 - "$R/usr/lib/lua/luci/netbird/vpn_stock.lua" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 data = p.read_bytes()[:4]
