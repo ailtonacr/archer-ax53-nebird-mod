@@ -215,6 +215,18 @@ export default defineComponent({
       error: "Erro",
     };
 
+    const PAYLOAD_LABEL = {
+      READY: "Pronto",
+      PAYLOAD_NOT_DOWNLOADED: "Ainda não baixado",
+      PAYLOAD_DOWNLOAD_FAILED: "Falha ao baixar o componente",
+      PAYLOAD_INVALID: "Componente inválido",
+      UNKNOWN: "Estado desconhecido",
+    };
+
+    function payloadLabel(state) {
+      return PAYLOAD_LABEL[state] || "Estado desconhecido";
+    }
+
     const bridgeSave = function () { return persistDraft(); };
     let timer = null;
     onMounted(function () {
@@ -272,7 +284,7 @@ export default defineComponent({
       ];
       if (pv && pv.state) statusRows.push(_h("div", { class: "netbird-status-detail" }, [
         _h("span", null, "Componente"),
-        _h("strong", null, pv.state === "READY" ? "Pronto" : pv.state),
+        _h("strong", null, payloadLabel(pv.state)),
       ]));
       if (st === "connected") statusRows.push(_h("div", { class: "netbird-status-grid" }, [
         _h("span", null, "IP NetBird: " + (nb.netbirdIp || "-")),
@@ -335,9 +347,9 @@ export default defineComponent({
       ];
 
       const actions = [];
-      if (st !== "connected") {
+      if (s.enrolled === "1" && st !== "connected") {
         actions.push(_h("button", { type: "button", disabled: props.disabled || busy.value || dirty.value, class: "netbird-button netbird-button-primary", onClick: function () { control("start"); } }, "Iniciar"));
-      } else {
+      } else if (st === "connected") {
         actions.push(_h("button", { type: "button", disabled: props.disabled || busy.value || dirty.value, class: "netbird-button netbird-button-primary", onClick: function () { control("stop"); } }, "Parar"));
         actions.push(_h("button", { type: "button", disabled: props.disabled || busy.value || dirty.value, class: "netbird-button netbird-button-secondary", onClick: function () { control("restart"); } }, "Reiniciar"));
       }
