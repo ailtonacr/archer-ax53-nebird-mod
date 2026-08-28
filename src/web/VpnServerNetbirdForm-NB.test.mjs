@@ -82,6 +82,12 @@ await context.window.__netbirdSaveDraft();
 assert.equal(requests.filter(op => op === "settings_set").length, 1, "stock footer bridge persists the draft exactly once");
 assert.equal(input(render(), "Ex.: 192.168.10.0/24").props.value, "192.168.");
 
+// Raw runtime tokens must never leak into the user-facing status row.
+response = { ...response, code: "payload_missing", payload: { state: "PAYLOAD_NOT_DOWNLOADED" } };
+await timers[0]();
+assert.equal(hasText(render(), "Ainda não baixado"), true, "payload state must be translated for the UI");
+assert.equal(hasText(render(), "PAYLOAD_NOT_DOWNLOADED"), false, "raw payload token must not be displayed");
+
 // Backend error envelopes used by TP-Link's request wrapper must surface the
 // real message, and a subsequent healthy polling request must clear it.
 cidr = input(render(), "Ex.: 192.168.10.0/24");
@@ -96,4 +102,4 @@ assert.equal(input(render(), "Ex.: 192.168.10.0/24").props.value, "bad", "failed
 context.unmounted();
 assert.equal(context.window.__netbirdSaveDraft, undefined, "save bridge must be removed on unmount");
 
-console.log("netbird form polling/save/error behavior ok");
+console.log("netbird form polling/save/error/payload behavior ok");
