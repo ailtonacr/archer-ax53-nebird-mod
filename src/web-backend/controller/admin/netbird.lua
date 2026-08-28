@@ -110,7 +110,10 @@ local function op_settings_set(body)
     end
 
     local out, rc
-    if cur.enable == "1" then
+    -- A stale pre-fix settings file can have enable=1 while enrolled=0. Saving
+    -- the form must not launch the interactive SSO path before setup-key
+    -- enrollment. Once enrolled, normal saves still restart to apply flags.
+    if cur.enable == "1" and cur.enrolled == "1" then
         out, rc = model.control("start")
         if rc == 0 then cur = model.set_internal_settings({ enrolled = "1", enable = "1" }) or cur end
     end
