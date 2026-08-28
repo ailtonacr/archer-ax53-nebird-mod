@@ -23,6 +23,8 @@ fi
 FILES="$SCRIPT_DIR/010-netbird-files"
 R="$ROOTFS_DIR"
 WEB_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_web.py"
+NB_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird.lua"
+NB_MODEL="$PROJECT_ROOT/src/web-backend/model/netbird.lua"
 VPN_ADAPTER="$PROJECT_ROOT/src/web-backend/controller/admin/vpn_netbird_adapter.lua"
 
 echo "### NetBird native VPN Client integration ###"
@@ -32,8 +34,16 @@ echo "[1/8] copying NetBird runtime files into rootfs ..."
 # downloads the pinned XZ payload to /tmp; only the tiny CLI wrapper/decoder
 # and integration files belong in squashfs.
 (cd "$FILES" && cp -a --parents lib/netbird/netbird.sh sbin/netbird-ctl sbin/xzmini \
-   usr/bin/netbird etc/init.d/netbird usr/lib/lua/luci/controller/admin/netbird.lua \
-   usr/lib/lua/luci/model/netbird.lua "$PROJECT_ROOT/$R/")
+   usr/bin/netbird etc/init.d/netbird "$PROJECT_ROOT/$R/")
+
+# Canonical LuCI sources live under src/web-backend. Do not copy stale mirrored
+# controller/model files from mods/010-netbird-files.
+mkdir -p "$R/usr/lib/lua/luci/controller/admin" "$R/usr/lib/lua/luci/model"
+[ -f "$NB_CONTROLLER" ] || { echo "Error: missing $NB_CONTROLLER" >&2; exit 1; }
+[ -f "$NB_MODEL" ] || { echo "Error: missing $NB_MODEL" >&2; exit 1; }
+cp "$NB_CONTROLLER" "$R/usr/lib/lua/luci/controller/admin/netbird.lua"
+cp "$NB_MODEL" "$R/usr/lib/lua/luci/model/netbird.lua"
+
 chmod 0755 "$R/sbin/netbird-ctl" "$R/sbin/xzmini" "$R/usr/bin/netbird" "$R/etc/init.d/netbird" 2>/dev/null || true
 chmod 0644 "$R/lib/netbird/netbird.sh" "$R/usr/lib/lua/luci/controller/admin/netbird.lua" "$R/usr/lib/lua/luci/model/netbird.lua" 2>/dev/null || true
 
