@@ -8,20 +8,22 @@ const source = fs.readFileSync(new URL("./VpnServerNetbirdForm-NB.js", import.me
 
 const timers = [];
 const requests = [];
+const emitted = [];
 let exposed = null;
-let failNextSettings = false;
 let response = {
   code: "connected",
+  profileExists: true,
   settings: {
     enrolled: "1", management_url: "https://netbird.example", advertise_cidr: "192.168.10.0/24",
     disable_dns: "1", disable_firewall: "1", disable_client_routes: "1",
     disable_server_routes: "1", disable_ipv6: "1", network_monitor: "0",
-    advertise_lan: "1", enable: "1",
+    advertise_lan: "1", enable: "1", wireguard_port: "51820", hostname: "",
   },
   netbird: { netbirdIp: "100.64.0.1", peersConnected: 1, peersTotal: 2 },
   traffic: { uploadSpeed: 125000, downloadSpeed: 250000 },
   payload: { state: "READY" },
 };
+
 const context = {
   defineComponent: value => value,
   ref: value => ({ value }),
@@ -30,23 +32,19 @@ const context = {
   _h: (tag, props, children) => ({ tag, props: props || {}, children: children || [] }),
   setInterval: fn => { timers.push(fn); return timers.length; },
   clearInterval: () => {},
-  window: { confirm: () => true },
+  URL,
   api: { request: async (_path, body) => {
     requests.push(body.operation);
-    if (body.operation === "settings_set") {
-      if (failNextSettings) {
-        failNextSettings = false;
-        throw { data: { error: "invalid value for advertise_cidr" } };
-      }
-      response = { ...response, settings: { ...response.settings, ...body } };
-      return { settings: response.settings };
-    }
+    if (body.operation === "enroll") return { settings: { ...response.settings, enrolled: "1", enable: "1" } };
     return response;
   } },
 };
 vm.runInNewContext(source, context, { filename: "VpnServerNetbirdForm-NB.js" });
 
-const render = context.component.setup({ disabled: false }, { expose: value => { exposed = value; } });
+const render = context.component.setup({ disabled: false }, {
+  expose: value => { exposed = value; },
+  emit: (name, value) => emitted.push({ name, value }),
+});
 context.mounted();
 await new Promise(resolve => setTimeout(resolve, 0));
 
@@ -71,10 +69,25 @@ assert.ok(exposed, "component must expose the stock TP-Link form contract");
 assert.equal(typeof exposed.validate, "function");
 assert.equal(typeof exposed.setForm, "function");
 assert.equal(typeof exposed.getForm, "function");
+assert.equal(typeof exposed.resetForm, "function");
+assert.equal(typeof exposed.clearValidate, "function");
+
+assert.equal(exposed.setForm({
+  key: "netbird", type: "netbird", server: "https://netbird.example",
+  enable: "on", enrolled: "1", advertise_lan: "1", advertise_cidr: "192.168.10.0/24",
+}), true);
 assert.equal(await exposed.validate(), true);
-assert.equal(exposed.setForm({}), true);
+
+const form = exposed.getForm();
+assert.equal(form.key, "netbird");
+assert.equal(form.type, "netbird");
+assert.equal(form.management_url, "https://netbird.example");
+assert.equal(form.server, "https://netbird.example");
+assert.equal(form.enable, "on");
+
 assert.equal(hasText(render(), "1.00 Mbps"), true, "upload rate should be rendered from wt0 counters");
 assert.equal(hasText(render(), "2.00 Mbps"), true, "download rate should be rendered from wt0 counters");
+assert.equal(hasText(render(), "PAYLOAD_NOT_DOWNLOADED"), false, "raw payload token must never leak in READY state");
 
 let cidr = input(render(), "Ex.: 192.168.10.0/24");
 cidr.props.onInput({ target: { value: "192.168." } });
@@ -82,30 +95,31 @@ response = { ...response, settings: { ...response.settings, advertise_cidr: "10.
 for (let i = 0; i < 3; i++) await timers[0]();
 cidr = input(render(), "Ex.: 192.168.10.0/24");
 assert.equal(cidr.props.value, "192.168.", "polling must retain a partial CIDR draft");
-assert.equal(requests.filter(op => op === "settings_set").length, 0, "editing must not save implicitly");
-assert.equal(render().props.class, "netbird-form", "runtime updates must not restore the loading view");
-assert.equal(typeof context.window.__netbirdSaveDraft, "function", "stock modal save bridge must be registered");
-assert.equal(walk(render()).some(node => node.tag === "button" && node.children === "Salvar"), false, "sub-form must not render a duplicate Save button");
+assert.equal(requests.includes("settings_set"), false, "editing must never persist through /admin/netbird");
+assert.equal("__netbirdSaveDraft" in context, false, "component must not install the old save bridge");
+assert.equal(emitted.some(e => e.name === "change"), true, "stock modal must be notified when custom fields change");
+assert.equal(emitted.some(e => e.name === "update"), true, "stock modal receives update notification too");
 
-await context.window.__netbirdSaveDraft();
-assert.equal(requests.filter(op => op === "settings_set").length, 1, "stock footer bridge persists the draft exactly once");
-assert.equal(input(render(), "Ex.: 192.168.10.0/24").props.value, "192.168.");
+assert.equal(await exposed.validate(), false, "partial CIDR is invalid when LAN routing is enabled");
+assert.equal(hasText(render(), "Informe uma rede LAN válida"), true);
+
+exposed.setForm({
+  key: "netbird", type: "netbird", management_url: "https://netbird.example",
+  enable: "on", enrolled: "1", advertise_lan: "1", advertise_cidr: "192.168.10.0/24",
+});
+assert.equal(await exposed.validate(), true);
 
 response = { ...response, code: "payload_missing", payload: { state: "PAYLOAD_NOT_DOWNLOADED" } };
 await timers[0]();
 assert.equal(hasText(render(), "Ainda não baixado"), true, "payload state must be translated for the UI");
 assert.equal(hasText(render(), "PAYLOAD_NOT_DOWNLOADED"), false, "raw payload token must not be displayed");
 
-cidr = input(render(), "Ex.: 192.168.10.0/24");
-cidr.props.onInput({ target: { value: "bad" } });
-failNextSettings = true;
-await assert.rejects(() => context.window.__netbirdSaveDraft());
-assert.equal(hasText(render(), "invalid value for advertise_cidr"), true);
+// A profile that does not exist yet must require native stock Save before
+// enrollment. The component never creates the profile via /admin/netbird.
+response = { ...response, profileExists: false, settings: { ...response.settings, enrolled: "0", enable: "0" } };
 await timers[0]();
-assert.equal(hasText(render(), "invalid value for advertise_cidr"), false, "healthy polling clears stale diagnostics");
-assert.equal(input(render(), "Ex.: 192.168.10.0/24").props.value, "bad", "failed save must preserve the user's draft");
+assert.equal(hasText(render(), "Salve o perfil primeiro"), true);
+assert.equal(requests.includes("settings_set"), false);
 
 context.unmounted();
-assert.equal(context.window.__netbirdSaveDraft, undefined, "save bridge must be removed on unmount");
-
-console.log("netbird form polling/save/error/payload/traffic/form-contract behavior ok");
+console.log("netbird native-form/status/payload/traffic contract behavior ok");
