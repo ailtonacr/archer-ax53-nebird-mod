@@ -8,6 +8,7 @@ const source = fs.readFileSync(new URL("./VpnServerNetbirdForm-NB.js", import.me
 
 const timers = [];
 const requests = [];
+let exposed = null;
 let failNextSettings = false;
 let response = {
   code: "connected",
@@ -18,6 +19,7 @@ let response = {
     advertise_lan: "1", enable: "1",
   },
   netbird: { netbirdIp: "100.64.0.1", peersConnected: 1, peersTotal: 2 },
+  traffic: { uploadSpeed: 125000, downloadSpeed: 250000 },
   payload: { state: "READY" },
 };
 const context = {
@@ -44,7 +46,7 @@ const context = {
 };
 vm.runInNewContext(source, context, { filename: "VpnServerNetbirdForm-NB.js" });
 
-const render = context.component.setup({ disabled: false });
+const render = context.component.setup({ disabled: false }, { expose: value => { exposed = value; } });
 context.mounted();
 await new Promise(resolve => setTimeout(resolve, 0));
 
@@ -58,14 +60,21 @@ function walk(node, result = []) {
   for (const child of node.children || []) walk(child, result);
   return result;
 }
-
 function input(tree, placeholder) {
   return walk(tree).find(node => node.tag === "input" && node.props.placeholder === placeholder);
 }
-
 function hasText(tree, text) {
   return walk(tree).some(node => typeof node.children === "string" && node.children.includes(text));
 }
+
+assert.ok(exposed, "component must expose the stock TP-Link form contract");
+assert.equal(typeof exposed.validate, "function");
+assert.equal(typeof exposed.setForm, "function");
+assert.equal(typeof exposed.getForm, "function");
+assert.equal(await exposed.validate(), true);
+assert.equal(exposed.setForm({}), true);
+assert.equal(hasText(render(), "1.00 Mbps"), true, "upload rate should be rendered from wt0 counters");
+assert.equal(hasText(render(), "2.00 Mbps"), true, "download rate should be rendered from wt0 counters");
 
 let cidr = input(render(), "Ex.: 192.168.10.0/24");
 cidr.props.onInput({ target: { value: "192.168." } });
@@ -82,14 +91,11 @@ await context.window.__netbirdSaveDraft();
 assert.equal(requests.filter(op => op === "settings_set").length, 1, "stock footer bridge persists the draft exactly once");
 assert.equal(input(render(), "Ex.: 192.168.10.0/24").props.value, "192.168.");
 
-// Raw runtime tokens must never leak into the user-facing status row.
 response = { ...response, code: "payload_missing", payload: { state: "PAYLOAD_NOT_DOWNLOADED" } };
 await timers[0]();
 assert.equal(hasText(render(), "Ainda não baixado"), true, "payload state must be translated for the UI");
 assert.equal(hasText(render(), "PAYLOAD_NOT_DOWNLOADED"), false, "raw payload token must not be displayed");
 
-// Backend error envelopes used by TP-Link's request wrapper must surface the
-// real message, and a subsequent healthy polling request must clear it.
 cidr = input(render(), "Ex.: 192.168.10.0/24");
 cidr.props.onInput({ target: { value: "bad" } });
 failNextSettings = true;
@@ -102,4 +108,4 @@ assert.equal(input(render(), "Ex.: 192.168.10.0/24").props.value, "bad", "failed
 context.unmounted();
 assert.equal(context.window.__netbirdSaveDraft, undefined, "save bridge must be removed on unmount");
 
-console.log("netbird form polling/save/error/payload behavior ok");
+console.log("netbird form polling/save/error/payload/traffic/form-contract behavior ok");
