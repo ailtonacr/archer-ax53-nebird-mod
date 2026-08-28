@@ -15,18 +15,25 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 if [ -z "${ROOTFS_DIR:-}" ]; then
-  if [ -d "squashfs-root" ]; then ROOTFS_DIR="squashfs-root"
-  elif [ -d "rootfs" ]; then ROOTFS_DIR="rootfs"
+  if [ -d "rootfs" ]; then ROOTFS_DIR="$PROJECT_ROOT/rootfs"
+  elif [ -d "squashfs-root" ]; then ROOTFS_DIR="$PROJECT_ROOT/squashfs-root"
   else echo "Error: no rootfs dir" >&2; exit 1; fi
+else
+  case "$ROOTFS_DIR" in
+    /*) ;;
+    *) ROOTFS_DIR="$PROJECT_ROOT/$ROOTFS_DIR" ;;
+  esac
 fi
+[ -d "$ROOTFS_DIR" ] || { echo "Error: rootfs dir does not exist: $ROOTFS_DIR" >&2; exit 1; }
 
 FILES="$SCRIPT_DIR/011-devssh-files"
 R="$ROOTFS_DIR"
 
 echo "### Dev SSH (dropbear :2222, key-only, LAN) ###"
+echo "    rootfs: $R"
 
 echo "[1/3] copying devssh init + authorized_keys ..."
-(cd "$FILES" && cp -a --parents etc/init.d/devssh etc/dropbear/authorized_keys "$PROJECT_ROOT/$R/")
+(cd "$FILES" && cp -a --parents etc/init.d/devssh etc/dropbear/authorized_keys "$R/")
 chmod 0755 "$R/etc/init.d/devssh"
 chmod 0600 "$R/etc/dropbear/authorized_keys"
 
