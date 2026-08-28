@@ -98,7 +98,7 @@ if ! grep -q "netbird_access" "$R/sbin/fw" 2>/dev/null; then
   sed -i 's#openvpnc_access|openvpnc_block)#openvpnc_access|openvpnc_block|netbird_access|netbird_block)#' "$R/sbin/fw"
   grep -q "netbird_access" "$R/sbin/fw" || {
     echo "    fallback: patching via explicit replace"
-    perl -0pi -e 's/(vpnc_access_accel_handle\|vpnc_block_accel_handle\|openvpnc_access\|openvpnc_block\))/$1|netbird_access|netbird_block)/' "$R/sbin/fw"
+    perl -0pi -e 's/(vpnc_access_accel_handle\|vpnc_block_accel_handle\|openvpnc_access\|openvpnc_block)\)/$1|netbird_access|netbird_block)/' "$R/sbin/fw"
   }
 else
   echo "    (already present, skipping)"
