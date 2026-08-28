@@ -52,6 +52,15 @@ local function classify(settings, status)
     return settings.enable == "1" and "stopped" or "disabled"
 end
 
+local function identity_present()
+    -- Disconnected/Idle/Down alone do not prove enrollment. Only reconcile a
+    -- positive enrolled state when a persistent NetBird identity/config also
+    -- exists. This prevents an empty/cleaned profile from becoming enrolled=1
+    -- merely because a stopped daemon returned a generic disconnected state.
+    local raw = lfs.readfile("/tp_data/netbird/default.json") or ""
+    return raw:match("%S") ~= nil
+end
+
 local function reconcile_runtime(settings, status)
     if not status then return settings end
     local ds, patch = status.daemonStatus or "", nil
@@ -62,7 +71,7 @@ local function reconcile_runtime(settings, status)
         if settings.enrolled ~= "1" then patch.enrolled = "1" end
         if settings.enable ~= "1" then patch.enable = "1" end
     elseif ds == "Idle" or ds == "Disconnected" or ds == "Down" then
-        if settings.enrolled ~= "1" then patch = { enrolled = "1" } end
+        if identity_present() and settings.enrolled ~= "1" then patch = { enrolled = "1" } end
     end
     if patch and next(patch) then
         local updated = model.set_internal_settings(patch)
@@ -215,7 +224,7 @@ end
 
 function dispatch(body)
     local op = request_value(body, "operation") or "status"
-    local ok, result = pcall(function()
+    local ok_dispatch, result = pcall(function()
         if op == "status" then return op_status()
         elseif op == "settings_get" then return op_settings_get()
         elseif op == "settings_set" then return op_settings_set(body)
@@ -226,6 +235,6 @@ function dispatch(body)
         elseif op == "payload_status" then return op_payload_status()
         else return error_reply("bad_request", "unknown operation") end
     end)
-    if not ok then return error_reply("internal", tostring(result)) end
+    if not ok_dispatch then return error_reply("internal", tostring(result)) end
     return result
 end
