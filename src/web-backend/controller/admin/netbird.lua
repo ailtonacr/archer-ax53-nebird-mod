@@ -1,4 +1,12 @@
--- NetBird RPC controller for TP-Link Archer AX53 V1.
+-- NetBird runtime/diagnostic controller for TP-Link Archer AX53 V1.
+--
+-- VPN profile CRUD is intentionally NOT owned by this route. Create/read/
+-- update/delete and list-level enable/disable go through TP-Link's native
+-- /admin/vpn?form=server controller, which is extended by the NetBird adapter.
+-- This endpoint is restricted to NetBird-specific runtime operations such as
+-- status, enrollment, logs and payload diagnostics. Legacy settings/control
+-- operations remain temporarily for compatibility with already flashed builds
+-- but the current UI does not use them for profile CRUD.
 module("luci.controller.admin.netbird", package.seeall)
 
 local nixio = require "nixio"
@@ -115,6 +123,7 @@ local function op_status()
     end
     return reply({
         code = classify(settings, st), settings = settings, netbird = nb,
+        profileExists = lfs.access("/tp_data/netbird/settings") and true or false,
         traffic = traffic_sample(),
         payload = { version = model.payload_version(), state = model.payload_state(), provisioned = model.payload_ok() },
     })
@@ -122,6 +131,7 @@ end
 
 local function op_settings_get() return reply({ settings = model.get_settings() }) end
 
+-- Legacy compatibility only. Native UI CRUD no longer calls this operation.
 local function op_settings_set(body)
     local cand = request_settings(body)
     local prev = model.get_settings()
@@ -144,9 +154,6 @@ local function op_settings_set(body)
     end
 
     local out, rc
-    -- A stale pre-fix settings file can have enable=1 while enrolled=0. Saving
-    -- the form must not launch the interactive SSO path before setup-key
-    -- enrollment. Once enrolled, normal saves still restart to apply flags.
     if cur.enable == "1" and cur.enrolled == "1" then
         out, rc = model.control("start")
         if rc == 0 then cur = model.set_internal_settings({ enrolled = "1", enable = "1" }) or cur end
@@ -161,15 +168,16 @@ end
 local function op_enroll(body)
     local key = request_value(body, "setup_key")
     if not key or key == "" then return error_reply("bad_request", "setup key required") end
-    local mgmt = request_value(body, "management_url")
-    if mgmt and mgmt ~= "" then
-        local cur, err = model.set_settings({ management_url = mgmt })
-        if not cur then return error_reply("bad_request", err or "invalid management url") end
+
+    -- Management URL and profile flags MUST already have been saved through the
+    -- native /admin/vpn?form=server CRUD flow. Enrollment is an action, not a
+    -- second profile persistence path.
+    if not lfs.access("/tp_data/netbird/settings") then
+        return error_reply("profile_required", "save the NetBird VPN profile before enrollment")
     end
 
     local tmp = "/tmp/nb-setup-key-" .. tostring(os.time()) .. "-" .. tostring(math.random(0x7fffffff))
     if not lfs.writefile(tmp, key) then return error_reply("internal", "failed to stage setup key") end
-    -- This TP-Link nixio binding expects a textual chmod mode.
     nixio.fs.chmod(tmp, "0600")
     local out, rc = model.control("enroll", tmp)
     nixio.fs.unlink(tmp)
@@ -179,6 +187,8 @@ local function op_enroll(body)
     return reply({ result = "ok", settings = cur })
 end
 
+-- Legacy compatibility for old UI bundles. Current list-level enable/disable
+-- goes through the native VPN controller adapter.
 local function op_control(op)
     local out, rc = model.control(op)
     if rc ~= 0 then return error_reply("control_failed", (out or op):gsub("%s+$", "")) end
