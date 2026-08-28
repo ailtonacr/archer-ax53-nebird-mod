@@ -92,6 +92,8 @@ firmware: $(TARGET) test-netbird
 # Explicit target to build the vendor mtd-utils suite
 tools:
 	$(MAKE) -C vendor/mtd-utils
+	$(MAKE) -C vendor/squashfs
+	$(MAKE) -C vendor/squashfs4
 
 clean:
 	rm -f $(TARGET)
