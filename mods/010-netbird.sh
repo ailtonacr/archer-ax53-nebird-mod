@@ -1,10 +1,12 @@
 #!/bin/bash -e
 #
-# 010-netbird.sh -- integrate NetBird (0.77.1) as a VPN Client on AX53.
+# 010-netbird.sh -- integrate NetBird (0.77.1) as a native VPN Client on AX53.
 #
 # Installs: init service, control CLI, tiny /usr/bin/netbird wrapper, xzmini
-# decoder, LuCI backend (source .lua), patched VPN Client frontend, firewall
-# rules, factory-reset cleanup and boot enable symlink.
+# decoder, NetBird runtime/diagnostic LuCI backend, native TP-Link VPN controller
+# adapter, patched VPN Client frontend, firewall rules, factory-reset cleanup and
+# boot enable symlink.
+#
 # The large NetBird ELF is NOT embedded in rootfs and NOT stored on any MTD/UBI
 # partition; it is downloaded over HTTPS and materialized into /tmp at runtime.
 
@@ -21,10 +23,11 @@ fi
 FILES="$SCRIPT_DIR/010-netbird-files"
 R="$ROOTFS_DIR"
 WEB_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_web.py"
+VPN_ADAPTER="$PROJECT_ROOT/src/web-backend/controller/admin/vpn_netbird_adapter.lua"
 
-echo "### NetBird backend/service/frontend integration ###"
+echo "### NetBird native VPN Client integration ###"
 
-echo "[1/7] copying NetBird runtime files into rootfs ..."
+echo "[1/8] copying NetBird runtime files into rootfs ..."
 # The large NetBird ELF is deliberately absent here. Runtime materialization
 # downloads the pinned XZ payload to /tmp; only the tiny CLI wrapper/decoder
 # and integration files belong in squashfs.
@@ -34,13 +37,33 @@ echo "[1/7] copying NetBird runtime files into rootfs ..."
 chmod 0755 "$R/sbin/netbird-ctl" "$R/sbin/xzmini" "$R/usr/bin/netbird" "$R/etc/init.d/netbird" 2>/dev/null || true
 chmod 0644 "$R/lib/netbird/netbird.sh" "$R/usr/lib/lua/luci/controller/admin/netbird.lua" "$R/usr/lib/lua/luci/model/netbird.lua" 2>/dev/null || true
 
-echo "[2/7] patching VPN Client frontend ..."
+echo "[2/8] adapting the native TP-Link VPN controller for NetBird ..."
+[ -f "$VPN_ADAPTER" ] || { echo "Error: missing $VPN_ADAPTER" >&2; exit 1; }
+VPN_CONTROLLER="$R/usr/lib/lua/luci/controller/admin/vpn.lua"
+VPN_STOCK="$R/usr/lib/lua/luci/controller/admin/vpn_stock.lua"
+[ -f "$VPN_CONTROLLER" ] || { echo "Error: missing stock VPN controller $VPN_CONTROLLER" >&2; exit 1; }
+
+# Preserve the original compiled TP-Link controller exactly once. On repeated
+# builds vpn.lua is already our text adapter, so the immutable stock bytecode
+# remains in vpn_stock.lua and must never be overwritten by the adapter.
+if [ ! -f "$VPN_STOCK" ]; then
+  cp -p "$VPN_CONTROLLER" "$VPN_STOCK"
+  echo "    preserved stock controller as vpn_stock.lua"
+else
+  echo "    stock controller already preserved"
+fi
+cp "$VPN_ADAPTER" "$VPN_CONTROLLER"
+chmod 0644 "$VPN_CONTROLLER" "$VPN_STOCK" 2>/dev/null || true
+
+grep -q 'vpn_stock.lua' "$VPN_CONTROLLER" || { echo "Error: VPN adapter was not installed" >&2; exit 1; }
+
+echo "[3/8] patching VPN Client frontend ..."
 [ -f "$WEB_PATCHER" ] || { echo "Error: missing $WEB_PATCHER" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required for frontend patching" >&2; exit 1; }
 command -v node >/dev/null 2>&1 || { echo "Error: node is required for frontend syntax validation" >&2; exit 1; }
 python3 "$WEB_PATCHER" "$PROJECT_ROOT/$R"
 
-echo "[3/7] adding CIDR-scoped fw_netbird_access/block ..."
+echo "[4/8] adding CIDR-scoped fw_netbird_access/block ..."
 # Append a v2 override even when an older NetBird function already exists in a
 # previously patched rootfs. Shell uses the last function definition, which
 # makes this idempotent and safely upgrades broad wt0<->LAN rules.
@@ -93,7 +116,7 @@ else
   echo "    (CIDR-scoped override already present, skipping)"
 fi
 
-echo "[4/7] wiring netbird_access|netbird_block into /sbin/fw ..."
+echo "[5/8] wiring netbird_access|netbird_block into /sbin/fw ..."
 if ! grep -q "netbird_access" "$R/sbin/fw" 2>/dev/null; then
   sed -i 's#openvpnc_access|openvpnc_block)#openvpnc_access|openvpnc_block|netbird_access|netbird_block)#' "$R/sbin/fw"
   grep -q "netbird_access" "$R/sbin/fw" || {
@@ -104,20 +127,35 @@ else
   echo "    (already present, skipping)"
 fi
 
-echo "[5/7] factory-reset cleanup in /sbin/reset ..."
+echo "[6/8] factory-reset cleanup in /sbin/reset ..."
 if ! grep -q "tp_data/netbird" "$R/sbin/reset" 2>/dev/null; then
   sed -i 's#^sleep 3$#rm -rf /tp_data/netbird\nsleep 3#' "$R/sbin/reset"
 fi
 
-echo "[6/7] enabling service (rc.d S99netbird) ..."
+echo "[7/8] enabling service (rc.d S99netbird) ..."
 mkdir -p "$R/etc/rc.d"
 ln -sfn "../init.d/netbird" "$R/etc/rc.d/S99netbird" 2>/dev/null || true
 
-echo "[7/7] verifying installed files ..."
+echo "[8/8] verifying installed files ..."
 for f in lib/netbird/netbird.sh sbin/netbird-ctl sbin/xzmini usr/bin/netbird etc/init.d/netbird \
          usr/lib/lua/luci/controller/admin/netbird.lua usr/lib/lua/luci/model/netbird.lua \
+         usr/lib/lua/luci/controller/admin/vpn.lua usr/lib/lua/luci/controller/admin/vpn_stock.lua \
          www/webpages/js/VpnServerNetbirdForm-NB.js.gz; do
   [ -f "$R/$f" ] && echo "    ok  $f" || { echo "    MISSING $f" >&2; exit 1; }
 done
 
-echo "### NetBird backend/service/frontend integration complete ###"
+# The adapter must be text and the preserved controller must remain Lua bytecode
+# (ESC 'Lua' header). This prevents accidentally preserving an older adapter as
+# the stock implementation on a fresh build.
+grep -q 'NetBird adapter for TP-Link' "$R/usr/lib/lua/luci/controller/admin/vpn.lua" || {
+  echo "Error: native VPN adapter validation failed" >&2; exit 1;
+}
+python3 - "$R/usr/lib/lua/luci/controller/admin/vpn_stock.lua" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+data = p.read_bytes()[:4]
+if data != b'\x1bLua':
+    raise SystemExit(f"Error: {p} is not the preserved stock Lua bytecode (header={data!r})")
+PY
+
+echo "### NetBird native VPN Client integration complete ###"
