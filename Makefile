@@ -28,7 +28,7 @@ $(TARGET): $(SRCS)
 # accident while rootfs/ gets repacked unchanged.
 #
 # Build identity is stamped after all mods and before validation/repack:
-#   soft_ver:1.7.1-netbird mod Build N
+#   soft_ver:<stock-base>-netbird mod Build N
 #   /etc/netbird-build -> build number + git commit/branch + UTC timestamp
 # The BUILD counter advances only after the output image exists successfully.
 firmware: $(TARGET)
@@ -47,18 +47,20 @@ firmware: $(TARGET)
 		ROOTFS_DIR=rootfs bash apply-mods.sh 2>&1 | tail -40; \
 		echo "=== [3/6] Stamping build identity ==="; \
 		bash scripts/stamp-build-version.sh stamp rootfs "$$BUILD_NO"; \
+		STAMPED_VERSION="$$(sed -n "s/^soft_ver://p" rootfs/etc/partition_config/soft-version | head -n1)"; \
+		case "$$STAMPED_VERSION" in *"-netbird mod Build $$BUILD_NO") : ;; *) echo "Error: unexpected stamped soft version: $$STAMPED_VERSION" >&2; exit 1;; esac; \
 		echo "=== [4/6] Verifying modified rootfs before repack ==="; \
 		grep -q "NetBird adapter for TP-Link" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua || { echo "Error: NetBird VPN adapter missing from rootfs" >&2; exit 1; }; \
 		test -f rootfs/usr/lib/lua/luci/controller/admin/vpn_stock.lua || { echo "Error: preserved stock VPN controller missing from rootfs" >&2; exit 1; }; \
 		python3 -c "from pathlib import Path; p=Path(\"rootfs/usr/lib/lua/luci/controller/admin/vpn_stock.lua\"); assert p.read_bytes()[:4] == b\"\\x1bLua\", f\"invalid stock VPN bytecode header: {p.read_bytes()[:4]!r}\""; \
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Ações NetBird" || { echo "Error: current native NetBird frontend missing from rootfs" >&2; exit 1; }; \
 		if zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "__netbirdSaveDraft"; then echo "Error: legacy NetBird save bridge still present in rootfs" >&2; exit 1; fi; \
-		grep -Fxq "soft_ver:1.7.1-netbird mod Build $$BUILD_NO" rootfs/etc/partition_config/soft-version || { echo "Error: stamped soft version missing or unexpected" >&2; cat rootfs/etc/partition_config/soft-version >&2; exit 1; }; \
 		grep -Fxq "build=$$BUILD_NO" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong build number" >&2; exit 1; }; \
+		grep -Fxq "display_version=$$STAMPED_VERSION" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong display version" >&2; exit 1; }; \
 		echo "    ok native VPN adapter"; \
 		echo "    ok preserved stock VPN controller"; \
 		echo "    ok current NetBird frontend"; \
-		echo "    ok build identity: 1.7.1-netbird mod Build $$BUILD_NO"; \
+		echo "    ok build identity: $$STAMPED_VERSION"; \
 		echo "=== [5/6] Repacking firmware ==="; \
 		rm -f "$(FIRMWARE_OUTPUT)"; \
 		bash 02-repack-ubi.sh "$(FIRMWARE_OUTPUT)" 2>&1 | tail -5; \
@@ -66,7 +68,7 @@ firmware: $(TARGET)
 		echo "=== [6/6] Firmware ready ==="; \
 		ls -lh "$(FIRMWARE_OUTPUT)"; \
 		echo "Build: $$BUILD_NO"; \
-		echo "Version: 1.7.1-netbird mod Build $$BUILD_NO"; \
+		echo "Version: $$STAMPED_VERSION"; \
 		echo "Output: $(FIRMWARE_OUTPUT)"; \
 		bash scripts/stamp-build-version.sh advance "$$BUILD_NO"'
 
