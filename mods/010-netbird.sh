@@ -1,11 +1,11 @@
 #!/bin/bash -e
 #
-# 010-netbird.sh -- integrate NetBird (0.77.1) as a native VPN Client on AX53.
+# 010-netbird.sh -- integrate NetBird (0.77.1) in the stock VPN Client UI.
 #
-# Installs: init service, control CLI, tiny /usr/bin/netbird wrapper, xzmini
-# decoder, NetBird runtime/diagnostic LuCI backend, native TP-Link VPN controller
-# adapter, patched VPN Client frontend, firewall rules, factory-reset cleanup and
-# boot enable symlink.
+# NetBird is visually integrated with TP-Link's VPN Client page, but profile
+# CRUD/control uses /admin/netbird. Hardware validation proved the compiled
+# TP-Link /admin/vpn dispatcher does not call replacement Lua handlers, so the
+# vendor VPN controller is deliberately kept byte-for-byte stock.
 #
 # The large NetBird ELF is NOT embedded in rootfs and NOT stored on any MTD/UBI
 # partition; it is downloaded over HTTPS and materialized into /tmp at runtime.
@@ -32,16 +32,11 @@ R="$ROOTFS_DIR"
 WEB_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_web.py"
 NB_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird.lua"
 NB_MODEL="$PROJECT_ROOT/src/web-backend/model/netbird.lua"
-VPN_ADAPTER="$PROJECT_ROOT/src/web-backend/controller/admin/vpn_netbird_adapter.lua"
 
-echo "### NetBird native VPN Client integration ###"
+echo "### NetBird VPN Client integration ###"
 echo "    rootfs: $R"
 
 echo "[1/8] copying NetBird runtime files into rootfs ..."
-# Shell runtime sources are canonical under src/init/. Do not keep hand-edited
-# copies in mods/010-netbird-files: that previously allowed the audited source
-# and the firmware payload to diverge. The mods directory now owns only payload
-# artifacts without an equivalent source file (xzmini and the tiny CLI wrapper).
 for f in netbird.sh netbird-ctl netbird.init; do
   [ -f "$RUNTIME_SRC/$f" ] || { echo "Error: missing canonical runtime source $RUNTIME_SRC/$f" >&2; exit 1; }
 done
@@ -51,8 +46,6 @@ cp "$RUNTIME_SRC/netbird-ctl" "$R/sbin/netbird-ctl"
 cp "$RUNTIME_SRC/netbird.init" "$R/etc/init.d/netbird"
 (cd "$FILES" && cp -a --parents sbin/xzmini usr/bin/netbird "$R/")
 
-# Canonical LuCI sources live under src/web-backend. Do not copy stale mirrored
-# controller/model files from mods/010-netbird-files.
 mkdir -p "$R/usr/lib/lua/luci/controller/admin" "$R/usr/lib/lua/luci/model"
 [ -f "$NB_CONTROLLER" ] || { echo "Error: missing $NB_CONTROLLER" >&2; exit 1; }
 [ -f "$NB_MODEL" ] || { echo "Error: missing $NB_MODEL" >&2; exit 1; }
@@ -66,56 +59,41 @@ cmp -s "$RUNTIME_SRC/netbird.sh" "$R/lib/netbird/netbird.sh" || { echo "Error: p
 cmp -s "$RUNTIME_SRC/netbird-ctl" "$R/sbin/netbird-ctl" || { echo "Error: packaged netbird-ctl differs from canonical source" >&2; exit 1; }
 cmp -s "$RUNTIME_SRC/netbird.init" "$R/etc/init.d/netbird" || { echo "Error: packaged netbird init differs from canonical source" >&2; exit 1; }
 
-echo "[2/8] adapting the native TP-Link VPN controller for NetBird ..."
-[ -f "$VPN_ADAPTER" ] || { echo "Error: missing $VPN_ADAPTER" >&2; exit 1; }
+echo "[2/8] restoring/verifying untouched TP-Link VPN controller ..."
 VPN_CONTROLLER="$R/usr/lib/lua/luci/controller/admin/vpn.lua"
-VPN_STOCK_DIR="$R/usr/lib/lua/luci/netbird"
-VPN_STOCK="$VPN_STOCK_DIR/vpn_stock.lua"
+VPN_STOCK="$R/usr/lib/lua/luci/netbird/vpn_stock.lua"
 LEGACY_VPN_STOCK="$R/usr/lib/lua/luci/controller/admin/vpn_stock.lua"
-[ -f "$VPN_CONTROLLER" ] || { echo "Error: missing stock VPN controller $VPN_CONTROLLER" >&2; exit 1; }
-mkdir -p "$VPN_STOCK_DIR"
+[ -f "$VPN_CONTROLLER" ] || { echo "Error: missing VPN controller $VPN_CONTROLLER" >&2; exit 1; }
 
-# LuCI indexes every *.lua file below luci/controller and verifies that the
-# module declared inside matches the path. The preserved TP-Link bytecode still
-# declares luci.controller.admin.vpn, so storing it as controller/admin/
-# vpn_stock.lua makes the entire dispatcher return HTTP 500. Preserve the stock
-# chunk outside the controller tree and load it explicitly with dofile().
-if [ ! -f "$VPN_STOCK" ]; then
-  if [ -f "$LEGACY_VPN_STOCK" ]; then
-    cp -p "$LEGACY_VPN_STOCK" "$VPN_STOCK"
-    echo "    migrated legacy stock controller backup outside controller tree"
-  else
-    python3 - "$VPN_CONTROLLER" <<'PY'
+is_stock_vpn() {
+  python3 - "$1" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
-if p.read_bytes()[:4] != b'\x1bLua':
-    raise SystemExit("Error: vpn.lua is already an adapter but no preserved stock controller was found")
+raise SystemExit(0 if p.is_file() and p.read_bytes()[:4] == b'\x1bLua' else 1)
 PY
-    cp -p "$VPN_CONTROLLER" "$VPN_STOCK"
-    echo "    preserved stock controller outside controller tree"
-  fi
+}
+
+if is_stock_vpn "$VPN_CONTROLLER"; then
+  echo "    stock VPN controller already present"
+elif [ -f "$VPN_STOCK" ] && is_stock_vpn "$VPN_STOCK"; then
+  cp -p "$VPN_STOCK" "$VPN_CONTROLLER"
+  echo "    restored stock VPN controller from previous adapter backup"
+elif [ -f "$LEGACY_VPN_STOCK" ] && is_stock_vpn "$LEGACY_VPN_STOCK"; then
+  cp -p "$LEGACY_VPN_STOCK" "$VPN_CONTROLLER"
+  echo "    restored stock VPN controller from legacy backup"
 else
-  echo "    stock controller already preserved outside controller tree"
+  echo "Error: vpn.lua is not stock bytecode and no valid stock backup exists" >&2
+  exit 1
 fi
 
-# A legacy backup in controller/admin is fatal to LuCI controller indexing even
-# if the adapter itself never requires() it. Remove it from the image after the
-# bytecode has been safely preserved at the non-controller path above.
-rm -f "$LEGACY_VPN_STOCK"
+# The adapter architecture is retired. No duplicate controller module should
+# remain anywhere in the image after the stock controller has been restored.
+rm -f "$VPN_STOCK" "$LEGACY_VPN_STOCK"
 
-# Syntax-check source Lua when the build host provides luac. This is optional
-# because the build environment itself does not require a host Lua runtime.
 if command -v luac >/dev/null 2>&1; then
-  luac -p "$VPN_ADAPTER" "$NB_CONTROLLER" "$NB_MODEL"
+  luac -p "$NB_CONTROLLER" "$NB_MODEL"
 fi
-
-cp "$VPN_ADAPTER" "$VPN_CONTROLLER"
-chmod 0644 "$VPN_CONTROLLER" "$VPN_STOCK" 2>/dev/null || true
-
-grep -q '/usr/lib/lua/luci/netbird/vpn_stock.lua' "$VPN_CONTROLLER" || { echo "Error: VPN adapter stock path is incorrect" >&2; exit 1; }
-grep -q 'patch_dispatch_upvalues' "$VPN_CONTROLLER" || { echo "Error: VPN adapter dispatcher hardening missing" >&2; exit 1; }
-grep -q 'request_context' "$VPN_CONTROLLER" || { echo "Error: VPN adapter request-envelope parser missing" >&2; exit 1; }
-[ ! -e "$LEGACY_VPN_STOCK" ] || { echo "Error: legacy vpn_stock.lua remains in LuCI controller tree" >&2; exit 1; }
+is_stock_vpn "$VPN_CONTROLLER" || { echo "Error: TP-Link VPN controller restoration failed" >&2; exit 1; }
 
 echo "[3/8] patching VPN Client frontend ..."
 [ -f "$WEB_PATCHER" ] || { echo "Error: missing $WEB_PATCHER" >&2; exit 1; }
@@ -195,23 +173,15 @@ ln -sfn "../init.d/netbird" "$R/etc/rc.d/S99netbird" 2>/dev/null || true
 echo "[8/8] verifying installed files ..."
 for f in lib/netbird/netbird.sh sbin/netbird-ctl sbin/xzmini usr/bin/netbird etc/init.d/netbird \
          usr/lib/lua/luci/controller/admin/netbird.lua usr/lib/lua/luci/model/netbird.lua \
-         usr/lib/lua/luci/controller/admin/vpn.lua usr/lib/lua/luci/netbird/vpn_stock.lua \
-         www/webpages/js/VpnServerNetbirdForm-NB.js.gz; do
+         usr/lib/lua/luci/controller/admin/vpn.lua www/webpages/js/VpnServerNetbirdForm-NB.js.gz; do
   [ -f "$R/$f" ] && echo "    ok  $f" || { echo "    MISSING $f" >&2; exit 1; }
 done
 
-[ ! -e "$R/usr/lib/lua/luci/controller/admin/vpn_stock.lua" ] || {
-  echo "Error: controller-tree vpn_stock.lua would break LuCI indexing" >&2; exit 1;
+[ ! -e "$VPN_STOCK" ] || { echo "Error: retired vpn_stock.lua backup remains in image" >&2; exit 1; }
+[ ! -e "$LEGACY_VPN_STOCK" ] || { echo "Error: legacy vpn_stock.lua remains in controller tree" >&2; exit 1; }
+is_stock_vpn "$VPN_CONTROLLER" || { echo "Error: /admin/vpn controller is not original TP-Link bytecode" >&2; exit 1; }
+grep -q 'profile_delete' "$R/usr/lib/lua/luci/controller/admin/netbird.lua" || {
+  echo "Error: dedicated NetBird profile CRUD controller incomplete" >&2; exit 1;
 }
-grep -q 'NetBird adapter for TP-Link' "$R/usr/lib/lua/luci/controller/admin/vpn.lua" || {
-  echo "Error: native VPN adapter validation failed" >&2; exit 1;
-}
-python3 - "$R/usr/lib/lua/luci/netbird/vpn_stock.lua" <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1])
-data = p.read_bytes()[:4]
-if data != b'\x1bLua':
-    raise SystemExit(f"Error: {p} is not the preserved stock Lua bytecode (header={data!r})")
-PY
 
-echo "### NetBird native VPN Client integration complete ###"
+echo "### NetBird VPN Client integration complete ###"
