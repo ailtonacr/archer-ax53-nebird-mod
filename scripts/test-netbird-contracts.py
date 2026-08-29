@@ -55,6 +55,7 @@ def check_auxiliary_boundary() -> None:
         'patch.enable = expected_enable',
         'local synced, sync_err = sync_settings_from_native_profile()',
         'local out, rc = model.control("enroll", tmp)',
+        'if native_profile_exists() then', 'result = "skipped"',
         'local clean_out, clean_rc = model.control("clean")',
         'sys.call("/etc/init.d/vpnc restart >/dev/null 2>&1")',
         'elseif op == "restart" then return op_restart()',
@@ -63,6 +64,7 @@ def check_auxiliary_boundary() -> None:
     assert 'patch.enable = "1"' not in reconcile, "daemon status must not resurrect native enable state"
     delete_block = between(controller, "local function op_profile_delete()", "local function op_enroll")
     assert 'model.control("stop")' not in delete_block, "delete cleanup must not materialize payload through stop"
+    assert delete_block.index("native_profile_exists()") < delete_block.index('model.control("clean")')
     restart_block = between(controller, "local function op_restart()", "local function op_clean")
     assert 'model.control("restart")' not in restart_block
 
@@ -149,22 +151,24 @@ def check_build_pipeline() -> None:
     )
     require(
         finalizer,
-        'e.Netbird="netbirdvpn"', 'new URL(n).hostname', 'native_delete =',
+        'e.Netbird="netbirdvpn"', 'new URL(n).hostname',
+        'native_delete =', 'await nbDelete()', 'value.type === "netbirdvpn"',
         'stock_list =', '/admin/vpn?form=server',
     )
+    assert 'e==="netbird"&&await nbDelete()' not in finalizer
 
 
 def check_frontend_source_vs_final_contract() -> None:
     source_test = text("src/web/VpnServerNetbirdForm-NB.test.mjs")
     integration = text("scripts/test-netbird-native-frontend.py")
-    # Unit test intentionally exercises the pre-finalizer source component.
     require(source_test, 'type: "netbird"')
-    # A second integration test must execute the finalizer and prove native output.
     require(
         integration,
         'patchnetbird_native_crud.py',
         'e.Netbird="netbirdvpn"', 'type: "netbirdvpn", proto: "netbird"',
+        'value.type === "netbirdvpn"',
         'a.value=_nb.concat(e)', 'new URL(n).hostname',
+        'await nbDelete()',
     )
 
 
