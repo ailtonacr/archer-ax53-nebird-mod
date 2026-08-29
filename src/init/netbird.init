@@ -9,6 +9,8 @@ STOP=10
 
 . /lib/netbird/netbird.sh
 
+SINGLE_ACTIVE_MARKER="/tp_data/netbird/.single-active-v1"
+
 start() {
     local sysmode
     config_load sysmode
@@ -17,6 +19,23 @@ start() {
 
     nb_ensure_settings
 
+    # TP-Link's factory VPN Client allows several saved profiles but only one
+    # active profile. Older NetBird builds could persist enable=1 alongside an
+    # already-active stock VPN profile because NetBird lived outside the stock
+    # controller. We cannot safely introspect every vendor VPN backend at boot,
+    # so migrate fail-closed once: existing NetBird profiles are disabled on the
+    # first boot of the single-active implementation and the user explicitly
+    # chooses which profile to activate in the normal VPN Client list. From then
+    # on, frontend toggles persist mutual exclusion across reboots.
+    if [ ! -f "$SINGLE_ACTIVE_MARKER" ]; then
+        if [ "$(nb_get "$NB_SETTINGS_FILE" enable "0")" = "1" ]; then
+            nb_set "$NB_SETTINGS_FILE" enable 0
+            echo "netbird: single-active migration disabled existing profile; re-enable it from VPN Client" >/dev/console 2>&1
+        fi
+        : > "$SINGLE_ACTIVE_MARKER"
+        chmod 0600 "$SINGLE_ACTIVE_MARKER" 2>/dev/null || true
+    fi
+
     local enable
     enable=$(nb_get "$NB_SETTINGS_FILE" enable "0")
     [ "$enable" = "1" ] || {
@@ -24,25 +43,18 @@ start() {
         return 0
     }
 
-    # Materialize payload; never block boot on failure.
-    if ! nb_materialize; then
-        echo "netbird: payload materialization failed (see $NB_LOG)" >/dev/console 2>&1
+    # Use the same tested control path as the UI. netbird-ctl performs daemon
+    # startup, applies all boolean settings, lets NetBird install its own
+    # forwarding chains, then normalizes the CIDR-scoped LAN exception above
+    # NetBird's terminal wt0 DROP.
+    if ! /sbin/netbird-ctl up >/dev/null 2>&1; then
+        echo "netbird: start failed (see $NB_LOG)" >/dev/console 2>&1
         return 0
     fi
-
-    # The daemon (service run) auto-connects on start when a valid enrolled
-    # config exists; otherwise it sits at NeedsLogin for later enrollment.
-    if ! nb_daemon_start; then
-        echo "netbird: daemon start failed" >/dev/console 2>&1
-        return 0
-    fi
-
-    # firewall rules for the WireGuard/ICE handshake + return traffic
-    nb_fw_access
 }
 
 stop() {
-    nb_stop
+    /sbin/netbird-ctl stop >/dev/null 2>&1 || true
 }
 
 restart() {
