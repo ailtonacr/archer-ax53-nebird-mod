@@ -1,11 +1,9 @@
--- NetBird profile/runtime controller for TP-Link Archer AX53 V1.
+-- NetBird runtime/identity controller for TP-Link Archer AX53 V1.
 --
--- Hardware validation on Build 3 proved that TP-Link's compiled
--- /admin/vpn?form=server dispatcher does not call replacement Lua handlers
--- (adapter trace stayed dispatcher patched=0 and no add/get/modify handler was
--- reached). NetBird therefore keeps the stock VPN Client UI, but its profile
--- CRUD/control is owned explicitly by this dedicated endpoint. Stock VPN types
--- continue to use TP-Link's untouched /admin/vpn controller.
+-- Generic profile CRUD/list/toggle/connected-status is owned by the stock
+-- /admin/vpn?form=server endpoint for type=netbirdvpn. This endpoint remains
+-- only for NetBird-specific concerns that the generic VPN contract cannot own:
+-- enrollment, runtime diagnostics/logs/payload state, and identity cleanup.
 module("luci.controller.admin.netbird", package.seeall)
 
 local nixio = require "nixio"
@@ -13,11 +11,13 @@ local http   = require "luci.http"
 local lfs    = require "luci.fs"
 local model  = require "luci.model.netbird"
 local controller = require "luci.model.controller"
+local uci    = require("luci.model.uci").cursor()
 
 local SETTINGS = "/tp_data/netbird/settings"
 local TRAFFIC_STATE = "/tmp/netbird-traffic.state"
 local PROFILE_CONFIG = "/tp_data/netbird/default.json"
 local PROFILE_STATE = "/tp_data/netbird/state"
+local NATIVE_TYPE = "netbirdvpn"
 
 function index() entry({"admin", "netbird"}, call("_index")).leaf = true end
 function _index() return controller._index(dispatch) end
@@ -77,6 +77,40 @@ local function request_settings(body)
         if enabled ~= nil then cand.enable = bool01(enabled, nil) end
     end
     return cand
+end
+
+-- vpn/server is the authoritative native profile store. The runtime settings
+-- file is a materialized view used by the existing NetBird shell/runtime only.
+local function native_profile()
+    local found
+    uci:foreach("vpn", "server", function(section)
+        if section.type == NATIVE_TYPE then
+            found = section
+            return false
+        end
+    end)
+    return found
+end
+
+local function native_profile_exists()
+    return native_profile() ~= nil
+end
+
+local function sync_settings_from_native_profile()
+    local profile = native_profile()
+    if not profile then return nil, "native NetBird VPN profile not found" end
+
+    local cand = {}
+    for key, kind in pairs(PROFILE_KEYS) do
+        local value = profile[key]
+        if value ~= nil then
+            cand[key] = kind == "bool" and bool01(value, nil) or scalar(value)
+        end
+    end
+    -- Enrollment must never activate a profile behind the stock VPN Client's
+    -- back. Activation remains owned by the native list toggle/vpnc lifecycle.
+    cand.enable = "0"
+    return model.set_settings(cand)
 end
 
 local function classify(settings, status)
@@ -165,7 +199,7 @@ local function op_status()
         code = classify(settings, st),
         settings = settings,
         netbird = nb,
-        profileExists = lfs.access(SETTINGS) and true or false,
+        profileExists = native_profile_exists(),
         traffic = traffic_sample(),
         payload = {
             version = model.payload_version(),
@@ -180,7 +214,7 @@ local function op_connected_status()
 end
 
 local function op_settings_get()
-    return reply({ settings = model.get_settings(), profileExists = lfs.access(SETTINGS) and true or false })
+    return reply({ settings = model.get_settings(), profileExists = native_profile_exists() })
 end
 
 local function op_settings_set(body)
@@ -212,13 +246,15 @@ local function op_settings_set(body)
     if rc ~= nil and rc ~= 0 then
         return error_reply("apply_failed", "settings saved but apply failed: " .. (out or "start failed"):gsub("%s+$", ""))
     end
-    return reply({ settings = cur, profileExists = true })
+    return reply({ settings = cur, profileExists = native_profile_exists() })
 end
 
+-- Runtime/identity cleanup only. The stock /admin/vpn remove operation owns the
+-- actual vpn/server record; the frontend invokes this after that removal.
 local function op_profile_delete()
     local stop_out, stop_rc = model.control("stop")
     if stop_rc ~= 0 then
-        return error_reply("delete_failed", "failed to stop NetBird before delete: " .. (stop_out or "stop failed"):gsub("%s+$", ""))
+        return error_reply("delete_failed", "failed to stop NetBird before identity cleanup: " .. (stop_out or "stop failed"):gsub("%s+$", ""))
     end
     local clean_out, clean_rc = model.control("clean")
     if clean_rc ~= 0 then
@@ -229,17 +265,20 @@ local function op_profile_delete()
     nixio.fs.unlink(PROFILE_CONFIG)
     nixio.fs.unlink(TRAFFIC_STATE)
     if lfs.access(SETTINGS) or lfs.access(PROFILE_CONFIG) or lfs.access(PROFILE_STATE) then
-        return error_reply("delete_failed", "NetBird profile files remain after cleanup")
+        return error_reply("delete_failed", "NetBird runtime files remain after cleanup")
     end
-    return reply({ result = "ok", profileExists = false })
+    return reply({ result = "ok", profileExists = native_profile_exists() })
 end
 
 local function op_enroll(body)
     local key = request_value(body, "setup_key")
     if not key or key == "" then return error_reply("bad_request", "setup key required") end
-    if not lfs.access(SETTINGS) then
-        return error_reply("profile_required", "save the NetBird VPN profile before enrollment")
+
+    local synced, sync_err = sync_settings_from_native_profile()
+    if not synced then
+        return error_reply("profile_required", sync_err or "save the NetBird VPN profile before enrollment")
     end
+
     local tmp = "/tmp/nb-setup-key-" .. tostring(os.time()) .. "-" .. tostring(math.random(0x7fffffff))
     if not lfs.writefile(tmp, key) then return error_reply("internal", "failed to stage setup key") end
     nixio.fs.chmod(tmp, "0600")
@@ -299,6 +338,6 @@ function dispatch(body)
         elseif op == "payload_status" then return op_payload_status()
         else return error_reply("bad_request", "unknown operation") end
     end)
-    if not ok_dispatch then return error_reply("internal", tostring(result)) end
-    return result
+    if ok_dispatch then return result end
+    return error_reply("internal", tostring(result))
 end
