@@ -48,32 +48,42 @@ local function management_host(url)
     return authority:match("^([^:]+)") or authority
 end
 
+local function value_or_current(cfg, current, key, fallback)
+    if cfg[key] ~= nil then return cfg[key] end
+    if current[key] ~= nil then return current[key] end
+    return fallback
+end
+
 local function settings_from_config(cfg)
-    local management_url = cfg.management_url or ""
-    -- The stock UI serializes the common server field as a pingable hostname.
-    -- If management_url is absent on a later generic toggle/update operation,
-    -- preserve the existing URL already stored in NetBird settings rather than
-    -- accidentally replacing it with that hostname.
+    local current = nb_model.get_settings and nb_model.get_settings() or {}
+    if type(current) ~= "table" then current = {} end
+
+    local management_url = value_or_current(cfg, current, "management_url", "")
     if management_url == "" then
-        local current = nb_model.get_settings and nb_model.get_settings() or nil
-        if type(current) == "table" then
-            management_url = current.management_url or ""
-        end
+        management_url = current.management_url or ""
+    end
+
+    local connect = cfg.connect
+    local enable
+    if connect == nil then
+        enable = current.enable or "0"
+    else
+        enable = (connect == "0" or connect == 0 or connect == false) and "0" or "1"
     end
 
     return {
         management_url = management_url,
-        hostname = cfg.hostname or "",
-        disable_dns = bool01(cfg.disable_dns, "1"),
-        disable_firewall = bool01(cfg.disable_firewall, "1"),
-        disable_client_routes = bool01(cfg.disable_client_routes, "1"),
-        disable_server_routes = bool01(cfg.disable_server_routes, "1"),
-        disable_ipv6 = bool01(cfg.disable_ipv6, "1"),
-        network_monitor = bool01(cfg.network_monitor, "0"),
-        advertise_lan = bool01(cfg.advertise_lan, "0"),
-        advertise_cidr = cfg.advertise_cidr or "",
-        wireguard_port = tostring(cfg.wireguard_port or "51820"),
-        enable = (cfg.connect == "0" or cfg.connect == 0 or cfg.connect == false) and "0" or "1",
+        hostname = tostring(value_or_current(cfg, current, "hostname", "") or ""),
+        disable_dns = bool01(cfg.disable_dns, current.disable_dns or "1"),
+        disable_firewall = bool01(cfg.disable_firewall, current.disable_firewall or "1"),
+        disable_client_routes = bool01(cfg.disable_client_routes, current.disable_client_routes or "1"),
+        disable_server_routes = bool01(cfg.disable_server_routes, current.disable_server_routes or "1"),
+        disable_ipv6 = bool01(cfg.disable_ipv6, current.disable_ipv6 or "1"),
+        network_monitor = bool01(cfg.network_monitor, current.network_monitor or "0"),
+        advertise_lan = bool01(cfg.advertise_lan, current.advertise_lan or "0"),
+        advertise_cidr = tostring(value_or_current(cfg, current, "advertise_cidr", "") or ""),
+        wireguard_port = tostring(value_or_current(cfg, current, "wireguard_port", "51820") or "51820"),
+        enable = enable,
     }
 end
 
@@ -90,7 +100,8 @@ local function netbird_config(cfg, vpn_type)
         return {}
     end
 
-    local server = cfg.server or management_host(updated.management_url)
+    local server = cfg.server
+    if not server or server == "" then server = management_host(updated.management_url) end
     local vpn = {
         proto = PROTO,
         auto = "1",
