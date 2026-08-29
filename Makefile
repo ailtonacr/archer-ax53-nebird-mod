@@ -26,17 +26,6 @@ test-netbird:
 	node src/web/VpnServerNetbirdForm-NB.test.mjs
 	python3 scripts/test-netbird-contracts.py .
 
-# Build a complete AX53 firmware from a decrypted stock image.
-# apply-mods.sh already runs the NetBird frontend patcher, so it must not be
-# invoked separately here. pipefail guarantees that a failing build stage is
-# not hidden by tail. ROOTFS_DIR=rootfs pins the exact tree produced by
-# 01-unpack-ubi.sh, so a stale squashfs-root/ can never receive the mods by
-# accident while rootfs/ gets repacked unchanged.
-#
-# Build identity is stamped after all mods and before validation/repack:
-#   soft_ver:<stock-base>-netbird mod Build N
-#   /etc/netbird-build -> build number + git commit/branch + UTC timestamp
-# The BUILD counter advances only after the output image exists successfully.
 firmware: $(TARGET) test-netbird
 	@bash -o pipefail -c 'set -e; \
 		BUILD_NO="$$(tr -d "[:space:]" < BUILD)"; \
@@ -60,22 +49,29 @@ firmware: $(TARGET) test-netbird
 		test ! -e rootfs/usr/lib/lua/luci/netbird/vpn_stock.lua || { echo "Error: obsolete preserved vpn_stock.lua remains in rootfs" >&2; exit 1; }; \
 		test ! -e rootfs/usr/lib/lua/luci/controller/admin/vpn_stock.lua || { echo "Error: legacy vpn_stock.lua remains in LuCI controller tree and would break dispatch" >&2; exit 1; }; \
 		grep -q "profile_delete" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: dedicated NetBird profile delete operation missing" >&2; exit 1; }; \
+		grep -q "delete_failed" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: hardened NetBird delete verification missing" >&2; exit 1; }; \
 		grep -q "settings_set" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: dedicated NetBird settings operation missing" >&2; exit 1; }; \
+		grep -q "description.*kind = \"text\"" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: persisted NetBird description missing" >&2; exit 1; }; \
 		cmp -s src/init/netbird.sh rootfs/lib/netbird/netbird.sh || { echo "Error: packaged netbird.sh drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird-ctl rootfs/sbin/netbird-ctl || { echo "Error: packaged netbird-ctl drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird.init rootfs/etc/init.d/netbird || { echo "Error: packaged netbird init drifted from canonical source" >&2; exit 1; }; \
+		grep -q "single-active-v1" rootfs/etc/init.d/netbird || { echo "Error: single-active migration missing from NetBird init" >&2; exit 1; }; \
+		grep -q "nb_fw_prioritize_lan" rootfs/sbin/netbird-ctl || { echo "Error: prioritized LAN forwarding fix missing" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Ações NetBird" || { echo "Error: current NetBird frontend missing from rootfs" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Descrição" || { echo "Error: editable NetBird description field missing" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "profile_delete" || { echo "Error: dedicated NetBird delete bridge missing from model bundle" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "/admin/netbird" || { echo "Error: dedicated NetBird API bridge missing from model bundle" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "nbStopIfEnabled" || { echo "Error: stock-to-NetBird single-active guard missing" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -q "profileExists" || { echo "Error: NetBird synthetic list bridge missing from VPN page bundle" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -q "__nbActiveStockVpn" || { echo "Error: active stock VPN tracking missing" >&2; exit 1; }; \
 		if zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "__netbirdSaveDraft"; then echo "Error: legacy NetBird save bridge still present in rootfs" >&2; exit 1; fi; \
 		if grep -q "NetBird adapter for TP-Link\|patch_dispatch_upvalues\|request_context" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua 2>/dev/null; then echo "Error: retired NetBird VPN adapter leaked into stock controller" >&2; exit 1; fi; \
 		grep -Fxq "build=$$BUILD_NO" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong build number" >&2; exit 1; }; \
 		grep -Fxq "display_version=$$STAMPED_VERSION" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong display version" >&2; exit 1; }; \
 		echo "    ok untouched TP-Link VPN controller bytecode"; \
-		echo "    ok no obsolete vpn_stock copies"; \
-		echo "    ok dedicated NetBird CRUD/runtime controller"; \
-		echo "    ok canonical runtime sources packaged without drift"; \
+		echo "    ok factory single-active VPN semantics"; \
+		echo "    ok verified NetBird delete + profile description"; \
+		echo "    ok canonical runtime sources + prioritized LAN forwarding"; \
 		echo "    ok dedicated NetBird frontend/list bridges"; \
 		echo "    ok build identity: $$STAMPED_VERSION"; \
 		echo "=== [5/6] Repacking firmware ==="; \
@@ -89,7 +85,6 @@ firmware: $(TARGET) test-netbird
 		echo "Output: $(FIRMWARE_OUTPUT)"; \
 		bash scripts/stamp-build-version.sh advance "$$BUILD_NO"'
 
-# Explicit target to build the vendor mtd-utils suite
 tools:
 	$(MAKE) -C vendor/mtd-utils
 	$(MAKE) -C vendor/squashfs
