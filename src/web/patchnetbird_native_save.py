@@ -89,29 +89,78 @@ NEW = '''function syncNativeSaveButton(isDirty, onSave) {
   if (typeof requestAnimationFrame === "function") requestAnimationFrame(apply);
 }'''
 
+SAVE_DRAFT = '''    async function saveDraft() {
+      if (!dirty.value || busy.value) return !dirty.value;
+      if (!(await validate())) return false;
+      busy.value = true; error.value = ""; message.value = "";
+      try {
+        const payload = stockForm(draft.value || settings.value || {});
+        const r = await nbReq("settings_set", payload);
+        settings.value = r.settings || draft.value || settings.value || {};
+        profileExists.value = r.profileExists !== false;
+        draft.value = normalizeForm(settings.value, settings.value);
+        creating.value = false;
+        dirty.value = false;
+        stopDirtySaveSync();
+        syncNativeSaveButton(false);
+        message.value = "Alterações salvas";
+        notifyParent();
+        return true;
+      } catch (e) {
+        error.value = errMsg(e);
+        startDirtySaveSync();
+        return false;
+      } finally {
+        busy.value = false;
+      }
+    }
+
+'''
+
 STARTS = ("function syncNativeSaveButton(isDirty) {", "function syncNativeSaveButton(isDirty, onSave) {")
 END = "\n\nexport default defineComponent({"
 
 
 def replace_structurally(text: str) -> str:
-    if NEW in text:
-        return text
+    if NEW not in text:
+        found = [(marker, text.find(marker)) for marker in STARTS if text.find(marker) >= 0]
+        if len(found) != 1:
+            raise RuntimeError(f"native Save bridge: expected one implementation, found {len(found)}")
+        marker, start = found[0]
+        end = text.find(END, start)
+        if end < 0:
+            raise RuntimeError("native Save bridge: form export marker not found")
+        text = text[:start] + NEW + text[end:]
 
-    found = [(marker, text.find(marker)) for marker in STARTS if text.find(marker) >= 0]
-    if len(found) != 1:
-        raise RuntimeError(f"native Save bridge: expected one implementation, found {len(found)}")
-    marker, start = found[0]
-    for other in STARTS:
-        if other != marker and text.find(other, start + 1) >= 0:
-            raise RuntimeError("native Save bridge: multiple implementations found")
+    # The form-state patcher creates startDirtySaveSync(). Bind every dirty
+    # synchronization pass to the stable saveDraft function. Function
+    # declarations are hoisted, so this is safe even though saveDraft is
+    # declared later in setup().
+    old_call = "syncNativeSaveButton(true);"
+    new_call = "syncNativeSaveButton(true, saveDraft);"
+    if new_call not in text:
+        count = text.count(old_call)
+        if count < 1:
+            raise RuntimeError("native Save bridge: dirty synchronization call not found")
+        text = text.replace(old_call, new_call)
 
-    end = text.find(END, start)
-    if end < 0:
-        raise RuntimeError("native Save bridge: form export marker not found")
-    current = text[start:end]
-    if "syncNativeSaveButton" not in current:
-        raise RuntimeError("native Save bridge: unexpected function structure")
-    return text[:start] + NEW + text[end:]
+    if "async function saveDraft()" not in text:
+        marker = "    async function enroll() {"
+        if text.count(marker) != 1:
+            raise RuntimeError("native Save bridge: enroll marker not found exactly once")
+        text = text.replace(marker, SAVE_DRAFT + marker, 1)
+
+    required = (
+        "syncNativeSaveButton(true, saveDraft)",
+        "async function saveDraft()",
+        'nbReq("settings_set", payload)',
+        "stopImmediatePropagation",
+        "__netbirdSaveListener",
+    )
+    missing = [token for token in required if token not in text]
+    if missing:
+        raise RuntimeError("native Save bridge incomplete: " + ", ".join(missing))
+    return text
 
 
 def main() -> None:
