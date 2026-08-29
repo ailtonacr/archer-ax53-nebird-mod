@@ -47,7 +47,8 @@ def patch(text: str) -> str:
             break
 
     # Keep CREATE-vs-EDIT singleton state from the previous stage, but remove
-    # its 100ms Save polling and synthetic change/update bridge.
+    # every historical Save-DOM synchronization call/event bridge. The final
+    # subform must expose isChanged and let su-dialog own Save end-to-end.
     text = remove_between(text, "    let netbirdSaveSyncTimer = null;", "    function notifyParent() {", "Save polling")
     text = remove_between(text, "    function notifyParent() {", "    function updateDraft(key, value) {", "synthetic parent events")
     for old in (
@@ -55,6 +56,8 @@ def patch(text: str) -> str:
         "      startDirtySaveSync();\n",
         "        if (dirty.value) startDirtySaveSync();\n",
         "      stopDirtySaveSync();\n",
+        "      syncNativeSaveButton(true);\n",
+        "        if (dirty.value) syncNativeSaveButton(true);\n",
         "      syncNativeSaveButton(false);\n",
     ):
         text = text.replace(old, "")
