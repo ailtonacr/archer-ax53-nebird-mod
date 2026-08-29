@@ -11,21 +11,17 @@ case "$R" in /*) ;; *) R="$PROJECT_ROOT/$R" ;; esac
 NATIVE_MODEL="$PROJECT_ROOT/src/web-backend/model/netbird_vpn_native.lua"
 NATIVE_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird_native.lua"
 NATIVE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_native_crud.py"
+BYTECODE_VERIFIER="$PROJECT_ROOT/scripts/verify-tplink-vpn-bytecode.py"
 VPN_CONTROLLER="$R/usr/lib/lua/luci/controller/admin/vpn.lua"
 
-for f in "$NATIVE_MODEL" "$NATIVE_CONTROLLER" "$NATIVE_PATCHER" "$VPN_CONTROLLER"; do
+for f in "$NATIVE_MODEL" "$NATIVE_CONTROLLER" "$NATIVE_PATCHER" "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"; do
   [ -f "$f" ] || { echo "Error: missing native NetBird input: $f" >&2; exit 1; }
 done
 
-# The stock controller is deliberately preserved. Native integration happens by
-# registering the fifth type in the module-global tables exposed by that chunk.
-python3 - "$VPN_CONTROLLER" <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1])
-head = p.read_bytes()[:4]
-if head != b'\x1bLua':
-    raise SystemExit(f"Error: expected stock TP-Link Lua bytecode, got {head!r}")
-PY
+# Native registration depends on these four registries being module globals in
+# TP-Link's compiled controller. Verify the exact bytecode contract rather than
+# trusting only the Lua magic header or source-level assumptions.
+python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"
 
 mkdir -p "$R/usr/lib/lua/luci/model" "$R/usr/lib/lua/luci/controller/admin"
 cp "$NATIVE_MODEL" "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
@@ -46,6 +42,8 @@ rm -f "$R/etc/rc.d/S99netbird"
 # Structural checks: real stock registries are extended, not replaced.
 grep -q 'TYPE = "netbirdvpn"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'TYPE_ID = "5"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -q 'local schema = { proto = PROTO }' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -q 'table.insert(schema, { key = key })' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'vpn.VPN_CFG_TBL\[TYPE\] = netbird_config' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'vpn.VPN_TYPE_TBL\[TYPE\] = TYPE_ID' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'vpn.VPN_TYPE_NAME_TBL\[TYPE\] = TYPE_NAME' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
@@ -56,6 +54,7 @@ test ! -e "$R/etc/rc.d/S99netbird" || { echo "Error: standalone NetBird boot lif
 
 zcat "$R/www/webpages/js/update-store-DQkZxaRI.js.gz" | grep -Fq 'e.Netbird="netbirdvpn"'
 zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
+zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'new URL(n).hostname'
 zcat "$R/www/webpages/js/index-DTNtPvwx.js.gz" | grep -Fq 'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}'
 zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'type: "netbirdvpn", proto: "netbird"'
 
@@ -68,11 +67,7 @@ if zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'e==="netbird"?a.re
   exit 1
 fi
 
-# Reconfirm the vendor controller itself was not replaced by source/adapters.
-python3 - "$VPN_CONTROLLER" <<'PY'
-import pathlib, sys
-p = pathlib.Path(sys.argv[1])
-assert p.read_bytes()[:4] == b'\x1bLua'
-PY
+# Reconfirm the stock bytecode contract after all rootfs mutations too.
+python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"
 
 echo "### NetBird native TP-Link VPN registration complete ###"
