@@ -36,6 +36,8 @@ UTIL = [
 # R(e) is passed as the update payload and R(n) as the previous-value payload.
 STOCK_UPDATE = 'async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}'
 STOCK_DELETE = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
+STOCK_CONNECTED_STATUS = 'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
+NATIVE_CONNECTED_STATUS = 'function f(e){return e==="netbird"?a.request("/admin/netbird",{operation:"connected_status"},{preventSuccess:!0}):a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
 
 # Older experiments used the same dedicated endpoint but depended on a fragile
 # global Save bridge. Remove those shapes when rebuilding an already-patched
@@ -83,6 +85,11 @@ def patch_text(text, patches, name):
 
 
 def patch_model(text, name):
+    # Keep TP-Link's native connected-status consumer untouched. Only the model
+    # request for the synthetic NetBird key is redirected to the dedicated
+    # backend; every stock profile still calls /admin/vpn?form=server.
+    text = text.replace(STOCK_CONNECTED_STATUS, NATIVE_CONNECTED_STATUS)
+
     # Migrate either stock/current-native or older dedicated experiments into a
     # single explicit /admin/netbird bridge.
     text = text.replace(R_NATIVE, R_MARKER)
@@ -109,6 +116,9 @@ def patch_model(text, name):
     if text.count('j as z};') != 1:
         raise RuntimeError(f"{name}: expected one model export tail")
     text = text.replace('j as z};', 'j as z,nbStatus as nbA,nbSettingsSet as nbB,nbControl as nbD,nbDelete as nbF};', 1)
+
+    if NATIVE_CONNECTED_STATUS not in text:
+        raise RuntimeError(f"{name}: NetBird native connected-status bridge was not installed")
     return text
 
 
@@ -216,7 +226,7 @@ def assert_dedicated_crud(root):
     page = read_js(os.path.join(root, JS, "index-DTNtPvwx.js.gz"), True)
     combined = model + "\n" + page
 
-    required = [NB_HELPERS, DEDICATED_UPDATE, DEDICATED_DELETE, DEDICATED_LIST, DEDICATED_SAVE]
+    required = [NB_HELPERS, NATIVE_CONNECTED_STATUS, DEDICATED_UPDATE, DEDICATED_DELETE, DEDICATED_LIST, DEDICATED_SAVE]
     missing = [token[:80] for token in required if token not in combined]
     if missing:
         raise RuntimeError("dedicated NetBird CRUD bridge incomplete: " + ", ".join(missing))
