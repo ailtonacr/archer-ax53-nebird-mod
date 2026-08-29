@@ -3,9 +3,9 @@
 
 This pass runs after the historical NetBird UI patches. It deliberately keeps
 /admin/netbird only for NetBird-specific auxiliary operations (enrollment,
-runtime diagnostics, logs and payload state), while profile list/add/modify,
-toggle/delete and connected_status return to TP-Link's stock
-/admin/vpn?form=server implementation.
+runtime diagnostics, logs, payload state and post-delete identity cleanup),
+while profile list/add/modify/toggle/delete and connected_status use TP-Link's
+stock /admin/vpn?form=server implementation.
 """
 from __future__ import annotations
 
@@ -77,10 +77,19 @@ def patch_model() -> None:
     if n != 1 and 'async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}' not in text:
         raise RuntimeError("native update: dedicated NetBird toggle path not found")
 
-    text = text.replace(
-        'async function J(e,n){if(e==="netbird"){await nbDelete();return}await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}',
-        'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}',
-    )
+    # The stock endpoint owns removal of the vpn/server record. NetBird still
+    # needs a post-delete runtime/identity cleanup because those files live
+    # outside the generic TP-Link profile store.
+    old_delete = 'async function J(e,n){if(e==="netbird"){await nbDelete();return}await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
+    native_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),e==="netbird"&&await nbDelete()}'
+    if old_delete in text:
+        text = text.replace(old_delete, native_delete, 1)
+    elif native_delete not in text:
+        stock_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
+        if stock_delete in text:
+            text = text.replace(stock_delete, native_delete, 1)
+        else:
+            raise RuntimeError("native delete: stock/dedicated delete path not found")
 
     # server is consumed by TP-Link connected_status(), which pings it. Keep
     # management_url as the full URL, but serialize only the hostname into the
@@ -121,8 +130,8 @@ def patch_page() -> None:
         '"add"===n.type?await Ce(i):await ne(i,n.tableItem)',
     )
 
-    # The page no longer consumes the dedicated list/save helpers. Keep the
-    # helpers themselves in the model for auxiliary NetBird screens/actions.
+    # The page no longer consumes dedicated list/save helpers. Keep auxiliary
+    # helpers in the model bundle for enrollment/runtime/identity operations.
     text = text.replace(
         'X as ze,nbA as Nbt,nbB as Nbs,nbG as NbStop}from"./model-CI6Gt3Hz.js"',
         'X as ze}from"./model-CI6Gt3Hz.js"',
@@ -156,6 +165,7 @@ def assert_native(root: str) -> None:
         'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}',
         'type:u.Netbird,server:n,management_url:e.management_url||""',
         'new URL(n).hostname',
+        'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),e==="netbird"&&await nbDelete()}',
         'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}',
         'type: "netbirdvpn", proto: "netbird"',
     ]
@@ -168,7 +178,7 @@ def assert_native(root: str) -> None:
         'e==="netbird"?a.request("/admin/netbird",{operation:"connected_status"}',
         'a.value=_nb.concat(e)',
         'it.Netbird===i.type?await Nbs(i)',
-        'if(e==="netbird"){await nbDelete()',
+        'if(e==="netbird"){await nbDelete();return}',
         'new URL(n).host}',
     ]
     leaked = [x for x in forbidden if x in combined]
@@ -182,7 +192,7 @@ def main() -> None:
     patch_page()
     patch_form()
     assert_native(ROOT)
-    print("Native NetBird CRUD patch complete: /admin/vpn owns list/add/modify/toggle/delete/connected_status")
+    print("Native NetBird CRUD patch complete: stock /admin/vpn owns profile CRUD; auxiliary endpoint owns runtime identity")
 
 
 if __name__ == "__main__":
