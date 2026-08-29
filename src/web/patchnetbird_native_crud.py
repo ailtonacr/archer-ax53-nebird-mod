@@ -82,9 +82,15 @@ def patch_model() -> None:
         'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}',
     )
 
-    native_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).host}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
+    # server is consumed by TP-Link connected_status(), which pings it. Keep
+    # management_url as the full URL, but serialize only the hostname into the
+    # common stock server field (never scheme/path/port).
+    native_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
+    old_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).host}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
     marker = 'function R(e){'
-    if native_serializer not in text:
+    if old_serializer in text:
+        text = text.replace(old_serializer, native_serializer, 1)
+    elif native_serializer not in text:
         if text.count(marker) != 1:
             raise RuntimeError("native serializer: stock R(e) marker not unique")
         text = text.replace(marker, native_serializer, 1)
@@ -149,6 +155,7 @@ def assert_native(root: str) -> None:
         'e.Netbird="netbirdvpn"',
         'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}',
         'type:u.Netbird,server:n,management_url:e.management_url||""',
+        'new URL(n).hostname',
         'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}',
         'type: "netbirdvpn", proto: "netbird"',
     ]
@@ -162,6 +169,7 @@ def assert_native(root: str) -> None:
         'a.value=_nb.concat(e)',
         'it.Netbird===i.type?await Nbs(i)',
         'if(e==="netbird"){await nbDelete()',
+        'new URL(n).host}',
     ]
     leaked = [x for x in forbidden if x in combined]
     if leaked:
