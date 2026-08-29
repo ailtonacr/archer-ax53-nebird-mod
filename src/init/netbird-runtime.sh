@@ -1,9 +1,8 @@
 #!/bin/sh
 # Native NetBird runtime lifecycle helpers for TP-Link Archer AX53.
 #
-# This file is sourced after /lib/netbird/netbird.sh. It deliberately overrides
-# the historical lifecycle helpers that called back into /sbin/netbird-ctl.
-# The dependency direction is now one-way:
+# This file is sourced after /lib/netbird/netbird.sh. The dependency direction
+# is one-way:
 #
 #   vpnc/netifd -> netbird.sh + netbird-runtime.sh -> NetBird binary
 #   netbird-ctl -> netbird.sh + netbird-runtime.sh -> NetBird binary
@@ -45,7 +44,6 @@ nb_daemon_ping() {
     "$NB_BIN" status -j --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1
 }
 
-# Override the legacy implementation in netbird.sh. No controller dependency.
 nb_is_running() {
     nb_daemon_ping
 }
@@ -62,24 +60,28 @@ nb_status_json() {
     return 1
 }
 
-# A netifd link is UP only when all three facts are simultaneously true:
-#   1. the wt0 device exists;
-#   2. NetBird reports daemonStatus=Connected;
-#   3. management.connected=true inside the management object itself.
-# Do not accept an unrelated signal.connected=true as proof of management.
-nb_runtime_is_connected() {
-    [ -d "/sys/class/net/$NB_IFNAME" ] || return 1
-    [ -S "$NB_SOCK" ] || return 1
-
-    local status compact management
-    status="$(nb_status_json 2>/dev/null)" || return 1
+# Pure status parser, kept separate from wt0/socket checks so its semantics can
+# be unit-tested offline. It intentionally ignores signal.connected.
+nb_status_json_is_connected() {
+    local status="$1" compact management
     compact="$(printf '%s' "$status" | tr -d '\r\n\t ')"
-
     printf '%s' "$compact" | grep -q '"daemonStatus":"Connected"' || return 1
     management="$(printf '%s' "$compact" | sed -n 's/.*"management":{\([^}]*\)}.*/\1/p')"
     [ -n "$management" ] || return 1
     printf '%s' "$management" | grep -q '"connected":true' || return 1
     return 0
+}
+
+# A netifd link is UP only when all three facts are simultaneously true:
+#   1. the wt0 device exists;
+#   2. NetBird reports daemonStatus=Connected;
+#   3. management.connected=true inside the management object itself.
+nb_runtime_is_connected() {
+    [ -d "/sys/class/net/$NB_IFNAME" ] || return 1
+    [ -S "$NB_SOCK" ] || return 1
+    local status
+    status="$(nb_status_json 2>/dev/null)" || return 1
+    nb_status_json_is_connected "$status"
 }
 
 nb_fw_priority_values() {
@@ -125,9 +127,6 @@ nb_runtime_apply_firewall() {
     return 0
 }
 
-# nb_runtime_connect [setup-key-file]
-# Start the daemon if needed and issue exactly one `netbird up` command. The
-# optional setup key is always a file path and is never copied into logs.
 nb_runtime_connect() {
     local keyfile="${1:-}" rc
     if [ -n "$keyfile" ] && [ ! -f "$keyfile" ]; then
@@ -157,8 +156,6 @@ nb_runtime_connect() {
     return "$rc"
 }
 
-# Disconnect must never download/materialize a missing payload. If no daemon is
-# present there is simply nothing to disconnect; firewall cleanup still runs.
 nb_runtime_disconnect() {
     local rc=0
     if [ -S "$NB_SOCK" ] && [ -x "$NB_BIN" ]; then
@@ -179,8 +176,6 @@ nb_runtime_restart() {
     nb_runtime_connect
 }
 
-# Compatibility names used by older local callers. They now resolve directly
-# to the shared runtime and cannot recurse through netbird-ctl.
 nb_start() {
     nb_ensure_settings
     [ "$(nb_get "$NB_SETTINGS_FILE" enable "0")" = "1" ] || return 0
