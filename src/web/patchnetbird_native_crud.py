@@ -65,9 +65,6 @@ def patch_model() -> None:
     stock_status = 'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
     text = text.replace(dedicated_status, stock_status)
 
-    # Restore the stock toggle/update path. Factory single-active protection is
-    # now provided by the stock controller itself because NetBird is a real
-    # profile type in the same vpn/server collection.
     text, n = re.subn(
         r'async function W\(e,n\)\{if\(e\.type===u\.Netbird\|\|n\.type===u\.Netbird\).*?await function\(e,n,t\)\{return a\.update\(y,\{key:e\},n,t,\{preventSuccess:!0\}\)\}\(e\.key,R\(e\),R\(n\)\)\}',
         'async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}',
@@ -77,13 +74,17 @@ def patch_model() -> None:
     if n != 1 and 'async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}' not in text:
         raise RuntimeError("native update: dedicated NetBird toggle path not found")
 
-    # The stock endpoint owns removal of the vpn/server record. NetBird still
-    # needs a post-delete runtime/identity cleanup because those files live
-    # outside the generic TP-Link profile store.
+    # Stock removal is authoritative. Always invoke the auxiliary cleanup after
+    # a successful remove; the backend checks vpn/server and becomes a no-op if
+    # a native NetBird profile still exists. This removes the historical
+    # assumption that TP-Link will preserve the synthetic key literal "netbird".
     old_delete = 'async function J(e,n){if(e==="netbird"){await nbDelete();return}await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
-    native_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),e==="netbird"&&await nbDelete()}'
+    key_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),e==="netbird"&&await nbDelete()}'
+    native_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete()}'
     if old_delete in text:
         text = text.replace(old_delete, native_delete, 1)
+    elif key_delete in text:
+        text = text.replace(key_delete, native_delete, 1)
     elif native_delete not in text:
         stock_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
         if stock_delete in text:
@@ -91,9 +92,6 @@ def patch_model() -> None:
         else:
             raise RuntimeError("native delete: stock/dedicated delete path not found")
 
-    # server is consumed by TP-Link connected_status(), which pings it. Keep
-    # management_url as the full URL, but serialize only the hostname into the
-    # common stock server field (never scheme/path/port).
     native_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
     old_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).host}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
     marker = 'function R(e){'
@@ -130,8 +128,6 @@ def patch_page() -> None:
         '"add"===n.type?await Ce(i):await ne(i,n.tableItem)',
     )
 
-    # The page no longer consumes dedicated list/save helpers. Keep auxiliary
-    # helpers in the model bundle for enrollment/runtime/identity operations.
     text = text.replace(
         'X as ze,nbA as Nbt,nbB as Nbs,nbG as NbStop}from"./model-CI6Gt3Hz.js"',
         'X as ze}from"./model-CI6Gt3Hz.js"',
@@ -149,6 +145,10 @@ def patch_form() -> None:
     name = "VpnServerNetbirdForm-NB.js.gz"
     text = read_gz(name)
     text = text.replace('type: "netbird", proto: "netbird"', 'type: "netbirdvpn", proto: "netbird"')
+    text = text.replace(
+        'const existing = !!(value && (value.key === "netbird" || value.id === "netbird"));',
+        'const existing = !!(value && (value.type === "netbirdvpn" || value.type === "netbird" || value.key === "netbird" || value.id === "netbird"));',
+    )
     text = text.replace('profile CRUD/runtime actions are persisted by the dedicated /admin/netbird', 'profile CRUD is persisted by TP-Link /admin/vpn; runtime-only actions use /admin/netbird')
     check_js(name, text)
     write_gz(name, text)
@@ -165,9 +165,10 @@ def assert_native(root: str) -> None:
         'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}',
         'type:u.Netbird,server:n,management_url:e.management_url||""',
         'new URL(n).hostname',
-        'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),e==="netbird"&&await nbDelete()}',
+        'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete()}',
         'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}',
         'type: "netbirdvpn", proto: "netbird"',
+        'value.type === "netbirdvpn"',
     ]
     combined = update + "\n" + model + "\n" + page + "\n" + form
     missing = [x for x in required if x not in combined]
@@ -179,6 +180,7 @@ def assert_native(root: str) -> None:
         'a.value=_nb.concat(e)',
         'it.Netbird===i.type?await Nbs(i)',
         'if(e==="netbird"){await nbDelete();return}',
+        'e==="netbird"&&await nbDelete()',
         'new URL(n).host}',
     ]
     leaked = [x for x in forbidden if x in combined]
