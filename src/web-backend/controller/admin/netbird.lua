@@ -124,8 +124,8 @@ local function classify(settings, status)
     if not model.payload_ok() then return "payload_missing" end
     local ds = status and status.daemonStatus or ""
     if ds == "NeedsLogin" then return "enrollment_required"
-    elseif ds == "Connected" then return "connected"
-    elseif ds == "Connecting" or ds == "Restarting" then return "connecting"
+    elseif ds == "Connected" then return settings.enable == "1" and "connected" or "disabled"
+    elseif ds == "Connecting" or ds == "Restarting" then return settings.enable == "1" and "connecting" or "disabled"
     elseif ds == "Idle" or ds == "Disconnected" or ds == "Down" then
         return settings.enable == "1" and "disconnected" or "disabled"
     end
@@ -138,18 +138,31 @@ local function identity_present()
 end
 
 local function reconcile_runtime(settings, status)
-    if not status then return settings end
-    local ds, patch = status.daemonStatus or "", nil
-    if ds == "NeedsLogin" then
-        if settings.enrolled ~= "0" then patch = { enrolled = "0" } end
-    elseif ds == "Connected" or ds == "Connecting" or ds == "Restarting" then
-        patch = {}
-        if settings.enrolled ~= "1" then patch.enrolled = "1" end
-        if settings.enable ~= "1" then patch.enable = "1" end
-    elseif ds == "Idle" or ds == "Disconnected" or ds == "Down" then
-        if identity_present() and settings.enrolled ~= "1" then patch = { enrolled = "1" } end
+    local patch = {}
+    local active = native_profile_active()
+    local expected_enable = active and "1" or "0"
+
+    -- vpn.client is the source of truth for activation. A stale daemon that is
+    -- still Connected during teardown must never resurrect enable=1 in the
+    -- runtime settings materialized view.
+    if settings.enable ~= expected_enable then
+        patch.enable = expected_enable
     end
-    if patch and next(patch) then
+
+    if status then
+        local ds = status.daemonStatus or ""
+        if ds == "NeedsLogin" then
+            if settings.enrolled ~= "0" then patch.enrolled = "0" end
+        elseif ds == "Connected" or ds == "Connecting" or ds == "Restarting" then
+            if settings.enrolled ~= "1" then patch.enrolled = "1" end
+        elseif ds == "Idle" or ds == "Disconnected" or ds == "Down" then
+            if identity_present() and settings.enrolled ~= "1" then patch.enrolled = "1" end
+        end
+    elseif identity_present() and settings.enrolled ~= "1" then
+        patch.enrolled = "1"
+    end
+
+    if next(patch) then
         local updated = model.set_internal_settings(patch)
         if updated then return updated end
     end
@@ -236,10 +249,6 @@ end
 -- Runtime/identity cleanup only. The stock /admin/vpn remove operation owns the
 -- actual vpn/server record; the frontend invokes this after that removal.
 local function op_profile_delete()
-    -- netbird-ctl clean calls nb_clean() -> nb_stop() directly and therefore
-    -- does not materialize/download the payload merely to delete a never-started
-    -- profile. Calling the separate "stop" command here would go through run()
-    -- and could trigger materialization before cleanup.
     local clean_out, clean_rc = model.control("clean")
     if clean_rc ~= 0 then
         return error_reply("delete_failed", "failed to clean NetBird identity: " .. (clean_out or "clean failed"):gsub("%s+$", ""))
