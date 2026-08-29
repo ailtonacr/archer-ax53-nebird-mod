@@ -30,6 +30,7 @@ FILES="$SCRIPT_DIR/010-netbird-files"
 RUNTIME_SRC="$PROJECT_ROOT/src/init"
 R="$ROOTFS_DIR"
 WEB_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_web.py"
+FACTORY_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_factory_semantics.py"
 NB_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird.lua"
 NB_MODEL="$PROJECT_ROOT/src/web-backend/model/netbird.lua"
 
@@ -86,8 +87,6 @@ else
   exit 1
 fi
 
-# The adapter architecture is retired. No duplicate controller module should
-# remain anywhere in the image after the stock controller has been restored.
 rm -f "$VPN_STOCK" "$LEGACY_VPN_STOCK"
 
 if command -v luac >/dev/null 2>&1; then
@@ -97,9 +96,11 @@ is_stock_vpn "$VPN_CONTROLLER" || { echo "Error: TP-Link VPN controller restorat
 
 echo "[3/8] patching VPN Client frontend ..."
 [ -f "$WEB_PATCHER" ] || { echo "Error: missing $WEB_PATCHER" >&2; exit 1; }
+[ -f "$FACTORY_PATCHER" ] || { echo "Error: missing $FACTORY_PATCHER" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required for frontend patching" >&2; exit 1; }
 command -v node >/dev/null 2>&1 || { echo "Error: node is required for frontend syntax validation" >&2; exit 1; }
 python3 "$WEB_PATCHER" "$R"
+python3 "$FACTORY_PATCHER" "$R"
 
 echo "[4/8] adding CIDR-scoped fw_netbird_access/block ..."
 if ! grep -q "# NetBird v2 CIDR-scoped" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
@@ -182,6 +183,9 @@ done
 is_stock_vpn "$VPN_CONTROLLER" || { echo "Error: /admin/vpn controller is not original TP-Link bytecode" >&2; exit 1; }
 grep -q 'profile_delete' "$R/usr/lib/lua/luci/controller/admin/netbird.lua" || {
   echo "Error: dedicated NetBird profile CRUD controller incomplete" >&2; exit 1;
+}
+grep -q 'description' "$R/usr/lib/lua/luci/model/netbird.lua" || {
+  echo "Error: NetBird profile description persistence missing" >&2; exit 1;
 }
 
 echo "### NetBird VPN Client integration complete ###"
