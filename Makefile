@@ -59,7 +59,7 @@ firmware: $(TARGET) test-netbird
 		grep -q "nb_fw_prioritize_lan" rootfs/sbin/netbird-ctl || { echo "Error: prioritized LAN forwarding fix missing" >&2; exit 1; }; \
 		grep -q -- "--wireguard-port" rootfs/sbin/netbird-ctl || { echo "Error: WireGuard port is not applied to NetBird runtime" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Ações NetBird" || { echo "Error: current NetBird frontend missing from rootfs" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Descrição" || { echo "Error: editable NetBird description field missing" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })" || { echo "Error: native TP-Link NetBird isChanged contract missing" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Hostname do peer" || { echo "Error: editable NetBird hostname field missing" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Porta WireGuard" || { echo "Error: editable NetBird WireGuard port field missing" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "profile_delete" || { echo "Error: dedicated NetBird delete bridge missing from model bundle" >&2; exit 1; }; \
@@ -67,12 +67,13 @@ firmware: $(TARGET) test-netbird
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "nbStopIfEnabled" || { echo "Error: stock-to-NetBird single-active guard missing" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -q "profileExists" || { echo "Error: NetBird synthetic list bridge missing from VPN page bundle" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -q "__nbActiveStockVpn" || { echo "Error: active stock VPN tracking missing" >&2; exit 1; }; \
-		if zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "__netbirdSaveDraft"; then echo "Error: legacy NetBird save bridge still present in rootfs" >&2; exit 1; fi; \
+		for legacy in syncNativeSaveButton data-netbird-dirty __netbirdSaveListener stopImmediatePropagation netbirdSaveSyncTimer __netbirdSaveDraft; do if zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "$$legacy"; then echo "Error: legacy NetBird Save interception remains in rootfs: $$legacy" >&2; exit 1; fi; done; \
 		if grep -q "NetBird adapter for TP-Link\|patch_dispatch_upvalues\|request_context" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua 2>/dev/null; then echo "Error: retired NetBird VPN adapter leaked into stock controller" >&2; exit 1; fi; \
 		grep -Fxq "build=$$BUILD_NO" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong build number" >&2; exit 1; }; \
 		grep -Fxq "display_version=$$STAMPED_VERSION" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong display version" >&2; exit 1; }; \
 		echo "    ok untouched TP-Link VPN controller bytecode"; \
 		echo "    ok factory single-active VPN semantics"; \
+		echo "    ok native TP-Link form dirty/save contract"; \
 		echo "    ok verified NetBird delete + complete profile fields"; \
 		echo "    ok canonical runtime sources + prioritized LAN forwarding"; \
 		echo "    ok WireGuard port aligned between UI/runtime/firewall"; \
