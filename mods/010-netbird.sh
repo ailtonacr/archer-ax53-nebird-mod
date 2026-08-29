@@ -10,7 +10,7 @@
 # The large NetBird ELF is NOT embedded in rootfs and NOT stored on any MTD/UBI
 # partition; it is downloaded over HTTPS and materialized into /tmp at runtime.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
