@@ -162,6 +162,29 @@ function status()
     if out and out ~= "" then local ok, obj = pcall(json.decode, out); if ok and type(obj) == "table" then return obj end end
     return nil
 end
+
+local function management_host(url)
+    local authority = tostring(url or ""):match("^https?://([^/]+)") or ""
+    if authority == "" then return "" end
+    return authority:match("^([^:]+)") or authority
+end
+
+function connected_status()
+    local settings = get_settings()
+    local host = management_host(settings.management_url)
+    local ping = ""
+    if host ~= "" then
+        local out = sys.exec("ping -c 1 -W 1 " .. shellquote(host) .. " 2>&1") or ""
+        local ms = out:match("time[=<]([%d%.]+)%s*ms")
+        if ms then ping = tonumber(ms) or ms end
+    end
+    return {
+        ping = ping,
+        address = host,
+        dns = "",
+    }
+end
+
 function control(op, keyfile)
     if op == "enroll" then return run_ex("up", "--setup-key-file", keyfile)
     elseif op == "start" or op == "up" then return run_ex("up")
