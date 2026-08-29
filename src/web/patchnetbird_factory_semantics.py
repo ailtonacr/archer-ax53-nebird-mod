@@ -50,6 +50,24 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     return text.replace(old, new, 1)
 
 
+def replace_one_of(text: str, candidates: tuple[str, ...], new: str, label: str) -> str:
+    """Replace exactly one recognized historical/current source shape.
+
+    Builds may start from a pristine stock rootfs or from source text whose
+    formatting changed without changing semantics. If the canonical new form is
+    already present, the operation is idempotently complete.
+    """
+    if new in text:
+        return text
+    matches = [(old, text.count(old)) for old in candidates if text.count(old)]
+    total = sum(count for _, count in matches)
+    if total != 1:
+        detail = ", ".join(f"shape#{idx + 1}={text.count(old)}" for idx, old in enumerate(candidates))
+        raise RuntimeError(f"{label}: expected exactly one recognized source shape ({detail})")
+    old = next(old for old, count in matches if count == 1)
+    return text.replace(old, new, 1)
+
+
 def patch_model() -> None:
     name = "model-CI6Gt3Hz.js.gz"
     text = read_gz(name)
@@ -71,7 +89,10 @@ def patch_page() -> None:
     text = read_gz(name)
 
     list_prefix = 'i=async()=>{const{data:e,maxRules:t}=await J();let _nb=[];'
-    list_factory = 'i=async()=>{const{data:e,maxRules:t}=await J();globalThis.__nbActiveStockVpn=e.find((e=>e&&e.enable))||null;let _nb=[];'
+    # Stock rows observed by this page are normally booleans, but use the same
+    # explicit normalization as the NetBird bridge so strings such as "off" can
+    # never be mistaken for an active profile merely because they are truthy.
+    list_factory = 'i=async()=>{const{data:e,maxRules:t}=await J();globalThis.__nbActiveStockVpn=e.find((e=>e&&(e.enable===!0||e.enable==="on"||e.enable==="1"||e.enabled===!0)))||null;let _nb=[];'
     text = replace_once(text, list_prefix, list_factory, "stock active profile tracking")
 
     old_meta = 'key:"netbird",id:"netbird",name:"NetBird",des:"NetBird",description:"NetBird",type:it.Netbird'
@@ -79,14 +100,10 @@ def patch_page() -> None:
     text = replace_once(text, old_meta, new_meta, "NetBird description list metadata")
 
     old_save = 'it.Netbird===i.type?await Nbs(i):"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
-    new_save = 'it.Netbird===i.type?await Nbs(i):(i&&(i.enable===!0||i.enable==="on"||i.enable==="1"||i.enabled===!0)&&await nbStopIfEnabled(),"add"===n.type?await Ce(i):await ne(i,n.tableItem))'
-    # nbStopIfEnabled is exported by the model post-patch. Add it to the page import.
+    new_save = 'it.Netbird===i.type?await Nbs(i):(i&&(i.enable===!0||i.enable==="on"||i.enable==="1"||i.enabled===!0)&&await NbStop(),"add"===n.type?await Ce(i):await ne(i,n.tableItem))'
     old_import = 'X as ze,nbA as Nbt,nbB as Nbs}from"./model-CI6Gt3Hz.js"'
     new_import = 'X as ze,nbA as Nbt,nbB as Nbs,nbG as NbStop}from"./model-CI6Gt3Hz.js"'
-    # The main patcher does not know this export yet; use a local alias by replacing
-    # the save expression with the imported alias below after export injection.
     text = replace_once(text, old_import, new_import, "single-active page import")
-    new_save = new_save.replace("nbStopIfEnabled()", "NbStop()")
     text = replace_once(text, old_save, new_save, "single-active stock save")
 
     check_js(name, text)
@@ -111,9 +128,18 @@ def patch_form() -> None:
     new_norm = 'enrolled: as01(v.enrolled, base.enrolled || "0"),\n    description: v.description !== undefined ? String(v.description || "") : (base.description || "NetBird"),\n    management_url:'
     text = replace_once(text, old_norm, new_norm, "description normalization")
 
-    old_stock = 'name: "NetBird",\n    des: "NetBird",\n    description: "NetBird",'
-    new_stock = 'name: s.description || "NetBird",\n    des: s.description || "NetBird",\n    description: s.description || "NetBird",'
-    text = replace_once(text, old_stock, new_stock, "description stock form")
+    # VpnServerNetbirdForm-NB.js is intentionally readable source. Historical
+    # revisions formatted stockForm() both as three separate lines and as a
+    # compact single line; support both without weakening the one-match guard.
+    old_stock_multiline = 'name: "NetBird",\n    des: "NetBird",\n    description: "NetBird",'
+    old_stock_compact = 'name: "NetBird", des: "NetBird", description: "NetBird",'
+    new_stock = 'name: s.description || "NetBird", des: s.description || "NetBird", description: s.description || "NetBird",'
+    text = replace_one_of(
+        text,
+        (old_stock_multiline, old_stock_compact),
+        new_stock,
+        "description stock form",
+    )
 
     old_validate = 'const s = draft.value || settings.value || {};\n      if (!validManagementUrl(s.management_url)) {'
     new_validate = 'const s = draft.value || settings.value || {};\n      if (!String(s.description || "").trim()) {\n        error.value = "Informe uma descrição para o perfil.";\n        return false;\n      }\n      if (!validManagementUrl(s.management_url)) {'
