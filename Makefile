@@ -57,8 +57,11 @@ firmware: $(TARGET) test-netbird
 		cmp -s src/init/netbird.init rootfs/etc/init.d/netbird || { echo "Error: packaged netbird init drifted from canonical source" >&2; exit 1; }; \
 		grep -q "single-active-v1" rootfs/etc/init.d/netbird || { echo "Error: single-active migration missing from NetBird init" >&2; exit 1; }; \
 		grep -q "nb_fw_prioritize_lan" rootfs/sbin/netbird-ctl || { echo "Error: prioritized LAN forwarding fix missing" >&2; exit 1; }; \
+		grep -q -- "--wireguard-port" rootfs/sbin/netbird-ctl || { echo "Error: WireGuard port is not applied to NetBird runtime" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Ações NetBird" || { echo "Error: current NetBird frontend missing from rootfs" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Descrição" || { echo "Error: editable NetBird description field missing" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Hostname do peer" || { echo "Error: editable NetBird hostname field missing" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Porta WireGuard" || { echo "Error: editable NetBird WireGuard port field missing" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "profile_delete" || { echo "Error: dedicated NetBird delete bridge missing from model bundle" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "/admin/netbird" || { echo "Error: dedicated NetBird API bridge missing from model bundle" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "nbStopIfEnabled" || { echo "Error: stock-to-NetBird single-active guard missing" >&2; exit 1; }; \
@@ -70,8 +73,9 @@ firmware: $(TARGET) test-netbird
 		grep -Fxq "display_version=$$STAMPED_VERSION" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong display version" >&2; exit 1; }; \
 		echo "    ok untouched TP-Link VPN controller bytecode"; \
 		echo "    ok factory single-active VPN semantics"; \
-		echo "    ok verified NetBird delete + profile description"; \
+		echo "    ok verified NetBird delete + complete profile fields"; \
 		echo "    ok canonical runtime sources + prioritized LAN forwarding"; \
+		echo "    ok WireGuard port aligned between UI/runtime/firewall"; \
 		echo "    ok dedicated NetBird frontend/list bridges"; \
 		echo "    ok build identity: $$STAMPED_VERSION"; \
 		echo "=== [5/6] Repacking firmware ==="; \
