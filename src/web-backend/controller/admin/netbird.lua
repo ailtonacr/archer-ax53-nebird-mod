@@ -114,8 +114,6 @@ local function sync_settings_from_native_profile()
             cand[key] = kind == "bool" and bool01(value, nil) or scalar(value)
         end
     end
-    -- Enrollment must never activate a profile behind the stock VPN Client's
-    -- back. Activation remains owned by the native list toggle/vpnc lifecycle.
     cand.enable = "0"
     return model.set_settings(cand)
 end
@@ -142,9 +140,6 @@ local function reconcile_runtime(settings, status)
     local active = native_profile_active()
     local expected_enable = active and "1" or "0"
 
-    -- vpn.client is the source of truth for activation. A stale daemon that is
-    -- still Connected during teardown must never resurrect enable=1 in the
-    -- runtime settings materialized view.
     if settings.enable ~= expected_enable then
         patch.enable = expected_enable
     end
@@ -237,8 +232,6 @@ local function op_settings_get()
     return reply({ settings = model.get_settings(), profileExists = native_profile_exists() })
 end
 
--- Compatibility-only settings endpoint retained for older auxiliary clients.
--- Normal profile save/update is owned by /admin/vpn?form=server.
 local function op_settings_set(body)
     local cand = request_settings(body)
     local cur, write_err = model.set_settings(cand)
@@ -246,9 +239,15 @@ local function op_settings_set(body)
     return reply({ settings = cur, profileExists = native_profile_exists() })
 end
 
--- Runtime/identity cleanup only. The stock /admin/vpn remove operation owns the
--- actual vpn/server record; the frontend invokes this after that removal.
+-- Called after every successful stock remove. It is intentionally key-agnostic:
+-- if any netbirdvpn profile remains in vpn/server, this is a no-op. Only when
+-- the authoritative native profile is gone do we remove the external identity
+-- and runtime state that generic TP-Link CRUD cannot know about.
 local function op_profile_delete()
+    if native_profile_exists() then
+        return reply({ result = "skipped", profileExists = true })
+    end
+
     local clean_out, clean_rc = model.control("clean")
     if clean_rc ~= 0 then
         return error_reply("delete_failed", "failed to clean NetBird identity: " .. (clean_out or "clean failed"):gsub("%s+$", ""))
@@ -260,7 +259,7 @@ local function op_profile_delete()
     if lfs.access(SETTINGS) or lfs.access(PROFILE_CONFIG) or lfs.access(PROFILE_STATE) then
         return error_reply("delete_failed", "NetBird runtime files remain after cleanup")
     end
-    return reply({ result = "ok", profileExists = native_profile_exists() })
+    return reply({ result = "ok", profileExists = false })
 end
 
 local function op_enroll(body)
@@ -279,9 +278,6 @@ local function op_enroll(body)
     nixio.fs.unlink(tmp)
     if rc ~= 0 then return error_reply("enroll_failed", (out or "enrollment failed"):gsub("%s+$", "")) end
 
-    -- Enrollment has no generic TP-Link equivalent, so the daemon is started
-    -- directly only for registration. It is then stopped and left disabled;
-    -- normal activation happens through the stock VPN Client toggle.
     model.control("stop")
     local cur, state_err = model.set_internal_settings({ enrolled = "1", enable = "0" })
     if not cur then return error_reply("internal", state_err or "failed to persist enrollment state") end
