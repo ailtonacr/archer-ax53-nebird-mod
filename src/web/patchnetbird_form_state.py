@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Post-patch NetBird form state integration inside TP-Link's stock VPN modal.
 
-Two hardware-observed UI contracts are handled here:
-- TP-Link can re-render/re-disable the native Save button after a checkbox
-  change, so a dirty NetBird form must keep the native footer synchronized
-  until the draft is saved/reset/closed.
+Hardware-observed UI contracts handled here:
+- TP-Link can re-render/re-disable the native Save button after a field change,
+  so a dirty NetBird form must keep the native footer synchronized until the
+  draft is saved/reset/closed. The actual AX53 DOM uses `.su-modal-mask`; do not
+  depend on a specific button style class.
 - The current backend stores exactly one NetBird profile. Opening Add Profile
   must therefore create a clean unenrolled draft and explicitly refuse a
   second NetBird profile instead of silently loading/overwriting the existing
@@ -34,6 +35,45 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
 def main() -> None:
     with gzip.open(PATH, "rt", encoding="utf-8") as fh:
         text = fh.read()
+
+    # Hardware screenshot/DevTools shows TP-Link's active dialog under
+    # `.su-modal-mask`. Previous code only preferred dialog/.su-dialog and then
+    # filtered for `button.su-button-primary`, which did not match the actual
+    # Save control in this build. Match the active modal and identify Save by
+    # its visible/accessibility label instead; the click handler remains the
+    # original TP-Link handler.
+    text = replace_once(
+        text,
+        '    const scopes = Array.from(document.querySelectorAll("dialog,.su-dialog"));\n'
+        '    const scope = scopes.length ? scopes[scopes.length - 1] : document;\n'
+        '    const buttons = Array.from(scope.querySelectorAll("button.su-button-primary"));\n'
+        '    const save = buttons.find(function (button) {\n'
+        '      return /salvar|save/i.test(String(button.textContent || "").trim());\n'
+        '    }) || buttons[buttons.length - 1];',
+        '    const scopes = Array.from(document.querySelectorAll(".su-modal-mask,.su-dialog,dialog"));\n'
+        '    const scope = scopes.length ? scopes[scopes.length - 1] : document;\n'
+        '    const controls = Array.from(scope.querySelectorAll("button,[role=button],input[type=button],input[type=submit]"));\n'
+        '    const save = controls.find(function (control) {\n'
+        '      const label = [control.textContent, control.value, control.getAttribute && control.getAttribute("aria-label")].filter(Boolean).join(" ");\n'
+        '      return /salvar|save/i.test(String(label).trim());\n'
+        '    });',
+        "native TP-Link Save selector",
+    )
+
+    text = replace_once(
+        text,
+        '      save.disabled = false;\n'
+        '      if (typeof save.removeAttribute === "function") save.removeAttribute("disabled");\n'
+        '      if (save.classList && typeof save.classList.remove === "function") save.classList.remove("is-disabled");\n'
+        '      if (typeof save.setAttribute === "function") save.setAttribute("data-netbird-dirty", "1");',
+        '      save.disabled = false;\n'
+        '      if (typeof save.removeAttribute === "function") { save.removeAttribute("disabled"); save.removeAttribute("aria-disabled"); }\n'
+        '      if (typeof save.setAttribute === "function") { save.setAttribute("aria-disabled", "false"); save.setAttribute("data-netbird-dirty", "1"); }\n'
+        '      if (save.classList && typeof save.classList.remove === "function") {\n'
+        '        save.classList.remove("is-disabled", "disabled", "su-disabled", "su-button-disabled");\n'
+        '      }',
+        "native Save disabled state cleanup",
+    )
 
     text = replace_once(
         text,
