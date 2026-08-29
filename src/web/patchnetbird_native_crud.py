@@ -2,9 +2,9 @@
 """Finalize NetBird as a native TP-Link VPN Client CRUD type.
 
 The stock base form owns profile identity fields (description/type/vendor/key).
-The NetBird subform owns protocol-specific fields only, exactly like the vendor
-PPTP/L2TP/OpenVPN/WireGuard subforms. /admin/netbird remains only for enrollment,
-diagnostics, logs, payload state and post-delete identity cleanup.
+The NetBird subform owns protocol-specific fields only. A saved row is identified
+by its persisted key/id; VPN type alone must never be used to distinguish Add
+from Edit because both modes legitimately use type=netbirdvpn.
 """
 from __future__ import annotations
 
@@ -121,12 +121,16 @@ def patch_page() -> None:
 def patch_form() -> None:
     name = "VpnServerNetbirdForm-NB.js.gz"
     text = read_gz(name)
-    # Protocol subforms do not serialize profile type/key; ThirdVpnBaseForm does.
-    # Only preserve migration-aware EDIT detection and verify stock components.
-    text = text.replace(
-        'const existing = !!(value && (value.key === "netbird" || value.id === "netbird"));',
+    target = 'const existing = !!(value && (value.key || value.id));'
+    historical = (
         'const existing = !!(value && (value.type === "netbirdvpn" || value.type === "netbird" || value.key === "netbird" || value.id === "netbird"));',
+        'const existing = !!(value && (value.key === "netbird" || value.id === "netbird"));',
     )
+    for old in historical:
+        text = text.replace(old, target)
+    text = text.replace('const creating = ref(false);', 'const creating = ref(true);')
+    if target not in text or 'const creating = ref(true);' not in text:
+        raise RuntimeError("native form: CREATE/EDIT persisted-key contract not installed")
     check_js(name, text)
     write_gz(name, text)
 
@@ -144,7 +148,8 @@ def assert_native(root: str) -> None:
         'new URL(n).hostname',
         'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete()}',
         'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}',
-        'value.type === "netbirdvpn"',
+        'const existing = !!(value && (value.key || value.id))',
+        'const creating = ref(true)',
         'stockComponent(this, "su-form")',
         'stockComponent(this, "su-form-item")',
         'stockComponent(this, "su-input")',
@@ -160,6 +165,8 @@ def assert_native(root: str) -> None:
         'if(e==="netbird"){await nbDelete();return}',
         'e==="netbird"&&await nbDelete()',
         'new URL(n).host}',
+        'value.type === "netbirdvpn"',
+        "netbirdvpn-new",
         "NETBIRD_CSS",
         'type: "checkbox"',
         'class: "netbird-input"',
@@ -175,7 +182,7 @@ def main() -> None:
     patch_page()
     patch_form()
     assert_native(ROOT)
-    print("Native NetBird finalization complete: stock base form/CRUD + stock-component protocol subform")
+    print("Native NetBird finalization complete: stock CRUD/base form + key-based Add/Edit protocol subform")
 
 
 if __name__ == "__main__":
