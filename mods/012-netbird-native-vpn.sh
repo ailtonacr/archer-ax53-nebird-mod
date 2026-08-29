@@ -20,9 +20,6 @@ for f in "$NATIVE_MODEL" "$NATIVE_CONTROLLER" "$NATIVE_PATCHER" "$NATIVE_RUNTIME
   [ -f "$f" ] || { echo "Error: missing native NetBird input: $f" >&2; exit 1; }
 done
 
-# Native registration depends on these four registries being module globals in
-# TP-Link's compiled controller. Verify the exact bytecode contract rather than
-# trusting only the Lua magic header or source-level assumptions.
 python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"
 
 mkdir -p "$R/usr/lib/lua/luci/model" "$R/usr/lib/lua/luci/controller/admin" "$R/lib/netbird"
@@ -39,20 +36,14 @@ fi
 
 python3 "$NATIVE_PATCHER" "$R"
 
-# Native lifecycle ownership: vpnc/netifd is the only normal boot/start path.
-# Keep /etc/init.d/netbird as a manual compatibility/recovery wrapper, but remove
-# the S99 autostart symlink installed by the historical hybrid integration.
+# vpnc/netifd is the only normal boot/start owner.
 rm -f "$R/etc/rc.d/S99netbird"
 
-# TP-Link acceleration handlers only know the stock PPTP/L2TP/OpenVPN/WireGuard
-# families. NetBird manages wt0/userspace networking itself, so passing the new
-# vpntype token to those vendor acceleration hooks is both unnecessary and an
-# undefined contract. Preserve the exact stock calls for every other type and
-# skip them only for netbirdvpn.
+# Vendor acceleration hooks only know stock protocol families. Preserve them for
+# every stock VPN and skip them only for the native NetBird type.
 python3 - "$VPN_CORE" <<'PY'
 from pathlib import Path
 import sys
-
 path = Path(sys.argv[1])
 text = path.read_text()
 old = '''\t#init accelskip rule
@@ -78,7 +69,7 @@ if new not in text:
     path.write_text(text)
 PY
 
-# Structural checks: real stock registries are extended, not replaced.
+# Native registry contract.
 grep -q 'TYPE = "netbirdvpn"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'TYPE_ID = "5"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'local schema = { proto = PROTO }' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
@@ -90,8 +81,7 @@ grep -q 'vpn.VPN_TBL\[TYPE\] = schema' "$R/usr/lib/lua/luci/model/netbird_vpn_na
 grep -q 'native.install()' "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua"
 grep -Fq 'if [ "$vpntype" != "netbirdvpn" ]; then' "$VPN_CORE"
 
-# Native runtime invariants: a single flag builder, direct netifd -> library
-# ownership, and no controller recursion from the protocol handler.
+# Native runtime invariants.
 cmp -s "$NATIVE_RUNTIME" "$R/lib/netbird/netbird-runtime.sh" || { echo "Error: packaged native NetBird runtime drifted" >&2; exit 1; }
 grep -q '^nb_runtime_connect()' "$R/lib/netbird/netbird-runtime.sh"
 grep -q '^nb_runtime_is_connected()' "$R/lib/netbird/netbird-runtime.sh"
@@ -101,15 +91,26 @@ if grep -q '/sbin/netbird-ctl' "$R/lib/netifd/proto/netbird.sh"; then
   echo "Error: netifd NetBird protocol still depends on netbird-ctl" >&2
   exit 1
 fi
-
+if grep -q 'proto_set_available' "$R/lib/netifd/proto/netbird.sh"; then
+  echo "Error: transient NetBird connection failure changes protocol availability" >&2
+  exit 1
+fi
 test ! -e "$R/etc/rc.d/S99netbird" || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }
 
+# Final frontend contract: stock CRUD/base form, protocol-only su-* subform.
 zcat "$R/www/webpages/js/update-store-DQkZxaRI.js.gz" | grep -Fq 'e.Netbird="netbirdvpn"'
 zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
 zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'new URL(n).hostname'
 zcat "$R/www/webpages/js/index-DTNtPvwx.js.gz" | grep -Fq 'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}'
-zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'type: "netbirdvpn", proto: "netbird"'
+zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'const existing = !!(value && (value.key || value.id))'
+zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'const creating = ref(true)'
+zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'stockComponent(this, "su-form")'
+zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'stockComponent(this, "su-checkbox")'
 
+if zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'value.type === "netbirdvpn"'; then
+  echo "Error: NetBird Add/Edit still inferred from VPN type instead of persisted key/id" >&2
+  exit 1
+fi
 if zcat "$R/www/webpages/js/index-DTNtPvwx.js.gz" | grep -Fq 'a.value=_nb.concat(e)'; then
   echo "Error: synthetic NetBird list bridge still present" >&2
   exit 1
@@ -119,7 +120,5 @@ if zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'e==="netbird"?a.re
   exit 1
 fi
 
-# Reconfirm the stock bytecode contract after all rootfs mutations too.
 python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"
-
 echo "### NetBird native TP-Link VPN registration complete ###"
