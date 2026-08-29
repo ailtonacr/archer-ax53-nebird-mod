@@ -1,65 +1,49 @@
 #!/bin/sh /etc/rc.common
-# NetBird client service for TP-Link Archer AX53 V1.
-# Follows the wireguard/vpnc init pattern (rc.common + /lib/netbird/netbird.sh).
-# Boot integration is deliberately non-blocking: any failure logs and exits,
-# never affecting WiFi / WAN / DHCP / NAT / existing VPN.
+# NetBird compatibility/recovery wrapper for TP-Link Archer AX53 V1.
+#
+# This service is intentionally NOT linked in /etc/rc.d in the native design.
+# Normal lifecycle belongs to TP-Link's /etc/init.d/vpnc -> netifd -> proto
+# netbird. Manual start/restart delegates to vpnc instead of creating a second
+# lifecycle owner. stop may clean an orphan daemon when NetBird is not active.
 
 START=99
 STOP=10
 
+. /lib/functions.sh
 . /lib/netbird/netbird.sh
+. /lib/netbird/netbird-runtime.sh
 
-SINGLE_ACTIVE_MARKER="/tp_data/netbird/.single-active-v1"
+netbird_native_active() {
+    local enabled="off" vpntype="none"
+    config_load vpn
+    config_get enabled client enabled "off"
+    config_get vpntype client vpntype "none"
+    [ "$enabled" = "on" ] && [ "$vpntype" = "netbirdvpn" ]
+}
 
 start() {
-    local sysmode
-    config_load sysmode
-    config_get sysmode sysmode mode "router"
-    [ "$sysmode" = "router" ] || return 0
-
-    nb_ensure_settings
-
-    # TP-Link's factory VPN Client allows several saved profiles but only one
-    # active profile. Older NetBird builds could persist enable=1 alongside an
-    # already-active stock VPN profile because NetBird lived outside the stock
-    # controller. We cannot safely introspect every vendor VPN backend at boot,
-    # so migrate fail-closed once: existing NetBird profiles are disabled on the
-    # first boot of the single-active implementation and the user explicitly
-    # chooses which profile to activate in the normal VPN Client list. From then
-    # on, frontend toggles persist mutual exclusion across reboots.
-    if [ ! -f "$SINGLE_ACTIVE_MARKER" ]; then
-        if [ "$(nb_get "$NB_SETTINGS_FILE" enable "0")" = "1" ]; then
-            nb_set "$NB_SETTINGS_FILE" enable 0
-            echo "netbird: single-active migration disabled existing profile; re-enable it from VPN Client" >/dev/console 2>&1
-        fi
-        : > "$SINGLE_ACTIVE_MARKER"
-        chmod 0600 "$SINGLE_ACTIVE_MARKER" 2>/dev/null || true
-    fi
-
-    local enable
-    enable=$(nb_get "$NB_SETTINGS_FILE" enable "0")
-    [ "$enable" = "1" ] || {
-        echo "netbird: disabled, not starting" >/dev/console 2>&1
-        return 0
-    }
-
-    # Use the same tested control path as the UI. netbird-ctl performs daemon
-    # startup, applies all boolean settings, lets NetBird install its own
-    # forwarding chains, then normalizes the CIDR-scoped LAN exception above
-    # NetBird's terminal wt0 DROP.
-    if ! /sbin/netbird-ctl up >/dev/null 2>&1; then
-        echo "netbird: start failed (see $NB_LOG)" >/dev/console 2>&1
+    if ! netbird_native_active; then
+        echo "netbird: not the active native VPN Client profile; start skipped" >/dev/console 2>&1
         return 0
     fi
+    /etc/init.d/vpnc restart
 }
 
 stop() {
-    /sbin/netbird-ctl stop >/dev/null 2>&1 || true
+    if netbird_native_active; then
+        /etc/init.d/vpnc stop
+    else
+        # Recovery-only orphan cleanup. No payload is downloaded by stop.
+        nb_runtime_stop >/dev/null 2>&1 || true
+    fi
 }
 
 restart() {
-    stop
-    start
+    if ! netbird_native_active; then
+        echo "netbird: not the active native VPN Client profile; restart skipped" >/dev/console 2>&1
+        return 0
+    fi
+    /etc/init.d/vpnc restart
 }
 
 reload() {
