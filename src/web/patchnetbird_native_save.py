@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""Make NetBird dirty-state control TP-Link's visible native Save button reliably.
+"""Bind TP-Link's visible native Save button to NetBird persistence while dirty.
 
-Hardware validation showed that changing the description enables Save through a
-stock TP-Link path, while NetBird-only fields/toggles do not. Earlier code tried
-to compensate by querying `button.su-button-primary`, but the current AX53 modal
-uses a different DOM shape, so the native Save was never found.
+Hardware validation on Build 8 proved the previous DOM-only approach was
+insufficient: the physical click reached the button and Vue invoker, but the
+SuButton callback resolved to undefined because the stock modal never marked the
+custom NetBird form dirty. Therefore the native button looked enabled but did
+nothing.
 
-This post-patch deliberately keeps the stock Save/click handler. It only finds
-the visible Save control by its localized text (SALVAR/Save) while the NetBird
-form is dirty, then clears the disabled presentation/state. The existing dirty
-synchronizer reapplies this if Vue replaces the footer node.
-
-Do not match the previous implementation byte-for-byte. Other frontend patchers
-run before this pass and may legitimately reformat nearby code. Locate the
-syncNativeSaveButton function structurally and replace only that function body.
+NetBird already owns dedicated CRUD through /admin/netbird, while built-in VPN
+profiles remain on the untouched stock controller. This patch keeps the same
+visible TP-Link Save button, but while the NetBird form is dirty it installs a
+capture listener supplied by the NetBird form. The listener validates and
+persists the NetBird draft directly, then removes itself after successful save.
+Other VPN forms are untouched.
 """
 from __future__ import annotations
 
@@ -26,7 +25,7 @@ import sys
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "rootfs"
 PATH = os.path.join(ROOT, "www/webpages/js/VpnServerNetbirdForm-NB.js.gz")
 
-NEW = '''function syncNativeSaveButton(isDirty) {
+NEW = '''function syncNativeSaveButton(isDirty, onSave) {
   if (typeof document === "undefined") return;
   const apply = function () {
     const modalCandidates = Array.from(document.querySelectorAll(".su-modal-mask,.su-dialog,dialog"));
@@ -41,6 +40,15 @@ NEW = '''function syncNativeSaveButton(isDirty) {
     });
     const save = visible.length ? visible[visible.length - 1] : null;
     if (!save) return;
+
+    const detach = function () {
+      if (save.__netbirdSaveListener && typeof save.removeEventListener === "function") {
+        save.removeEventListener("click", save.__netbirdSaveListener, true);
+      }
+      save.__netbirdSaveListener = null;
+      save.__netbirdSaveCallback = null;
+    };
+
     if (isDirty) {
       if ("disabled" in save) save.disabled = false;
       if (typeof save.removeAttribute === "function") {
@@ -54,8 +62,26 @@ NEW = '''function syncNativeSaveButton(isDirty) {
       }
       if (save.style) save.style.pointerEvents = "";
       if (typeof save.setAttribute === "function") save.setAttribute("data-netbird-dirty", "1");
-    } else if (typeof save.getAttribute === "function" && save.getAttribute("data-netbird-dirty") === "1") {
-      if (typeof save.removeAttribute === "function") save.removeAttribute("data-netbird-dirty");
+
+      if (typeof onSave === "function" && save.__netbirdSaveCallback !== onSave) {
+        detach();
+        const listener = async function (event) {
+          if (event) {
+            if (typeof event.preventDefault === "function") event.preventDefault();
+            if (typeof event.stopImmediatePropagation === "function") event.stopImmediatePropagation();
+            else if (typeof event.stopPropagation === "function") event.stopPropagation();
+          }
+          await onSave();
+        };
+        save.__netbirdSaveListener = listener;
+        save.__netbirdSaveCallback = onSave;
+        if (typeof save.addEventListener === "function") save.addEventListener("click", listener, true);
+      }
+    } else {
+      detach();
+      if (typeof save.getAttribute === "function" && save.getAttribute("data-netbird-dirty") === "1") {
+        if (typeof save.removeAttribute === "function") save.removeAttribute("data-netbird-dirty");
+      }
     }
   };
   if (typeof queueMicrotask === "function") queueMicrotask(apply);
@@ -63,29 +89,28 @@ NEW = '''function syncNativeSaveButton(isDirty) {
   if (typeof requestAnimationFrame === "function") requestAnimationFrame(apply);
 }'''
 
-START = "function syncNativeSaveButton(isDirty) {"
+STARTS = ("function syncNativeSaveButton(isDirty) {", "function syncNativeSaveButton(isDirty, onSave) {")
 END = "\n\nexport default defineComponent({"
 
 
 def replace_structurally(text: str) -> str:
-    # Idempotent: the final implementation is already present.
     if NEW in text:
         return text
 
-    start = text.find(START)
-    if start < 0:
-        raise RuntimeError("native Save selector: syncNativeSaveButton start marker not found")
-    if text.find(START, start + 1) >= 0:
-        raise RuntimeError("native Save selector: multiple syncNativeSaveButton implementations found")
+    found = [(marker, text.find(marker)) for marker in STARTS if text.find(marker) >= 0]
+    if len(found) != 1:
+        raise RuntimeError(f"native Save bridge: expected one implementation, found {len(found)}")
+    marker, start = found[0]
+    for other in STARTS:
+        if other != marker and text.find(other, start + 1) >= 0:
+            raise RuntimeError("native Save bridge: multiple implementations found")
 
     end = text.find(END, start)
     if end < 0:
-        raise RuntimeError("native Save selector: form export marker not found after syncNativeSaveButton")
-
+        raise RuntimeError("native Save bridge: form export marker not found")
     current = text[start:end]
-    if "syncNativeSaveButton" not in current or "const apply" not in current:
-        raise RuntimeError("native Save selector: unexpected function structure")
-
+    if "syncNativeSaveButton" not in current:
+        raise RuntimeError("native Save bridge: unexpected function structure")
     return text[:start] + NEW + text[end:]
 
 
@@ -108,7 +133,7 @@ def main() -> None:
     with open(PATH, "wb") as fh:
         fh.write(buf.getvalue())
 
-    print("NetBird native Save selector patched for visible TP-Link footer")
+    print("NetBird native Save button bound to dedicated settings persistence")
 
 
 if __name__ == "__main__":
