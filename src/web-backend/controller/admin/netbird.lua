@@ -16,6 +16,8 @@ local controller = require "luci.model.controller"
 
 local SETTINGS = "/tp_data/netbird/settings"
 local TRAFFIC_STATE = "/tmp/netbird-traffic.state"
+local PROFILE_CONFIG = "/tp_data/netbird/default.json"
+local PROFILE_STATE = "/tp_data/netbird/state"
 
 function index() entry({"admin", "netbird"}, call("_index")).leaf = true end
 function _index() return controller._index(dispatch) end
@@ -44,6 +46,7 @@ local function request_value(body, key)
 end
 
 local PROFILE_KEYS = {
+    description = "scalar",
     management_url = "scalar",
     hostname = "scalar",
     disable_dns = "bool",
@@ -68,8 +71,6 @@ local function request_settings(body)
             cand[key] = kind == "bool" and bool01(value, nil) or scalar(value)
         end
     end
-    -- The native-looking form exposes both enable and enabled across different
-    -- TP-Link bundle paths. Accept enabled only as a fallback.
     if cand.enable == nil then
         local enabled = src.enabled
         if enabled == nil then enabled = http.formvalue("enabled") end
@@ -91,7 +92,7 @@ local function classify(settings, status)
 end
 
 local function identity_present()
-    local raw = lfs.readfile("/tp_data/netbird/default.json") or ""
+    local raw = lfs.readfile(PROFILE_CONFIG) or ""
     return raw:match("%S") ~= nil
 end
 
@@ -125,7 +126,6 @@ local function traffic_sample()
     local rx = read_number("/sys/class/net/wt0/statistics/rx_bytes")
     local tx = read_number("/sys/class/net/wt0/statistics/tx_bytes")
     local upload, download = 0, 0
-
     local prev = lfs.readfile(TRAFFIC_STATE) or ""
     local pts, prx, ptx = prev:match("^([%d%.]+)%s+(%d+)%s+(%d+)")
     pts, prx, ptx = tonumber(pts), tonumber(prx), tonumber(ptx)
@@ -134,7 +134,6 @@ local function traffic_sample()
         download = (rx - prx) / dt
         upload = (tx - ptx) / dt
     end
-
     lfs.writefile(TRAFFIC_STATE, string.format("%.3f %d %d\n", now, rx, tx))
     return {
         uploadSpeed = math.floor(upload + 0.5),
@@ -213,10 +212,21 @@ local function op_settings_set(body)
 end
 
 local function op_profile_delete()
-    model.control("stop")
-    model.control("clean")
+    local stop_out, stop_rc = model.control("stop")
+    if stop_rc ~= 0 then
+        return error_reply("delete_failed", "failed to stop NetBird before delete: " .. (stop_out or "stop failed"):gsub("%s+$", ""))
+    end
+    local clean_out, clean_rc = model.control("clean")
+    if clean_rc ~= 0 then
+        return error_reply("delete_failed", "failed to clean NetBird identity: " .. (clean_out or "clean failed"):gsub("%s+$", ""))
+    end
     nixio.fs.unlink(SETTINGS)
+    nixio.fs.unlink(SETTINGS .. ".tmp")
+    nixio.fs.unlink(PROFILE_CONFIG)
     nixio.fs.unlink(TRAFFIC_STATE)
+    if lfs.access(SETTINGS) or lfs.access(PROFILE_CONFIG) or lfs.access(PROFILE_STATE) then
+        return error_reply("delete_failed", "NetBird profile files remain after cleanup")
+    end
     return reply({ result = "ok", profileExists = false })
 end
 
@@ -226,14 +236,18 @@ local function op_enroll(body)
     if not lfs.access(SETTINGS) then
         return error_reply("profile_required", "save the NetBird VPN profile before enrollment")
     end
-
     local tmp = "/tmp/nb-setup-key-" .. tostring(os.time()) .. "-" .. tostring(math.random(0x7fffffff))
     if not lfs.writefile(tmp, key) then return error_reply("internal", "failed to stage setup key") end
     nixio.fs.chmod(tmp, "0600")
     local out, rc = model.control("enroll", tmp)
     nixio.fs.unlink(tmp)
     if rc ~= 0 then return error_reply("enroll_failed", (out or "enrollment failed"):gsub("%s+$", "")) end
-    local cur, state_err = model.set_internal_settings({ enrolled = "1", enable = "1" })
+
+    -- Factory VPN Client semantics are single-active. Enrollment registers the
+    -- profile but does not leave NetBird active; activation happens through the
+    -- list toggle, where mutual exclusion with stock VPN profiles is enforced.
+    model.control("stop")
+    local cur, state_err = model.set_internal_settings({ enrolled = "1", enable = "0" })
     if not cur then return error_reply("internal", state_err or "failed to persist enrollment state") end
     return reply({ result = "ok", settings = cur })
 end
