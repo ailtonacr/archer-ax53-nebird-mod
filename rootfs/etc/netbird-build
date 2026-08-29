@@ -1,0 +1,6 @@
+build=10
+base_version=1.7.1
+display_version=1.7.1-netbird mod Build 10
+git_commit=8d1440e87f1389da75b39e126813fb2a041eadb1
+git_branch=fix/netbird-ui-state-routing
+built_at_utc=2026-08-29T05:37:54Z

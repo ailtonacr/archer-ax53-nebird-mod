@@ -843,7 +843,6 @@ fw_netbird_access(){
     fw_s_add 4 f INPUT ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
     fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
 
-    # Remove legacy broad forwarding before installing scoped rules.
     fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif" }
     fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0" }
     fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10" }

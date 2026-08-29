@@ -15,17 +15,60 @@ run() {
 nb_bool_arg() {
     local key="$1" flag="$2" def="${3:-0}" value
     value="$(nb_get "$NB_SETTINGS_FILE" "$key" "$def")"
-    if [ "$value" = "1" ]; then printf '%s\n' "${flag}=true"; else printf '%s\n' "${flag}=false"; fi
+    if [ "$value" = "1" ]; then
+        printf '%s\n' "${flag}=true"
+    else
+        printf '%s\n' "${flag}=false"
+    fi
 }
 
 nb_runtime_up_flags() {
+    local wg_port
+    wg_port="$(nb_get "$NB_SETTINGS_FILE" wireguard_port "$NB_DEFAULT_PORT")"
     printf '%s ' \
         "$(nb_bool_arg disable_dns --disable-dns 1)" \
         "$(nb_bool_arg disable_firewall --disable-firewall 1)" \
         "$(nb_bool_arg disable_client_routes --disable-client-routes 1)" \
         "$(nb_bool_arg disable_server_routes --disable-server-routes 1)" \
         "$(nb_bool_arg disable_ipv6 --disable-ipv6 1)" \
-        "$(nb_bool_arg network_monitor --network-monitor 0)"
+        "$(nb_bool_arg network_monitor --network-monitor 0)" \
+        "--wireguard-port=${wg_port}"
+}
+
+# NetBird v0.77.1 installs NETBIRD-RT-FWD-* and a terminal DROP on wt0 during
+# `netbird up`. Hardware validation showed TP-Link's fw_s_add rules ended below
+# that DROP. These helpers normalize the small, CIDR-scoped exception after the
+# NetBird firewall exists. They are deliberately idempotent and never open wt0
+# broadly: only the configured LAN CIDR is forwarded/NATed.
+nb_fw_priority_values() {
+    NB_FW_CIDR="$(nb_get "$NB_SETTINGS_FILE" advertise_cidr "")"
+    NB_FW_HOMEIF="$(uci_get_state firewall core lan_ifname 2>/dev/null)"
+    [ -n "$NB_FW_HOMEIF" ] || NB_FW_HOMEIF="br-lan"
+}
+
+nb_fw_clear_priority() {
+    nb_fw_priority_values
+    [ -n "$NB_FW_CIDR" ] || return 0
+    while iptables -D FORWARD -i wt0 -o "$NB_FW_HOMEIF" -d "$NB_FW_CIDR" -j ACCEPT 2>/dev/null; do :; done
+    # Remove both the old broad TP-Link return rule and our narrowed stateful
+    # return rule so repeated starts cannot accumulate either form.
+    while iptables -D FORWARD -i "$NB_FW_HOMEIF" -o wt0 -s "$NB_FW_CIDR" -j ACCEPT 2>/dev/null; do :; done
+    while iptables -D FORWARD -i "$NB_FW_HOMEIF" -o wt0 -s "$NB_FW_CIDR" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do :; done
+    while iptables -t nat -D POSTROUTING -o "$NB_FW_HOMEIF" -s 100.64.0.0/10 -d "$NB_FW_CIDR" -j MASQUERADE 2>/dev/null; do :; done
+}
+
+nb_fw_prioritize_lan() {
+    nb_fw_clear_priority
+    [ "$(nb_get "$NB_SETTINGS_FILE" advertise_lan "0")" = "1" ] || return 0
+    nb_fw_priority_values
+    [ -n "$NB_FW_CIDR" ] || return 0
+
+    iptables -I FORWARD 1 -i wt0 -o "$NB_FW_HOMEIF" -d "$NB_FW_CIDR" -j ACCEPT || return 1
+    iptables -I FORWARD 2 -i "$NB_FW_HOMEIF" -o wt0 -s "$NB_FW_CIDR" \
+        -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT || return 1
+    iptables -t nat -I POSTROUTING 1 -o "$NB_FW_HOMEIF" -s 100.64.0.0/10 \
+        -d "$NB_FW_CIDR" -j MASQUERADE || return 1
+    return 0
 }
 
 case "$1" in
@@ -36,46 +79,70 @@ daemon-ping)
     "$NB_BIN" status -j --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1
     exit $?
     ;;
+
 up)
+    # Connect first. NetBird creates its own forwarding chains/DROP during this
+    # command. Only after it succeeds do we install the LAN exception above it.
     shift
     nb_ensure_settings
     nb_materialize 1 >/dev/null 2>&1 || exit 2
     nb_is_running || nb_daemon_start || exit 1
-    nb_fw_access
-    run up --daemon-addr "unix://$NB_SOCK" --management-url "$(nb_mgmt_url)" $(nb_runtime_up_flags) "$@"
+    run up --daemon-addr "unix://$NB_SOCK" \
+        --management-url "$(nb_mgmt_url)" $(nb_runtime_up_flags) "$@"
     rc=$?
-    [ "$rc" -eq 0 ] || nb_fw_block
+    if [ "$rc" -eq 0 ]; then
+        nb_fw_access
+        nb_fw_prioritize_lan || { nb_fw_block; nb_fw_clear_priority; exit 1; }
+    else
+        nb_fw_block
+        nb_fw_clear_priority
+    fi
     exit $rc
     ;;
+
 down)
     run down --daemon-addr "unix://$NB_SOCK"
     rc=$?
+    nb_fw_clear_priority
     nb_fw_block
     exit $rc
     ;;
+
 stop)
     run down --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1
+    nb_fw_clear_priority
     nb_fw_block
     nb_daemon_stop
     exit 0
     ;;
+
 restart)
     run down --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1
+    nb_fw_clear_priority
     nb_fw_block
     shift
     nb_ensure_settings
     nb_materialize 1 >/dev/null 2>&1 || exit 2
     nb_is_running || nb_daemon_start || exit 1
-    nb_fw_access
-    run up --daemon-addr "unix://$NB_SOCK" --management-url "$(nb_mgmt_url)" $(nb_runtime_up_flags) "$@"
+    run up --daemon-addr "unix://$NB_SOCK" \
+        --management-url "$(nb_mgmt_url)" $(nb_runtime_up_flags) "$@"
     rc=$?
-    [ "$rc" -eq 0 ] || nb_fw_block
+    if [ "$rc" -eq 0 ]; then
+        nb_fw_access
+        nb_fw_prioritize_lan || { nb_fw_block; nb_fw_clear_priority; exit 1; }
+    else
+        nb_fw_block
+        nb_fw_clear_priority
+    fi
     exit $rc
     ;;
+
 clean)
+    nb_fw_clear_priority
     nb_clean
     exit 0
     ;;
+
 status)
     nb_payload_status
     payload_rc=$?
@@ -87,23 +154,38 @@ status)
     fi
     exit 0
     ;;
+
 log)
     n="${2:-100}"
     case "$n" in ''|*[!0-9]*) n=100 ;; esac
     [ "$n" -gt 500 ] && n=500
     tail -n "$n" "$NB_LOG" 2>/dev/null
     ;;
+
 settings)
     nb_ensure_settings
-    sed -n 's/^\(enable\|enrolled\|management_url\|hostname\|disable_dns\|disable_firewall\|disable_client_routes\|disable_server_routes\|disable_ipv6\|network_monitor\|advertise_lan\|advertise_cidr\|wireguard_port\)=/\1=/p' "$NB_SETTINGS_FILE" 2>/dev/null
+    sed -n 's/^\(description\|enable\|enrolled\|management_url\|hostname\|disable_dns\|disable_firewall\|disable_client_routes\|disable_server_routes\|disable_ipv6\|network_monitor\|advertise_lan\|advertise_cidr\|wireguard_port\)=/\1=/p' \
+        "$NB_SETTINGS_FILE" 2>/dev/null
     ;;
-payload-version) echo "$NB_VERSION" ;;
+
+payload-version)
+    echo "$NB_VERSION"
+    ;;
+
 payload-status)
-    nb_payload_status; rc=$?; nb_state_name "$rc"; exit "$rc"
+    nb_payload_status
+    rc=$?
+    nb_state_name "$rc"
+    exit "$rc"
     ;;
+
 payload-verify)
-    nb_payload_verify; rc=$?; nb_state_name "$rc"; exit "$rc"
+    nb_payload_verify
+    rc=$?
+    nb_state_name "$rc"
+    exit "$rc"
     ;;
+
 *)
     echo "usage: $0 {up|down|stop|restart|clean|status|log|settings|payload-version|payload-status|payload-verify|daemon-ping}" >&2
     exit 1
