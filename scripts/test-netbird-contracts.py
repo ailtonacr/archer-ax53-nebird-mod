@@ -28,6 +28,8 @@ def check_controller():
         controller,
         'local SETTINGS = "/tp_data/netbird/settings"',
         'description = "scalar"',
+        'hostname = "scalar"',
+        'wireguard_port = "scalar"',
         'elseif op == "settings_set"',
         'elseif op == "profile_delete"',
         'local function op_profile_delete()',
@@ -48,8 +50,13 @@ def check_model():
     require(
         model,
         'description           = { kind = "text", default = "NetBird" }',
+        'hostname              = { kind = "name", default = "" }',
+        'wireguard_port        = { kind = "int",  default = "51820" }',
         'local function valid_text',
+        'local function valid_name',
         'elseif spec.kind == "text"',
+        'elseif spec.kind == "name"',
+        'elseif spec.kind == "int"',
     )
 
 
@@ -66,6 +73,8 @@ def check_frontend_bridge():
         'if(b&&b.profileExists)',
         'it.Netbird===i.type?await Nbs(i)',
         'await nbDelete()',
+        'hostname:s.hostname||""',
+        'wireguard_port:s.wireguard_port||"51820"',
     )
     assert 'const t=e.enable===!0||e.enable==="on"||e.enable==="1"' in patcher
     assert 'text = text.replace(R_NATIVE, R_MARKER)' in patcher
@@ -84,21 +93,35 @@ def check_factory_semantics():
         'name:s.description||"NetBird"',
         'description:s.description||"NetBird"',
         'field("Descrição"',
+        'field("Hostname do peer"',
+        'field("Porta WireGuard"',
         'updateDraft("description"',
+        'updateDraft("hostname"',
+        'updateDraft("wireguard_port"',
+        'function validHostname(value)',
+        'function validWireGuardPort(value)',
         'Informe uma descrição para o perfil.',
+        'Hostname inválido.',
+        'Informe uma porta WireGuard entre 1 e 65535.',
         'nbStopIfEnabled as nbG',
         'def replace_one_of(',
         'old_stock_compact = \'name: "NetBird", des: "NetBird", description: "NetBird",\'',
         'old_stock_multiline = \'name: "NetBird",\\n    des: "NetBird",\\n    description: "NetBird",\'',
         'e.enable===!0||e.enable==="on"||e.enable==="1"||e.enabled===!0',
+        'old_fields = \'\'\'const serverFields = [field("URL de gerenciamento"',
     )
-    # Regression guard for the exact source shape that caused Build 5 to fail:
-    # the primary form source is currently compact, so the post-patcher must
-    # recognize that shape instead of assuming three separate lines.
     form = FORM.read_text()
     compact = 'name: "NetBird", des: "NetBird", description: "NetBird",'
     if compact in form:
         assert 'old_stock_compact' in factory
+    # The post-patcher must target the exact complete serverFields source block;
+    # this guards against another formatting mismatch during apply-mods.
+    require(
+        form,
+        'const serverFields = [field("URL de gerenciamento", _h("input", {',
+        'hostname: v.hostname !== undefined',
+        'wireguard_port: v.wireguard_port !== undefined',
+    )
     mod = MOD.read_text()
     require(mod, 'FACTORY_PATCHER=', 'python3 "$FACTORY_PATCHER" "$R"')
 
@@ -122,6 +145,9 @@ def check_boot_and_firewall():
         'run up --daemon-addr',
         'nb_fw_access',
         'nb_fw_prioritize_lan',
+        'wg_port="$(nb_get "$NB_SETTINGS_FILE" wireguard_port "$NB_DEFAULT_PORT")"',
+        '"--wireguard-port=${wg_port}"',
+        'description\\|enable\\|enrolled\\|management_url\\|hostname',
     )
     up_block = ctl.split('up)\n', 1)[1].split(';;', 1)[0]
     assert up_block.index('run up --daemon-addr') < up_block.index('nb_fw_access') < up_block.index('nb_fw_prioritize_lan')
@@ -177,7 +203,15 @@ def check_form_boundary():
     form = FORM.read_text()
     for token in ("validate", "setForm", "getForm", "resetForm", "clearValidate"):
         assert token in form, f"dynamic-form contract missing {token}"
-    require(form, 'const NB = "/admin/netbird"', 'nbReq("status")', 'nbReq("enroll"', 'nbReq("restart")')
+    require(
+        form,
+        'const NB = "/admin/netbird"',
+        'nbReq("status")',
+        'nbReq("enroll"',
+        'nbReq("restart")',
+        'hostname: v.hostname !== undefined',
+        'wireguard_port: v.wireguard_port !== undefined',
+    )
 
 
 def main():
@@ -190,7 +224,7 @@ def main():
     check_makefile_verifier()
     check_runtime_source_canonicalization()
     check_form_boundary()
-    print("netbird factory-single-active/delete/description/firewall contracts ok")
+    print("netbird factory-single-active/delete/description/hostname/port/firewall contracts ok")
 
 
 if __name__ == "__main__":
