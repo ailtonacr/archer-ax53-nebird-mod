@@ -39,6 +39,15 @@ local function bool01(v, fallback)
     return fallback
 end
 
+local function management_host(url)
+    url = tostring(url or "")
+    local authority = url:match("^https?://([^/%?#]+)") or url:match("^([^/%?#]+)") or ""
+    if authority:sub(1, 1) == "[" then
+        return authority:match("^%[([^%]]+)%]") or authority
+    end
+    return authority:match("^([^:]+)") or authority
+end
+
 local function settings_from_config(cfg)
     return {
         management_url = cfg.management_url or "",
@@ -69,6 +78,7 @@ local function netbird_config(cfg, vpn_type)
         return {}
     end
 
+    local server = cfg.server or management_host(updated.management_url)
     local vpn = {
         proto = PROTO,
         auto = "1",
@@ -76,7 +86,7 @@ local function netbird_config(cfg, vpn_type)
         management_url = updated.management_url,
         hostname = updated.hostname,
         wireguard_port = updated.wireguard_port,
-        server = cfg.server or updated.management_url,
+        server = server,
         parent = cfg.parent or "wan",
     }
 
@@ -94,12 +104,12 @@ function install()
         return nil, "stock VPN registries unavailable"
     end
 
-    -- The validator iterates numeric entries with ipairs while protocol
-    -- handlers read the named .proto member, matching the vendor table shape.
-    local schema = {
-        { field = FIELDS, canbe_empty = true },
-    }
-    schema.proto = PROTO
+    -- Match the vendor VPN_TBL layout exactly: named .proto plus one numeric
+    -- entry per persisted field, each represented as { key = "..." }.
+    local schema = { proto = PROTO }
+    for _, key in ipairs(FIELDS) do
+        table.insert(schema, { key = key })
+    end
 
     vpn.VPN_TBL[TYPE] = schema
     vpn.VPN_CFG_TBL[TYPE] = netbird_config
