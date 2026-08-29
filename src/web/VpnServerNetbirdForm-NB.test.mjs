@@ -24,6 +24,20 @@ let response = {
   payload: { state: "READY" },
 };
 
+const saveButton = {
+  disabled: true,
+  textContent: "SALVAR",
+  attrs: new Map([["disabled", ""]]),
+  classList: { remove() {} },
+  removeAttribute(name) { this.attrs.delete(name); if (name === "disabled") this.disabled = false; },
+  setAttribute(name, value) { this.attrs.set(name, value); },
+  getAttribute(name) { return this.attrs.get(name) || null; },
+};
+const dialog = { querySelectorAll: selector => selector === "button.su-button-primary" ? [saveButton] : [] };
+const documentMock = {
+  querySelectorAll(selector) { return selector === "dialog,.su-dialog" ? [dialog] : []; },
+};
+
 const context = {
   defineComponent: value => value,
   ref: value => ({ value }),
@@ -32,6 +46,8 @@ const context = {
   _h: (tag, props, children) => ({ tag, props: props || {}, children: children || [] }),
   setInterval: fn => { timers.push(fn); return timers.length; },
   clearInterval: () => {},
+  queueMicrotask: fn => fn(),
+  document: documentMock,
   URL,
   api: { request: async (_path, body) => {
     requests.push(body.operation);
@@ -91,14 +107,18 @@ assert.equal(hasText(render(), "PAYLOAD_NOT_DOWNLOADED"), false, "raw payload to
 
 let cidr = input(render(), "Ex.: 192.168.10.0/24");
 cidr.props.onInput({ target: { value: "192.168." } });
+assert.equal(saveButton.disabled, false, "editing a NetBird field must enable the native SALVAR button");
+assert.equal(saveButton.getAttribute("data-netbird-dirty"), "1", "native Save bridge must mark its ownership while dirty");
+
 response = { ...response, settings: { ...response.settings, advertise_cidr: "10.0.0.0/24" } };
 for (let i = 0; i < 3; i++) await timers[0]();
 cidr = input(render(), "Ex.: 192.168.10.0/24");
 assert.equal(cidr.props.value, "192.168.", "polling must retain a partial CIDR draft");
-assert.equal(requests.includes("settings_set"), false, "editing must never persist through /admin/netbird");
-assert.equal("__netbirdSaveDraft" in context, false, "component must not install the old save bridge");
-assert.equal(emitted.some(e => e.name === "change"), true, "stock modal must be notified when custom fields change");
-assert.equal(emitted.some(e => e.name === "update"), true, "stock modal receives update notification too");
+assert.equal(saveButton.disabled, false, "polling must not re-disable native Save while draft is dirty");
+assert.equal(requests.includes("settings_set"), false, "editing must never persist before native Save is clicked");
+assert.equal("__netbirdSaveDraft" in context, false, "component must not install the old global save bridge");
+assert.equal(emitted.some(e => e.name === "change"), true, "stock modal must still receive change notification");
+assert.equal(emitted.some(e => e.name === "update"), true, "stock modal must still receive update notification");
 
 assert.equal(await exposed.validate(), false, "partial CIDR is invalid when LAN routing is enabled");
 assert.equal(hasText(render(), "Informe uma rede LAN válida"), true);
@@ -107,6 +127,7 @@ exposed.setForm({
   key: "netbird", type: "netbird", management_url: "https://netbird.example",
   enable: "on", enrolled: "1", advertise_lan: "1", advertise_cidr: "192.168.10.0/24",
 });
+assert.equal(saveButton.getAttribute("data-netbird-dirty"), null, "setForm must clear custom dirty marker");
 assert.equal(await exposed.validate(), true);
 
 response = { ...response, code: "payload_missing", payload: { state: "PAYLOAD_NOT_DOWNLOADED" } };
@@ -114,12 +135,10 @@ await timers[0]();
 assert.equal(hasText(render(), "Ainda não baixado"), true, "payload state must be translated for the UI");
 assert.equal(hasText(render(), "PAYLOAD_NOT_DOWNLOADED"), false, "raw payload token must not be displayed");
 
-// A profile that does not exist yet must require native stock Save before
-// enrollment. The component never creates the profile via /admin/netbird.
 response = { ...response, profileExists: false, settings: { ...response.settings, enrolled: "0", enable: "0" } };
 await timers[0]();
 assert.equal(hasText(render(), "Salve o perfil primeiro"), true);
 assert.equal(requests.includes("settings_set"), false);
 
 context.unmounted();
-console.log("netbird native-form/status/payload/traffic contract behavior ok");
+console.log("netbird native-form/status/payload/traffic/save-dirty contract behavior ok");
