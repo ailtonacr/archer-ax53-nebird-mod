@@ -1,9 +1,9 @@
 import { d as defineComponent, r as ref, e as onMounted, O as onUnmounted, h as _h } from "./vendor-BrE4IMR2.js";
 import { s as api } from "./update-store-DQkZxaRI.js";
 
-// Profile CRUD intentionally goes through the stock VPN page/model.  This
-// dedicated endpoint is only for NetBird-specific runtime actions that have no
-// equivalent in TP-Link's generic VPN CRUD contract.
+// NetBird is rendered inside TP-Link's stock VPN Client modal, while its
+// profile CRUD/runtime actions are persisted by the dedicated /admin/netbird
+// bridge installed in the stock page bundle.
 const NB = "/admin/netbird";
 
 const NETBIRD_CSS = ".netbird-form{display:grid;gap:16px;max-width:760px;color:inherit}.netbird-section{padding:16px;border:1px solid rgba(128,128,128,.2);border-radius:6px;background:rgba(128,128,128,.035)}.netbird-heading{margin:0 0 14px;font-size:14px;font-weight:600}.netbird-connection{display:grid;gap:10px}.netbird-status-main{display:flex;align-items:center;justify-content:space-between;gap:12px}.netbird-status-label,.netbird-field-label{color:#8b95a7;font-size:13px}.netbird-status-value{padding:4px 10px;border-radius:999px;background:rgba(74,203,214,.13);color:#168c98;font-size:13px}.netbird-status-detail,.netbird-status-grid{display:flex;justify-content:space-between;gap:12px;font-size:12px;color:#667085}.netbird-field{display:grid;grid-template-columns:minmax(150px,30%) minmax(0,1fr);align-items:center;gap:14px;margin-top:12px}.netbird-field-control{min-width:0}.netbird-input{box-sizing:border-box;width:100%;min-height:34px;padding:7px 10px;border:1px solid rgba(128,128,128,.35);border-radius:4px;background:transparent;color:inherit;outline:0}.netbird-input:focus{border-color:#27b8c7;box-shadow:0 0 0 2px rgba(39,184,199,.12)}.netbird-feature-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 24px}.netbird-switch{display:flex;align-items:center;gap:9px;min-width:0;font-size:13px;cursor:pointer}.netbird-switch-input{width:15px;height:15px;accent-color:#27b8c7;flex:0 0 auto}.netbird-switch-input:disabled{cursor:not-allowed}.netbird-switch-label{line-height:1.35}.netbird-actions{display:flex;flex-wrap:wrap;gap:8px}.netbird-button{min-height:32px;padding:0 14px;border:1px solid transparent;border-radius:4px;font-size:13px;cursor:pointer}.netbird-button:disabled{opacity:.55;cursor:not-allowed}.netbird-button-primary{background:#27b8c7;color:#fff}.netbird-button-secondary{border-color:rgba(128,128,128,.4);background:transparent;color:inherit}.netbird-diagnostics{display:grid;gap:8px}.netbird-feedback{padding:9px 10px;border-radius:4px;background:rgba(128,128,128,.07);font-size:12px;line-height:1.45}.netbird-feedback-error{color:#c94444;background:rgba(220,74,74,.08)}.netbird-log{max-height:190px;overflow:auto;margin:0;padding:10px;border-radius:4px;background:rgba(0,0,0,.06);font-size:12px;white-space:pre-wrap}@media(max-width:560px){.netbird-field{grid-template-columns:1fr;gap:6px}.netbird-feature-grid{grid-template-columns:1fr}.netbird-status-detail,.netbird-status-grid{flex-direction:column;gap:4px}}";
@@ -37,8 +37,6 @@ function as01(value, fallback) {
   return fallback;
 }
 
-function copySettings(value) { return Object.assign({}, value || {}); }
-
 function normalizeForm(value, fallback) {
   const v = value || {};
   const base = fallback || {};
@@ -62,28 +60,14 @@ function normalizeForm(value, fallback) {
 function stockForm(settings) {
   const s = settings || {};
   return {
-    key: "netbird",
-    id: "netbird",
-    name: "NetBird",
-    des: "NetBird",
-    description: "NetBird",
-    type: "netbird",
-    proto: "netbird",
-    vendor: "manual",
-    server: s.management_url || "",
-    management_url: s.management_url || "",
-    hostname: s.hostname || "",
-    enable: s.enable === "1" ? "on" : "off",
-    enabled: s.enable === "1",
-    enrolled: s.enrolled || "0",
-    disable_dns: s.disable_dns || "1",
-    disable_firewall: s.disable_firewall || "1",
-    disable_client_routes: s.disable_client_routes || "1",
-    disable_server_routes: s.disable_server_routes || "1",
-    disable_ipv6: s.disable_ipv6 || "1",
-    network_monitor: s.network_monitor || "0",
-    advertise_lan: s.advertise_lan || "0",
-    advertise_cidr: s.advertise_cidr || "",
+    key: "netbird", id: "netbird", name: "NetBird", des: "NetBird", description: "NetBird",
+    type: "netbird", proto: "netbird", vendor: "manual",
+    server: s.management_url || "", management_url: s.management_url || "", hostname: s.hostname || "",
+    enable: s.enable === "1" ? "on" : "off", enabled: s.enable === "1", enrolled: s.enrolled || "0",
+    disable_dns: s.disable_dns || "1", disable_firewall: s.disable_firewall || "1",
+    disable_client_routes: s.disable_client_routes || "1", disable_server_routes: s.disable_server_routes || "1",
+    disable_ipv6: s.disable_ipv6 || "1", network_monitor: s.network_monitor || "0",
+    advertise_lan: s.advertise_lan || "0", advertise_cidr: s.advertise_cidr || "",
     wireguard_port: s.wireguard_port || "51820",
   };
 }
@@ -101,6 +85,35 @@ function validCidr(value) {
   for (let i = 1; i <= 4; i += 1) if (Number(m[i]) > 255) return false;
   const prefix = Number(m[5]);
   return prefix >= 0 && prefix <= 32;
+}
+
+// TP-Link's stock modal does not subscribe to the change/update events emitted
+// by this dynamically injected form, so its footer can remain disabled even
+// though getForm() already contains a changed draft. Keep the stock button and
+// stock click handler; only synchronize its disabled DOM state while this form
+// is dirty. The real Save path still runs validate()/getForm() and the page's
+// dedicated /admin/netbird bridge.
+function syncNativeSaveButton(isDirty) {
+  if (typeof document === "undefined") return;
+  const apply = function () {
+    const scopes = Array.from(document.querySelectorAll("dialog,.su-dialog"));
+    const scope = scopes.length ? scopes[scopes.length - 1] : document;
+    const buttons = Array.from(scope.querySelectorAll("button.su-button-primary"));
+    const save = buttons.find(function (button) {
+      return /salvar|save/i.test(String(button.textContent || "").trim());
+    }) || buttons[buttons.length - 1];
+    if (!save) return;
+    if (isDirty) {
+      save.disabled = false;
+      if (typeof save.removeAttribute === "function") save.removeAttribute("disabled");
+      if (save.classList && typeof save.classList.remove === "function") save.classList.remove("is-disabled");
+      if (typeof save.setAttribute === "function") save.setAttribute("data-netbird-dirty", "1");
+    } else if (typeof save.getAttribute === "function" && save.getAttribute("data-netbird-dirty") === "1") {
+      if (typeof save.removeAttribute === "function") save.removeAttribute("data-netbird-dirty");
+    }
+  };
+  if (typeof queueMicrotask === "function") queueMicrotask(apply);
+  else Promise.resolve().then(apply);
 }
 
 export default defineComponent({
@@ -126,9 +139,6 @@ export default defineComponent({
 
     function notifyParent() {
       if (context && typeof context.emit === "function") {
-        // Different TP-Link form components use different event names across
-        // builds. Emitting both is harmless and lets the stock modal notice a
-        // custom form mutation without taking over persistence.
         context.emit("change", stockForm(draft.value));
         context.emit("update", stockForm(draft.value));
       }
@@ -140,6 +150,7 @@ export default defineComponent({
       dirty.value = true;
       message.value = "";
       notifyParent();
+      syncNativeSaveButton(true);
     }
 
     async function load(clearStaleError = true) {
@@ -152,8 +163,6 @@ export default defineComponent({
         if (!draft.value) draft.value = normalizeForm({}, settings.value);
         else if (!dirty.value && !stockFormInitialized) draft.value = normalizeForm({}, settings.value);
         else if (!dirty.value) {
-          // Runtime-owned metadata may change while the modal is open. Keep
-          // stock-loaded profile fields, but reconcile enrollment/enabled state.
           draft.value.enrolled = settings.value.enrolled || draft.value.enrolled || "0";
           draft.value.enable = settings.value.enable || draft.value.enable || "0";
         }
@@ -161,6 +170,7 @@ export default defineComponent({
         payload.value = r.payload || {};
         traffic.value = r.traffic || { uploadSpeed: 0, downloadSpeed: 0 };
         status.value = r.code;
+        if (dirty.value) syncNativeSaveButton(true);
         if (clearStaleError) error.value = "";
       } catch (e) {
         error.value = errMsg(e);
@@ -175,9 +185,7 @@ export default defineComponent({
         error.value = "Salve o perfil NetBird pelo botão SALVAR antes de fazer o enrollment.";
         return;
       }
-      busy.value = true;
-      error.value = "";
-      message.value = "";
+      busy.value = true; error.value = ""; message.value = "";
       try {
         const r = await nbReq("enroll", { setup_key: setupKey.value });
         setupKey.value = "";
@@ -187,31 +195,16 @@ export default defineComponent({
           draft.value.enable = settings.value.enable || "1";
         }
         message.value = "Enrollment concluído";
-      } catch (e) {
-        error.value = errMsg(e);
-      } finally {
-        busy.value = false;
-        await load(false);
-      }
+      } catch (e) { error.value = errMsg(e); }
+      finally { busy.value = false; await load(false); }
     }
 
     async function restart() {
-      if (dirty.value) {
-        error.value = "Salve as alterações antes de reiniciar o NetBird.";
-        return;
-      }
-      busy.value = true;
-      error.value = "";
-      message.value = "";
-      try {
-        await nbReq("restart");
-        message.value = "NetBird reiniciado";
-      } catch (e) {
-        error.value = errMsg(e);
-      } finally {
-        busy.value = false;
-        await load(false);
-      }
+      if (dirty.value) { error.value = "Salve as alterações antes de reiniciar o NetBird."; return; }
+      busy.value = true; error.value = ""; message.value = "";
+      try { await nbReq("restart"); message.value = "NetBird reiniciado"; }
+      catch (e) { error.value = errMsg(e); }
+      finally { busy.value = false; await load(false); }
     }
 
     async function fetchLog() {
@@ -222,8 +215,6 @@ export default defineComponent({
       }
     }
 
-    // Native TP-Link dynamic form contract. The parent owns persistence and
-    // sends getForm() through its ordinary /admin/vpn?form=server path.
     async function validate() {
       error.value = "";
       const s = draft.value || settings.value || {};
@@ -241,9 +232,8 @@ export default defineComponent({
     function setForm(value) {
       stockFormInitialized = true;
       draft.value = normalizeForm(value || {}, settings.value || {});
-      dirty.value = false;
-      error.value = "";
-      message.value = "";
+      dirty.value = false; error.value = ""; message.value = "";
+      syncNativeSaveButton(false);
       return true;
     }
 
@@ -251,9 +241,8 @@ export default defineComponent({
 
     function resetForm() {
       draft.value = normalizeForm(settings.value || {}, settings.value || {});
-      dirty.value = false;
-      error.value = "";
-      message.value = "";
+      dirty.value = false; error.value = ""; message.value = "";
+      syncNativeSaveButton(false);
       return true;
     }
 
@@ -280,11 +269,8 @@ export default defineComponent({
     }
 
     let timer = null;
-    onMounted(function () {
-      load();
-      timer = setInterval(load, 5000);
-    });
-    onUnmounted(function () { if (timer) clearInterval(timer); });
+    onMounted(function () { load(); timer = setInterval(load, 5000); });
+    onUnmounted(function () { if (timer) clearInterval(timer); syncNativeSaveButton(false); });
 
     function field(label, node) {
       return _h("div", { class: "netbird-field" }, [
@@ -351,8 +337,7 @@ export default defineComponent({
           onInput: function (ev) { setupKey.value = ev.target.value; },
         })));
         serverFields.push(_h("button", {
-          type: "button",
-          disabled: props.disabled || busy.value || !setupKey.value || dirty.value || !profileExists.value,
+          type: "button", disabled: props.disabled || busy.value || !setupKey.value || dirty.value || !profileExists.value,
           class: "netbird-button netbird-button-primary", onClick: enroll,
         }, "Fazer enrollment"));
       }
@@ -386,7 +371,7 @@ export default defineComponent({
 
       const feedback = [];
       if (st === "payload_missing") feedback.push(_h("div", { class: "netbird-feedback text-text-400" }, "O componente do NetBird será baixado automaticamente quando necessário."));
-      if (!profileExists.value) feedback.push(_h("div", { class: "netbird-feedback text-text-400" }, "Salve o perfil primeiro. Depois, reabra-o para fazer o enrollment. A configuração do perfil é salva pela rota VPN nativa do roteador."));
+      if (!profileExists.value) feedback.push(_h("div", { class: "netbird-feedback text-text-400" }, "Salve o perfil primeiro. Depois, reabra-o para fazer o enrollment. O perfil é persistido pelo botão SALVAR do diálogo através do controller NetBird dedicado."));
       else if (dirty.value) feedback.push(_h("div", { class: "netbird-feedback text-text-400" }, "Há alterações não salvas. Use SALVAR no rodapé deste diálogo. O enrollment fica bloqueado até salvar."));
       if (message.value) feedback.push(_h("div", { class: "netbird-feedback text-text-200" }, message.value));
       if (error.value) feedback.push(_h("div", { class: "netbird-feedback netbird-feedback-error" }, error.value));
@@ -398,7 +383,7 @@ export default defineComponent({
         _h("section", { class: "netbird-section" }, [_h("h3", { class: "netbird-heading" }, "Servidor NetBird")].concat(serverFields)),
         _h("section", { class: "netbird-section" }, [_h("h3", { class: "netbird-heading" }, "Recursos"), _h("div", { class: "netbird-feature-grid" }, featureFields)]),
         _h("section", { class: "netbird-section" }, [_h("h3", { class: "netbird-heading" }, "Roteamento da LAN")].concat(lanFields)),
-        _h("section", { class: "netbird-section" }, [_h("h3", { class: "netbird-heading" }, "Ações NetBird") , _h("div", { class: "netbird-actions" }, actions)]),
+        _h("section", { class: "netbird-section" }, [_h("h3", { class: "netbird-heading" }, "Ações NetBird"), _h("div", { class: "netbird-actions" }, actions)]),
         feedback.length ? _h("section", { class: "netbird-section netbird-diagnostics" }, [_h("h3", { class: "netbird-heading" }, "Diagnóstico")].concat(feedback)) : null,
       ]);
     };
