@@ -175,6 +175,10 @@ local function op_status()
     })
 end
 
+local function op_connected_status()
+    return reply(model.connected_status())
+end
+
 local function op_settings_get()
     return reply({ settings = model.get_settings(), profileExists = lfs.access(SETTINGS) and true or false })
 end
@@ -284,6 +288,7 @@ function dispatch(body)
     local op = request_value(body, "operation") or "status"
     local ok_dispatch, result = pcall(function()
         if op == "status" then return op_status()
+        elseif op == "connected_status" then return op_connected_status()
         elseif op == "settings_get" then return op_settings_get()
         elseif op == "settings_set" then return op_settings_set(body)
         elseif op == "profile_delete" then return op_profile_delete()
