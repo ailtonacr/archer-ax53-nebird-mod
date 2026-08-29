@@ -10,6 +10,10 @@ This post-patch deliberately keeps the stock Save/click handler. It only finds
 the visible Save control by its localized text (SALVAR/Save) while the NetBird
 form is dirty, then clears the disabled presentation/state. The existing dirty
 synchronizer reapplies this if Vue replaces the footer node.
+
+Do not match the previous implementation byte-for-byte. Other frontend patchers
+run before this pass and may legitimately reformat nearby code. Locate the
+syncNativeSaveButton function structurally and replace only that function body.
 """
 from __future__ import annotations
 
@@ -22,35 +26,14 @@ import sys
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "rootfs"
 PATH = os.path.join(ROOT, "www/webpages/js/VpnServerNetbirdForm-NB.js.gz")
 
-OLD = '''function syncNativeSaveButton(isDirty) {
-  if (typeof document === "undefined") return;
-  const apply = function () {
-    const scopes = Array.from(document.querySelectorAll("dialog,.su-dialog"));
-    const scope = scopes.length ? scopes[scopes.length - 1] : document;
-    const buttons = Array.from(scope.querySelectorAll("button.su-button-primary"));
-    const save = buttons.find(function (button) {
-      return /salvar|save/i.test(String(button.textContent || "").trim());
-    }) || buttons[buttons.length - 1];
-    if (!save) return;
-    if (isDirty) {
-      save.disabled = false;
-      if (typeof save.removeAttribute === "function") save.removeAttribute("disabled");
-      if (save.classList && typeof save.classList.remove === "function") save.classList.remove("is-disabled");
-      if (typeof save.setAttribute === "function") save.setAttribute("data-netbird-dirty", "1");
-    } else if (typeof save.getAttribute === "function" && save.getAttribute("data-netbird-dirty") === "1") {
-      if (typeof save.removeAttribute === "function") save.removeAttribute("data-netbird-dirty");
-    }
-  };
-  if (typeof queueMicrotask === "function") queueMicrotask(apply);
-  else Promise.resolve().then(apply);
-}'''
-
 NEW = '''function syncNativeSaveButton(isDirty) {
   if (typeof document === "undefined") return;
   const apply = function () {
-    const candidates = Array.from(document.querySelectorAll("button,[role=button]"));
+    const modalCandidates = Array.from(document.querySelectorAll(".su-modal-mask,.su-dialog,dialog"));
+    const modal = modalCandidates.length ? modalCandidates[modalCandidates.length - 1] : document;
+    const candidates = Array.from(modal.querySelectorAll("button,[role=button],input[type=button],input[type=submit]"));
     const visible = candidates.filter(function (node) {
-      const text = String(node.textContent || "").trim();
+      const text = String(node.textContent || node.value || node.getAttribute && node.getAttribute("aria-label") || "").trim();
       if (!/^(salvar|save)$/i.test(text)) return false;
       if (typeof node.getBoundingClientRect !== "function") return true;
       const rect = node.getBoundingClientRect();
@@ -65,7 +48,7 @@ NEW = '''function syncNativeSaveButton(isDirty) {
         save.removeAttribute("aria-disabled");
       }
       if (save.classList) {
-        ["is-disabled", "disabled", "su-button-disabled"].forEach(function (name) {
+        ["is-disabled", "disabled", "su-disabled", "su-button-disabled"].forEach(function (name) {
           if (typeof save.classList.remove === "function") save.classList.remove(name);
         });
       }
@@ -80,15 +63,37 @@ NEW = '''function syncNativeSaveButton(isDirty) {
   if (typeof requestAnimationFrame === "function") requestAnimationFrame(apply);
 }'''
 
+START = "function syncNativeSaveButton(isDirty) {"
+END = "\n\nexport default defineComponent({"
+
+
+def replace_structurally(text: str) -> str:
+    # Idempotent: the final implementation is already present.
+    if NEW in text:
+        return text
+
+    start = text.find(START)
+    if start < 0:
+        raise RuntimeError("native Save selector: syncNativeSaveButton start marker not found")
+    if text.find(START, start + 1) >= 0:
+        raise RuntimeError("native Save selector: multiple syncNativeSaveButton implementations found")
+
+    end = text.find(END, start)
+    if end < 0:
+        raise RuntimeError("native Save selector: form export marker not found after syncNativeSaveButton")
+
+    current = text[start:end]
+    if "syncNativeSaveButton" not in current or "const apply" not in current:
+        raise RuntimeError("native Save selector: unexpected function structure")
+
+    return text[:start] + NEW + text[end:]
+
 
 def main() -> None:
     with gzip.open(PATH, "rt", encoding="utf-8") as fh:
         text = fh.read()
-    if NEW not in text:
-        count = text.count(OLD)
-        if count != 1:
-            raise RuntimeError(f"native Save selector: expected one old implementation, found {count}")
-        text = text.replace(OLD, NEW, 1)
+
+    text = replace_structurally(text)
 
     check = subprocess.run(
         ["node", "--input-type=module", "--check"],
