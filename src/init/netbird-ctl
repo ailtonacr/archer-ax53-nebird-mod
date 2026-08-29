@@ -6,17 +6,12 @@
 
 . /lib/netbird/netbird.sh
 
-# run the binary WITHOUT exec so callers can add post-actions (firewall etc.)
 run() {
     nb_materialize >/dev/null 2>&1 || return 2
     "$NB_BIN" "$@"
     return $?
 }
 
-# NetBird v0.77.1 only updates boolean settings when the corresponding Cobra
-# flag is marked Changed. Therefore every boolean is passed explicitly as
-# --flag=true/false; merely omitting a flag would fail to clear a value that
-# had previously been enabled in the daemon config.
 nb_bool_arg() {
     local key="$1" flag="$2" def="${3:-0}" value
     value="$(nb_get "$NB_SETTINGS_FILE" "$key" "$def")"
@@ -37,6 +32,39 @@ nb_runtime_up_flags() {
         "$(nb_bool_arg network_monitor --network-monitor 0)"
 }
 
+# NetBird v0.77.1 installs NETBIRD-RT-FWD-* and a terminal DROP on wt0 during
+# `netbird up`. Hardware validation showed TP-Link's fw_s_add rules ended below
+# that DROP. These helpers normalize the small, CIDR-scoped exception after the
+# NetBird firewall exists. They are deliberately idempotent and never open wt0
+# broadly: only the configured LAN CIDR is forwarded/NATed.
+nb_fw_priority_values() {
+    NB_FW_CIDR="$(nb_get "$NB_SETTINGS_FILE" advertise_cidr "")"
+    NB_FW_HOMEIF="$(uci_get_state firewall core lan_ifname 2>/dev/null)"
+    [ -n "$NB_FW_HOMEIF" ] || NB_FW_HOMEIF="br-lan"
+}
+
+nb_fw_clear_priority() {
+    nb_fw_priority_values
+    [ -n "$NB_FW_CIDR" ] || return 0
+    while iptables -D FORWARD -i wt0 -o "$NB_FW_HOMEIF" -d "$NB_FW_CIDR" -j ACCEPT 2>/dev/null; do :; done
+    while iptables -D FORWARD -i "$NB_FW_HOMEIF" -o wt0 -s "$NB_FW_CIDR" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do :; done
+    while iptables -t nat -D POSTROUTING -o "$NB_FW_HOMEIF" -s 100.64.0.0/10 -d "$NB_FW_CIDR" -j MASQUERADE 2>/dev/null; do :; done
+}
+
+nb_fw_prioritize_lan() {
+    [ "$(nb_get "$NB_SETTINGS_FILE" advertise_lan "0")" = "1" ] || return 0
+    nb_fw_priority_values
+    [ -n "$NB_FW_CIDR" ] || return 0
+
+    nb_fw_clear_priority
+    iptables -I FORWARD 1 -i wt0 -o "$NB_FW_HOMEIF" -d "$NB_FW_CIDR" -j ACCEPT || return 1
+    iptables -I FORWARD 2 -i "$NB_FW_HOMEIF" -o wt0 -s "$NB_FW_CIDR" \
+        -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT || return 1
+    iptables -t nat -I POSTROUTING 1 -o "$NB_FW_HOMEIF" -s 100.64.0.0/10 \
+        -d "$NB_FW_CIDR" -j MASQUERADE || return 1
+    return 0
+}
+
 case "$1" in
 daemon-ping)
     [ -S "$NB_SOCK" ] || exit 1
@@ -47,10 +75,8 @@ daemon-ping)
     ;;
 
 up)
-    # NetBird installs its own NETBIRD-RT-FWD-* chains and a DROP on wt0 while
-    # `up` is running. Hardware validation proved that installing our LAN rules
-    # before this command leaves them below that DROP. Connect first, then
-    # install/reorder the CIDR-scoped TP-Link rules so they precede the DROP.
+    # Connect first. NetBird creates its own forwarding chains/DROP during this
+    # command. Only after it succeeds do we install the LAN exception above it.
     shift
     nb_ensure_settings
     nb_materialize 1 >/dev/null 2>&1 || exit 2
@@ -60,8 +86,10 @@ up)
     rc=$?
     if [ "$rc" -eq 0 ]; then
         nb_fw_access
+        nb_fw_prioritize_lan || { nb_fw_block; nb_fw_clear_priority; exit 1; }
     else
         nb_fw_block
+        nb_fw_clear_priority
     fi
     exit $rc
     ;;
@@ -69,12 +97,14 @@ up)
 down)
     run down --daemon-addr "unix://$NB_SOCK"
     rc=$?
+    nb_fw_clear_priority
     nb_fw_block
     exit $rc
     ;;
 
 stop)
     run down --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1
+    nb_fw_clear_priority
     nb_fw_block
     nb_daemon_stop
     exit 0
@@ -82,6 +112,7 @@ stop)
 
 restart)
     run down --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1
+    nb_fw_clear_priority
     nb_fw_block
     shift
     nb_ensure_settings
@@ -92,13 +123,16 @@ restart)
     rc=$?
     if [ "$rc" -eq 0 ]; then
         nb_fw_access
+        nb_fw_prioritize_lan || { nb_fw_block; nb_fw_clear_priority; exit 1; }
     else
         nb_fw_block
+        nb_fw_clear_priority
     fi
     exit $rc
     ;;
 
 clean)
+    nb_fw_clear_priority
     nb_clean
     exit 0
     ;;
