@@ -31,6 +31,9 @@ UTIL = [
 ]
 
 # Stock model functions used by list-level toggle/delete for built-in VPNs.
+# Hardware validation on Build 4 established the update contract: `e` is the
+# NEW row and `n` is the previous row. The stock call shape supports this too:
+# R(e) is passed as the update payload and R(n) as the previous-value payload.
 STOCK_UPDATE = 'async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}'
 STOCK_DELETE = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
 
@@ -38,9 +41,10 @@ STOCK_DELETE = 'async function J(e,n){await function(e,n){return a.remove(y,{key
 # global Save bridge. Remove those shapes when rebuilding an already-patched
 # rootfs and install the deterministic bridge below instead.
 LEGACY_UPDATE = 'async function W(e,n){if(e.type===u.Netbird||n.type===u.Netbird){await nbControl(n.enable?"start":"stop");return}await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}'
+LEGACY_DEDICATED_UPDATE_V1 = 'async function W(e,n){if(e.type===u.Netbird||n.type===u.Netbird){const t=n.enable===!0||n.enable==="on"||n.enable==="1";await nbControl(t?"start":"stop");return}await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}'
 LEGACY_DELETE = 'async function J(e,n){if(e==="netbird"){await nbControl("clean");return}await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
 
-DEDICATED_UPDATE = 'async function W(e,n){if(e.type===u.Netbird||n.type===u.Netbird){const t=n.enable===!0||n.enable==="on"||n.enable==="1";await nbControl(t?"start":"stop");return}await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}'
+DEDICATED_UPDATE = 'async function W(e,n){if(e.type===u.Netbird||n.type===u.Netbird){const t=e.enable===!0||e.enable==="on"||e.enable==="1";await nbControl(t?"start":"stop");return}await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}'
 DEDICATED_DELETE = 'async function J(e,n){if(e==="netbird"){await nbDelete();return}await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
 
 NB_HELPERS = 'const nb="/admin/netbird";function nbStatus(e){return a.request(nb,{operation:"status",...e},{preventSuccess:!0,preventError:!0})}function nbSettingsSet(e){return a.request(nb,{operation:"settings_set",...e},{preventSuccess:!0,preventError:!0})}function nbControl(e){return a.request(nb,{operation:e},{preventSuccess:!0,preventError:!0})}function nbDelete(){return a.request(nb,{operation:"profile_delete"},{preventSuccess:!0,preventError:!0})}'
@@ -83,6 +87,7 @@ def patch_model(text, name):
     # single explicit /admin/netbird bridge.
     text = text.replace(R_NATIVE, R_MARKER)
     text = text.replace(LEGACY_UPDATE, DEDICATED_UPDATE)
+    text = text.replace(LEGACY_DEDICATED_UPDATE_V1, DEDICATED_UPDATE)
     text = text.replace(STOCK_UPDATE, DEDICATED_UPDATE)
     text = text.replace(LEGACY_DELETE, DEDICATED_DELETE)
     text = text.replace(STOCK_DELETE, DEDICATED_DELETE)
@@ -216,7 +221,7 @@ def assert_dedicated_crud(root):
     if missing:
         raise RuntimeError("dedicated NetBird CRUD bridge incomplete: " + ", ".join(missing))
 
-    forbidden = [R_NATIVE, "window.__netbirdSaveDraft", 'it.Netbird!==i.type&&(']
+    forbidden = [R_NATIVE, "window.__netbirdSaveDraft", 'it.Netbird!==i.type&&(', LEGACY_DEDICATED_UPDATE_V1]
     leaked = [token for token in forbidden if token in combined]
     if leaked:
         raise RuntimeError("obsolete NetBird CRUD path remains: " + ", ".join(leaked))
