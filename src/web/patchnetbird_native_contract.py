@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Align the generated NetBird subform with TP-Link's native VPN form contract."""
+"""Align the generated NetBird subform with TP-Link's native VPN form contract.
+
+Recovered stock invariant: baseFormRef.isChanged || subFormRef.isChanged drives
+su-dialog ok-disabled; native onOk then awaits validate() and merges getForm().
+"""
 from __future__ import annotations
 
 import gzip
