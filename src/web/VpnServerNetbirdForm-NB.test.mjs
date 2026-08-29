@@ -4,7 +4,7 @@ import vm from "node:vm";
 
 const original = fs.readFileSync(new URL("./VpnServerNetbirdForm-NB.js", import.meta.url), "utf8");
 
-// Static UI contract: actual TP-Link components, no parallel raw HTML/CSS system.
+// Authored source contract: real TP-Link controls and protocol-only ownership.
 for (const token of [
   'stockComponent(this, "su-form")',
   'stockComponent(this, "su-form-item")',
@@ -64,9 +64,11 @@ assert.ok(exposed, "component must expose stock dynamic-form methods");
 assert.equal(typeof exposed.isChanged, "object");
 for (const key of ["validate", "setForm", "getForm", "resetForm", "clearValidate"])
   assert.equal(typeof exposed[key], "function", `${key} must be exposed`);
-assert.equal(typeof context.component.render, "function", "component must provide its stock-component render function");
+assert.equal(typeof context.component.render, "function");
 
-// EDIT is identified by the native semantic type, not the historical synthetic key.
+// A persisted stock row is a valid EDIT input. Final Add/Edit normalization is
+// intentionally asserted by scripts/test-netbird-native-frontend.py after all
+// production patch passes have run.
 assert.equal(exposed.setForm({
   key: "arbitrary-stock-key", type: "netbirdvpn", server: "https://netbird.example",
   enable: "on", enrolled: "1", advertise_lan: "1", advertise_cidr: "192.168.10.0/24",
@@ -81,7 +83,7 @@ assert.equal(form.enable, "on");
 assert.equal("key" in form, false, "protocol subform must not own TP-Link profile key");
 assert.equal("type" in form, false, "protocol subform must not own TP-Link profile type");
 
-// Dirty draft must survive polling; the status endpoint must never persist it.
+// Polling is read-only and cannot clobber an in-progress form draft.
 state.updateDraft("advertise_cidr", "192.168.");
 assert.equal(state.dirty.value, true);
 response = { ...response, settings: { ...response.settings, advertise_cidr: "10.0.0.0/24" } };
@@ -90,21 +92,11 @@ assert.equal(state.draft.value.advertise_cidr, "192.168.");
 assert.equal(requests.includes("settings_set"), false);
 await assert.rejects(() => exposed.validate(), /CIDR/);
 
-// CREATE is clean/disabled and refuses a second native identity when one exists.
-exposed.setForm({ type: "netbirdvpn-new", management_url: "https://netbird.example" });
-assert.equal(state.creating.value, true);
-assert.equal(state.draft.value.enable, "0");
-assert.equal(state.draft.value.enrolled, "0");
-await assert.rejects(() => exposed.validate(), /Já existe um perfil NetBird/);
-
-// Once no profile exists the same CREATE draft validates normally.
-response = { ...response, profileExists: false, settings: { ...response.settings, enrolled: "0", enable: "0" } };
-await timers[0]();
 state.updateDraft("advertise_lan", "0");
 state.updateDraft("management_url", "https://netbird.example");
 state.updateDraft("wireguard_port", "51820");
 assert.equal(await exposed.validate(), true);
-
 assert.equal(requests.includes("settings_set"), false, "editing must never persist before stock dialog Save");
+
 context.unmounted();
-console.log("netbird authored native form/CREATE/EDIT/draft contract behavior ok");
+console.log("netbird authored stock-component/protocol-subform/draft contract ok");
