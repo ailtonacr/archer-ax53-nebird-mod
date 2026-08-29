@@ -36,7 +36,10 @@ def check_native_registry() -> None:
         'vpn.VPN_TYPE_TBL[TYPE] = TYPE_ID',
         'vpn.VPN_TYPE_NAME_TBL[TYPE] = TYPE_NAME',
         'local function management_host(url)',
+        'local function value_or_current(cfg, current, key, fallback)',
         'nb_model.get_settings',
+        'if connect == nil then',
+        'if not server or server == "" then server = management_host(updated.management_url) end',
         'server = server',
         'connectable = cfg.connect or "1"',
         'nb_model.set_settings(settings)',
@@ -45,6 +48,27 @@ def check_native_registry() -> None:
     require(loader, 'require "luci.model.netbird_vpn_native"', 'native.install()')
     assert "debug.getupvalue" not in native
     assert "debug.setupvalue" not in native
+
+
+def check_auxiliary_native_boundary() -> None:
+    controller = text("src/web-backend/controller/admin/netbird.lua")
+    require(
+        controller,
+        'local uci    = require("luci.model.uci").cursor()',
+        'local NATIVE_TYPE = "netbirdvpn"',
+        'local function native_profile()',
+        'uci:foreach("vpn", "server", function(section)',
+        'if section.type == NATIVE_TYPE then',
+        'local function native_profile_exists()',
+        'local function sync_settings_from_native_profile()',
+        'profileExists = native_profile_exists()',
+        'local synced, sync_err = sync_settings_from_native_profile()',
+        'local out, rc = model.control("enroll", tmp)',
+        'local clean_out, clean_rc = model.control("clean")',
+        'profileExists = native_profile_exists()',
+    )
+    delete_block = controller.split('local function op_profile_delete()', 1)[1].split('local function op_enroll', 1)[0]
+    assert 'model.control("stop")' not in delete_block, "native post-delete cleanup must not materialize payload via explicit stop"
 
 
 def check_netifd() -> None:
@@ -123,6 +147,8 @@ def check_build_pipeline() -> None:
         'stock_status =',
         'native_serializer =',
         'new URL(n).hostname',
+        'native_delete =',
+        'e==="netbird"&&await nbDelete()',
         'stock_list =',
         'dedicated CRUD bridge remains after native migration',
         '/admin/vpn?form=server',
@@ -155,9 +181,9 @@ def check_build_pipeline() -> None:
 
 def check_frontend_transition() -> None:
     # 010 still builds the previously hardware-tested hybrid UI first. 012 is a
-    # deterministic finalizer that removes only the CRUD/list/status bridges.
-    # /admin/netbird remains intentionally available for enrollment/log/payload
-    # and other NetBird-specific actions that do not belong to generic VPN CRUD.
+    # deterministic finalizer that removes normal CRUD/list/status bridges.
+    # /admin/netbird remains for enrollment/log/payload and post-delete identity
+    # cleanup that cannot be represented by generic TP-Link VPN CRUD.
     hybrid = text("src/web/patchnetbird_web.py")
     finalizer = text("src/web/patchnetbird_native_crud.py")
     form = text("src/web/VpnServerNetbirdForm-NB.js")
@@ -180,12 +206,13 @@ def check_no_forbidden_ci_changes() -> None:
 
 def main() -> None:
     check_native_registry()
+    check_auxiliary_native_boundary()
     check_netifd()
     check_runtime_preserved()
     check_build_pipeline()
     check_frontend_transition()
     check_no_forbidden_ci_changes()
-    print("netbird native TP-Link VPN registry/CRUD/netifd/build contracts ok")
+    print("netbird native TP-Link VPN registry/CRUD/netifd/build/runtime-boundary contracts ok")
 
 
 if __name__ == "__main__":
