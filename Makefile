@@ -51,6 +51,8 @@ firmware: $(TARGET) test-netbird
 		grep -q "profile_delete" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: dedicated NetBird profile delete operation missing" >&2; exit 1; }; \
 		grep -q "delete_failed" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: hardened NetBird delete verification missing" >&2; exit 1; }; \
 		grep -q "settings_set" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: dedicated NetBird settings operation missing" >&2; exit 1; }; \
+		grep -q "connected_status" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: dedicated NetBird connected-status operation missing" >&2; exit 1; }; \
+		grep -q "function connected_status" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: NetBird connected-status model missing" >&2; exit 1; }; \
 		grep -q "description.*kind = \"text\"" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: persisted NetBird description missing" >&2; exit 1; }; \
 		cmp -s src/init/netbird.sh rootfs/lib/netbird/netbird.sh || { echo "Error: packaged netbird.sh drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird-ctl rootfs/sbin/netbird-ctl || { echo "Error: packaged netbird-ctl drifted from canonical source" >&2; exit 1; }; \
@@ -64,6 +66,8 @@ firmware: $(TARGET) test-netbird
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Porta WireGuard" || { echo "Error: editable NetBird WireGuard port field missing" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "profile_delete" || { echo "Error: dedicated NetBird delete bridge missing from model bundle" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "/admin/netbird" || { echo "Error: dedicated NetBird API bridge missing from model bundle" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq 'e==="netbird"?a.request("/admin/netbird",{operation:"connected_status"}' || { echo "Error: native NetBird connected-status model bridge missing" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq 'a.request(y,{operation:"connected_status",key:e}' || { echo "Error: stock connected-status path was not preserved" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "nbStopIfEnabled" || { echo "Error: stock-to-NetBird single-active guard missing" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -q "profileExists" || { echo "Error: NetBird synthetic list bridge missing from VPN page bundle" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -q "__nbActiveStockVpn" || { echo "Error: active stock VPN tracking missing" >&2; exit 1; }; \
@@ -74,6 +78,7 @@ firmware: $(TARGET) test-netbird
 		echo "    ok untouched TP-Link VPN controller bytecode"; \
 		echo "    ok factory single-active VPN semantics"; \
 		echo "    ok native TP-Link form dirty/save contract"; \
+		echo "    ok native TP-Link connected-status tooltip contract"; \
 		echo "    ok verified NetBird delete + complete profile fields"; \
 		echo "    ok canonical runtime sources + prioritized LAN forwarding"; \
 		echo "    ok WireGuard port aligned between UI/runtime/firewall"; \
