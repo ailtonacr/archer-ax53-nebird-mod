@@ -25,7 +25,7 @@ $(TARGET): $(SRCS)
 test-netbird:
 	node src/web/VpnServerNetbirdForm-NB.test.mjs
 	python3 scripts/test-netbird-contracts.py .
-	python3 -m py_compile src/web/patchnetbird_native_crud.py
+	python3 -m py_compile src/web/patchnetbird_native_crud.py scripts/verify-tplink-vpn-bytecode.py
 
 firmware: $(TARGET) test-netbird
 	@bash -o pipefail -c 'set -e; \
@@ -46,11 +46,13 @@ firmware: $(TARGET) test-netbird
 		STAMPED_VERSION="$$(sed -n "s/^soft_ver://p" rootfs/etc/partition_config/soft-version | head -n1)"; \
 		case "$$STAMPED_VERSION" in *"-netbird mod Build $$BUILD_NO") : ;; *) echo "Error: unexpected stamped soft version: $$STAMPED_VERSION" >&2; exit 1;; esac; \
 		echo "=== [4/6] Verifying modified rootfs before repack ==="; \
-		python3 -c "from pathlib import Path; p=Path(\"rootfs/usr/lib/lua/luci/controller/admin/vpn.lua\"); h=p.read_bytes()[:4]; assert h == b\"\\x1bLua\", f\"VPN controller is not TP-Link bytecode: {h!r}\""; \
+		python3 scripts/verify-tplink-vpn-bytecode.py rootfs/usr/lib/lua/luci/controller/admin/vpn.lua; \
 		test ! -e rootfs/usr/lib/lua/luci/netbird/vpn_stock.lua || { echo "Error: obsolete preserved vpn_stock.lua remains in rootfs" >&2; exit 1; }; \
 		test ! -e rootfs/usr/lib/lua/luci/controller/admin/vpn_stock.lua || { echo "Error: legacy vpn_stock.lua remains in LuCI controller tree" >&2; exit 1; }; \
 		grep -q "TYPE = \"netbirdvpn\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN type registration missing" >&2; exit 1; }; \
 		grep -q "TYPE_ID = \"5\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN type id is not 5" >&2; exit 1; }; \
+		grep -q "local schema = { proto = PROTO }" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN_TBL schema does not match stock shape" >&2; exit 1; }; \
+		grep -q "table.insert(schema, { key = key })" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN_TBL field entries are not stock-shaped" >&2; exit 1; }; \
 		grep -q "vpn.VPN_CFG_TBL\[TYPE\] = netbird_config" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN config handler missing" >&2; exit 1; }; \
 		grep -q "vpn.VPN_TYPE_TBL\[TYPE\] = TYPE_ID" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: VPN_TYPE_TBL NetBird registration missing" >&2; exit 1; }; \
 		grep -q "vpn.VPN_TYPE_NAME_TBL\[TYPE\] = TYPE_NAME" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: VPN_TYPE_NAME_TBL NetBird registration missing" >&2; exit 1; }; \
@@ -63,10 +65,12 @@ firmware: $(TARGET) test-netbird
 		cmp -s src/init/netbird.init rootfs/etc/init.d/netbird || { echo "Error: packaged netbird init drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird-proto.sh rootfs/lib/netifd/proto/netbird.sh || { echo "Error: packaged netbird netifd handler drifted from canonical source" >&2; exit 1; }; \
 		grep -q "add_protocol netbird" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd NetBird protocol registration missing" >&2; exit 1; }; \
+		test ! -e rootfs/etc/rc.d/S99netbird || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }; \
 		grep -q "nb_fw_prioritize_lan" rootfs/sbin/netbird-ctl || { echo "Error: prioritized LAN forwarding fix missing" >&2; exit 1; }; \
 		grep -q -- "--wireguard-port" rootfs/sbin/netbird-ctl || { echo "Error: WireGuard port is not applied to NetBird runtime" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/update-store-DQkZxaRI.js.gz | grep -Fq "e.Netbird=\"netbirdvpn\"" || { echo "Error: frontend NetBird enum is not netbirdvpn" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "function f(e){return a.request(y,{operation:\"connected_status\",key:e},{preventSuccess:!0})}" || { echo "Error: NetBird connected-status is not using stock VPN endpoint" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "new URL(n).hostname" || { echo "Error: NetBird stock server field is not normalized to a pingable hostname" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -Fq "i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}" || { echo "Error: VPN list is not sourced exclusively from stock endpoint" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "type: \"netbirdvpn\", proto: \"netbird\"" || { echo "Error: NetBird form does not serialize native type/proto" >&2; exit 1; }; \
 		if zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -Fq "a.value=_nb.concat(e)"; then echo "Error: synthetic NetBird list bridge remains" >&2; exit 1; fi; \
@@ -74,10 +78,11 @@ firmware: $(TARGET) test-netbird
 		if grep -q "NetBird adapter for TP-Link\|patch_dispatch_upvalues\|request_context" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua 2>/dev/null; then echo "Error: retired adapter leaked into stock VPN controller" >&2; exit 1; fi; \
 		grep -Fxq "build=$$BUILD_NO" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong build number" >&2; exit 1; }; \
 		grep -Fxq "display_version=$$STAMPED_VERSION" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong display version" >&2; exit 1; }; \
+		echo "    ok TP-Link VPN bytecode registry export contract"; \
 		echo "    ok untouched TP-Link VPN controller bytecode + native registry extension"; \
 		echo "    ok NetBird native type netbirdvpn=5 / proto=netbird"; \
 		echo "    ok stock list/add/modify/toggle/delete/connected-status path"; \
-		echo "    ok netifd NetBird protocol handler"; \
+		echo "    ok netifd sole normal boot lifecycle owner"; \
 		echo "    ok canonical runtime sources + prioritized LAN forwarding"; \
 		echo "    ok build identity: $$STAMPED_VERSION"; \
 		echo "=== [5/6] Repacking firmware ==="; \
