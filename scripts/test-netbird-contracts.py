@@ -66,6 +66,14 @@ def check_frontend_bridge():
     for token in required:
         assert token in patcher, f"frontend dedicated-CRUD contract missing {token!r}"
 
+    # Build 4 hardware proved W(e,n) receives the NEW row as e and the previous
+    # row as n. A disable click used to call `up` because the bridge read
+    # n.enable (old=true). The active bridge must derive state from e.enable.
+    assert 'const t=e.enable===!0||e.enable==="on"||e.enable==="1"' in patcher
+    assert 'LEGACY_DEDICATED_UPDATE_V1' in patcher
+    assert 'text = text.replace(LEGACY_DEDICATED_UPDATE_V1, DEDICATED_UPDATE)' in patcher
+    assert 'forbidden = [R_NATIVE, "window.__netbirdSaveDraft", \'it.Netbird!==i.type&&(\', LEGACY_DEDICATED_UPDATE_V1]' in patcher
+
     # The abandoned native serializer/adapter path must be actively removed by
     # the patcher rather than silently coexisting with the dedicated route.
     assert 'text = text.replace(R_NATIVE, R_MARKER)' in patcher
