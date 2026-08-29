@@ -3,12 +3,14 @@
 -- Generic profile CRUD/list/toggle/connected-status is owned by the stock
 -- /admin/vpn?form=server endpoint for type=netbirdvpn. This endpoint remains
 -- only for NetBird-specific concerns that the generic VPN contract cannot own:
--- enrollment, runtime diagnostics/logs/payload state, and identity cleanup.
+-- enrollment, runtime diagnostics/logs/payload state, identity cleanup and a
+-- manual restart action that delegates back to the native vpnc/netifd lifecycle.
 module("luci.controller.admin.netbird", package.seeall)
 
 local nixio = require "nixio"
 local http   = require "luci.http"
 local lfs    = require "luci.fs"
+local sys    = require "luci.sys"
 local model  = require "luci.model.netbird"
 local controller = require "luci.model.controller"
 local uci    = require("luci.model.uci").cursor()
@@ -94,6 +96,11 @@ end
 
 local function native_profile_exists()
     return native_profile() ~= nil
+end
+
+local function native_profile_active()
+    return uci:get("vpn", "client", "enabled") == "on" and
+           uci:get("vpn", "client", "vpntype") == NATIVE_TYPE
 end
 
 local function sync_settings_from_native_profile()
@@ -217,35 +224,12 @@ local function op_settings_get()
     return reply({ settings = model.get_settings(), profileExists = native_profile_exists() })
 end
 
+-- Compatibility-only settings endpoint retained for older auxiliary clients.
+-- Normal profile save/update is owned by /admin/vpn?form=server.
 local function op_settings_set(body)
     local cand = request_settings(body)
-    local prev = model.get_settings()
-    local preview, err = model.preview_settings(cand)
-    if not preview then return error_reply("bad_request", err or "invalid settings") end
-
-    local old_stopped = false
-    if prev.enable == "1" then
-        local stop_out, stop_rc = model.control("stop")
-        if stop_rc ~= 0 then
-            return error_reply("apply_failed", "failed to stop before applying settings: " .. (stop_out or "stop failed"):gsub("%s+$", ""))
-        end
-        old_stopped = true
-    end
-
     local cur, write_err = model.set_settings(cand)
-    if not cur then
-        if old_stopped then model.control("start") end
-        return error_reply("bad_request", write_err or "failed to save settings")
-    end
-
-    local out, rc
-    if cur.enable == "1" and cur.enrolled == "1" then
-        out, rc = model.control("start")
-        if rc == 0 then cur = model.set_internal_settings({ enrolled = "1", enable = "1" }) or cur end
-    end
-    if rc ~= nil and rc ~= 0 then
-        return error_reply("apply_failed", "settings saved but apply failed: " .. (out or "start failed"):gsub("%s+$", ""))
-    end
+    if not cur then return error_reply("bad_request", write_err or "failed to save settings") end
     return reply({ settings = cur, profileExists = native_profile_exists() })
 end
 
@@ -286,29 +270,27 @@ local function op_enroll(body)
     nixio.fs.unlink(tmp)
     if rc ~= 0 then return error_reply("enroll_failed", (out or "enrollment failed"):gsub("%s+$", "")) end
 
-    -- Factory VPN Client semantics are single-active. Enrollment registers the
-    -- profile but does not leave NetBird active; activation happens through the
-    -- list toggle, where mutual exclusion with stock VPN profiles is enforced.
+    -- Enrollment has no generic TP-Link equivalent, so the daemon is started
+    -- directly only for registration. It is then stopped and left disabled;
+    -- normal activation happens through the stock VPN Client toggle.
     model.control("stop")
     local cur, state_err = model.set_internal_settings({ enrolled = "1", enable = "0" })
     if not cur then return error_reply("internal", state_err or "failed to persist enrollment state") end
     return reply({ result = "ok", settings = cur })
 end
 
-local function op_control(op)
-    local out, rc = model.control(op)
-    if rc ~= 0 then return error_reply("control_failed", (out or op):gsub("%s+$", "")) end
-    if op == "start" or op == "restart" then
-        model.set_internal_settings({ enrolled = "1", enable = "1" })
-    elseif op == "stop" then
-        model.set_internal_settings({ enable = "0" })
+local function op_restart()
+    if not native_profile_active() then
+        return error_reply("not_active", "NetBird is not the active TP-Link VPN Client profile")
     end
-    return reply({ result = "ok", output = out and out:gsub("%s+$", "") or "" })
+    local rc = sys.call("/etc/init.d/vpnc restart >/dev/null 2>&1")
+    if rc ~= 0 then return error_reply("control_failed", "native vpnc restart failed") end
+    return reply({ result = "ok" })
 end
 
 local function op_clean()
-    model.control("stop")
-    model.control("clean")
+    local _, rc = model.control("clean")
+    if rc ~= 0 then return error_reply("control_failed", "NetBird clean failed") end
     local cur, err = model.set_internal_settings({ enrolled = "0", enable = "0" })
     if not cur then return error_reply("internal", err or "failed to reset NetBird state") end
     return reply({ result = "ok", settings = cur })
@@ -332,7 +314,7 @@ function dispatch(body)
         elseif op == "settings_set" then return op_settings_set(body)
         elseif op == "profile_delete" then return op_profile_delete()
         elseif op == "enroll" then return op_enroll(body)
-        elseif op == "start" or op == "stop" or op == "restart" then return op_control(op)
+        elseif op == "restart" then return op_restart()
         elseif op == "clean" then return op_clean()
         elseif op == "log" then return op_log(body)
         elseif op == "payload_status" then return op_payload_status()
