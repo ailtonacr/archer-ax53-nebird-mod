@@ -29,14 +29,18 @@ def check_native_registry() -> None:
         'TYPE_NAME = "NetBird"',
         'PROTO = "netbird"',
         'local vpn = require "luci.controller.admin.vpn"',
+        'local schema = { proto = PROTO }',
+        'table.insert(schema, { key = key })',
         'vpn.VPN_TBL[TYPE] = schema',
         'vpn.VPN_CFG_TBL[TYPE] = netbird_config',
         'vpn.VPN_TYPE_TBL[TYPE] = TYPE_ID',
         'vpn.VPN_TYPE_NAME_TBL[TYPE] = TYPE_NAME',
-        'proto = PROTO',
+        'local function management_host(url)',
+        'server = server',
         'connectable = cfg.connect or "1"',
         'nb_model.set_settings(settings)',
     )
+    assert "field = FIELDS" not in native, "non-stock VPN_TBL schema shape leaked into native registry"
     require(loader, 'require "luci.model.netbird_vpn_native"', 'native.install()')
     assert "debug.getupvalue" not in native
     assert "debug.setupvalue" not in native
@@ -85,6 +89,7 @@ def check_build_pipeline() -> None:
     mod012 = text("mods/012-netbird-native-vpn.sh")
     makefile = text("Makefile")
     finalizer = text("src/web/patchnetbird_native_crud.py")
+    verifier = text("scripts/verify-tplink-vpn-bytecode.py")
 
     require(
         mod010,
@@ -97,19 +102,36 @@ def check_build_pipeline() -> None:
         'netbird_vpn_native.lua',
         'netbird_native.lua',
         'patchnetbird_native_crud.py',
-        "expected stock TP-Link Lua bytecode",
+        'verify-tplink-vpn-bytecode.py',
+        'python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"',
+        'local schema = { proto = PROTO }',
+        'table.insert(schema, { key = key })',
         'native.install()',
         'e.Netbird=\\"netbirdvpn\\"',
+        'new URL(n).hostname',
         'synthetic NetBird list bridge still present',
+        'rm -f "$R/etc/rc.d/S99netbird"',
     )
     require(
         finalizer,
         'e.Netbird="netbirdvpn"',
         'stock_status =',
         'native_serializer =',
+        'new URL(n).hostname',
         'stock_list =',
         'dedicated CRUD bridge remains after native migration',
         '/admin/vpn?form=server',
+    )
+    require(
+        verifier,
+        'EXPECTED_HEADER = bytes.fromhex("1b4c75615100010404040804")',
+        'OP_SETGLOBAL = 2',
+        '"VPN_TBL"',
+        '"VPN_CFG_TBL"',
+        '"VPN_TYPE_TBL"',
+        '"VPN_TYPE_NAME_TBL"',
+        'STOCK_TYPES = {"pptpvpn", "l2tpvpn", "openvpn", "wireguardvpn"}',
+        'native NetBird cannot safely extend this vpn.lua',
     )
     require(
         makefile,
@@ -138,15 +160,13 @@ def check_frontend_transition() -> None:
 
 
 def check_no_forbidden_ci_changes() -> None:
-    # Repository policy: native firmware work must not depend on GitHub Actions.
     workflows = ROOT / ".github" / "workflows"
     if workflows.exists():
-        # Existing vendor/project workflows may exist historically; this test
-        # merely ensures the native NetBird build itself never references them.
         native_files = [
             text("mods/012-netbird-native-vpn.sh"),
             text("src/web/patchnetbird_native_crud.py"),
             text("src/web-backend/model/netbird_vpn_native.lua"),
+            text("scripts/verify-tplink-vpn-bytecode.py"),
         ]
         assert all(".github/workflows" not in body for body in native_files)
 
