@@ -23,7 +23,8 @@ $(TARGET): $(SRCS)
 # Offline tests only. Deliberately no GitHub Actions: this target is run by the
 # local firmware build and can also be invoked explicitly during development.
 test-netbird:
-	sh -n src/init/netbird.sh src/init/netbird-runtime.sh src/init/netbird-ctl src/init/netbird-proto.sh src/init/netbird.init
+	sh -n src/init/netbird.sh src/init/netbird-runtime.sh src/init/netbird-ctl src/init/netbird-proto.sh src/init/netbird.init scripts/test-netbird-runtime.sh
+	sh scripts/test-netbird-runtime.sh
 	node src/web/VpnServerNetbirdForm-NB.test.mjs
 	python3 scripts/test-netbird-contracts.py .
 	python3 scripts/test-netbird-native-frontend.py
