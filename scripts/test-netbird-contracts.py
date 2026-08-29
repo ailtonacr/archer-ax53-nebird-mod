@@ -40,9 +40,6 @@ def check_controller():
     )
     assert 'v == "on"' in controller and 'v == "off"' in controller
     assert 'cand.enable = bool01' in controller
-    # Enrollment registers the profile but deliberately leaves it disabled; the
-    # list toggle is the single place that activates a profile and enforces the
-    # same one-active-client invariant as TP-Link factory firmware.
     require(controller, 'model.control("stop")', 'enrolled = "1", enable = "0"')
 
 
@@ -90,7 +87,18 @@ def check_factory_semantics():
         'updateDraft("description"',
         'Informe uma descrição para o perfil.',
         'nbStopIfEnabled as nbG',
+        'def replace_one_of(',
+        'old_stock_compact = \'name: "NetBird", des: "NetBird", description: "NetBird",\'',
+        'old_stock_multiline = \'name: "NetBird",\\n    des: "NetBird",\\n    description: "NetBird",\'',
+        'e.enable===!0||e.enable==="on"||e.enable==="1"||e.enabled===!0',
     )
+    # Regression guard for the exact source shape that caused Build 5 to fail:
+    # the primary form source is currently compact, so the post-patcher must
+    # recognize that shape instead of assuming three separate lines.
+    form = FORM.read_text()
+    compact = 'name: "NetBird", des: "NetBird", description: "NetBird",'
+    if compact in form:
+        assert 'old_stock_compact' in factory
     mod = MOD.read_text()
     require(mod, 'FACTORY_PATCHER=', 'python3 "$FACTORY_PATCHER" "$R"')
 
@@ -115,8 +123,6 @@ def check_boot_and_firewall():
         'nb_fw_access',
         'nb_fw_prioritize_lan',
     )
-    # NetBird must create its DROP/chains before our CIDR-scoped exception is
-    # inserted above them. This exact ordering is the hardware-proven fix.
     up_block = ctl.split('up)\n', 1)[1].split(';;', 1)[0]
     assert up_block.index('run up --daemon-addr') < up_block.index('nb_fw_access') < up_block.index('nb_fw_prioritize_lan')
 
