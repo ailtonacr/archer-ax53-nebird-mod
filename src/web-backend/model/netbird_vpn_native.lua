@@ -49,8 +49,20 @@ local function management_host(url)
 end
 
 local function settings_from_config(cfg)
+    local management_url = cfg.management_url or ""
+    -- The stock UI serializes the common server field as a pingable hostname.
+    -- If management_url is absent on a later generic toggle/update operation,
+    -- preserve the existing URL already stored in NetBird settings rather than
+    -- accidentally replacing it with that hostname.
+    if management_url == "" then
+        local current = nb_model.get_settings and nb_model.get_settings() or nil
+        if type(current) == "table" then
+            management_url = current.management_url or ""
+        end
+    end
+
     return {
-        management_url = cfg.management_url or "",
+        management_url = management_url,
         hostname = cfg.hostname or "",
         disable_dns = bool01(cfg.disable_dns, "1"),
         disable_firewall = bool01(cfg.disable_firewall, "1"),
