@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
-"""Post-patch the AX53 VPN Client bundles with factory-compatible semantics.
+"""Post-patch AX53 VPN Client bundles with factory-compatible exclusivity.
 
-TP-Link documents the classic VPN Client as allowing multiple saved profiles but
-only one active profile at a time. NetBird uses a dedicated backend, so the
-frontend bridge must explicitly preserve that invariant across NetBird and the
-stock VPN profiles.
-
-This pass also keeps NetBird profile metadata/settings aligned end to end:
-description, hostname and WireGuard port are editable in the stock modal and
-persist through the dedicated backend instead of being hidden or hard-coded.
+This pass now touches only TP-Link's shared model/page bundles. The NetBird
+subform itself is authored with the complete native form contract in
+VpnServerNetbirdForm-NB.js and must not be rewritten through brittle string
+substitutions after installation.
 """
 from __future__ import annotations
 
@@ -48,19 +44,6 @@ def replace_once(text: str, old: str, new: str, label: str) -> str:
     count = text.count(old)
     if count != 1:
         raise RuntimeError(f"{label}: expected one occurrence, found {count}")
-    return text.replace(old, new, 1)
-
-
-def replace_one_of(text: str, candidates: tuple[str, ...], new: str, label: str) -> str:
-    """Replace exactly one recognized historical/current source shape."""
-    if new in text:
-        return text
-    matches = [(old, text.count(old)) for old in candidates if text.count(old)]
-    total = sum(count for _, count in matches)
-    if total != 1:
-        detail = ", ".join(f"shape#{idx + 1}={text.count(old)}" for idx, old in enumerate(candidates))
-        raise RuntimeError(f"{label}: expected exactly one recognized source shape ({detail})")
-    old = next(old for old, count in matches if count == 1)
     return text.replace(old, new, 1)
 
 
@@ -113,68 +96,35 @@ def patch_model_export() -> None:
     write_gz(name, text)
 
 
-def patch_form() -> None:
+def check_native_form_source() -> None:
     name = "VpnServerNetbirdForm-NB.js.gz"
     text = read_gz(name)
-
-    old_norm = 'enrolled: as01(v.enrolled, base.enrolled || "0"),\n    management_url:'
-    new_norm = 'enrolled: as01(v.enrolled, base.enrolled || "0"),\n    description: v.description !== undefined ? String(v.description || "") : (base.description || "NetBird"),\n    management_url:'
-    text = replace_once(text, old_norm, new_norm, "description normalization")
-
-    old_stock_multiline = 'name: "NetBird",\n    des: "NetBird",\n    description: "NetBird",'
-    old_stock_compact = 'name: "NetBird", des: "NetBird", description: "NetBird",'
-    new_stock = 'name: s.description || "NetBird", des: s.description || "NetBird", description: s.description || "NetBird",'
-    text = replace_one_of(text, (old_stock_multiline, old_stock_compact), new_stock, "description stock form")
-
-    if 'function validHostname(value)' not in text:
-        text = replace_once(
-            text,
-            'function validCidr(value) {',
-            'function validHostname(value) {\n  const s = String(value || "");\n  return s.length <= 64 && /^[A-Za-z0-9._-]*$/.test(s);\n}\n\nfunction validWireGuardPort(value) {\n  const raw = String(value || "").trim();\n  if (!/^\\d+$/.test(raw)) return false;\n  const n = Number(raw);\n  return Number.isInteger(n) && n >= 1 && n <= 65535;\n}\n\nfunction validCidr(value) {',
-            "advanced field validators",
-        )
-
-    old_validate = 'const s = draft.value || settings.value || {};\n      if (!validManagementUrl(s.management_url)) {'
-    new_validate = 'const s = draft.value || settings.value || {};\n      if (!String(s.description || "").trim()) {\n        error.value = "Informe uma descrição para o perfil.";\n        return false;\n      }\n      if (!validHostname(s.hostname)) {\n        error.value = "Hostname inválido. Use apenas letras, números, ponto, hífen ou sublinhado (máx. 64 caracteres).";\n        return false;\n      }\n      if (!validWireGuardPort(s.wireguard_port)) {\n        error.value = "Informe uma porta WireGuard entre 1 e 65535.";\n        return false;\n      }\n      if (!validManagementUrl(s.management_url)) {'
-    text = replace_once(text, old_validate, new_validate, "profile metadata validation")
-
-    old_fields = '''const serverFields = [field("URL de gerenciamento", _h("input", {
-        type: "text", value: s.management_url || "", disabled: props.disabled || busy.value,
-        class: "netbird-input", onInput: function (ev) { updateDraft("management_url", ev.target.value); },
-      }))];'''
-    new_fields = '''const serverFields = [
-        field("Descrição", _h("input", {
-          type: "text", value: s.description || "", disabled: props.disabled || busy.value,
-          class: "netbird-input", maxlength: "64",
-          onInput: function (ev) { updateDraft("description", ev.target.value); },
-        })),
-        field("URL de gerenciamento", _h("input", {
-          type: "text", value: s.management_url || "", disabled: props.disabled || busy.value,
-          class: "netbird-input", onInput: function (ev) { updateDraft("management_url", ev.target.value); },
-        })),
-        field("Hostname do peer", _h("input", {
-          type: "text", value: s.hostname || "", disabled: props.disabled || busy.value,
-          class: "netbird-input", maxlength: "64", placeholder: "Ex.: archer-ax53",
-          onInput: function (ev) { updateDraft("hostname", ev.target.value); },
-        })),
-        field("Porta WireGuard", _h("input", {
-          type: "number", value: s.wireguard_port || "51820", min: "1", max: "65535",
-          disabled: props.disabled || busy.value, class: "netbird-input",
-          onInput: function (ev) { updateDraft("wireguard_port", ev.target.value); },
-        })),
-      ];'''
-    text = replace_once(text, old_fields, new_fields, "advanced profile fields")
-
+    required = [
+        'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
+        'stockComponent(this, "su-form")',
+        'stockComponent(this, "su-form-item")',
+        'stockComponent(this, "su-input")',
+        'stockComponent(this, "su-checkbox")',
+        'stockComponent(this, "su-button")',
+        'stockComponent(this, "su-alert")',
+        'value.type === "netbirdvpn"',
+    ]
+    missing = [token for token in required if token not in text]
+    if missing:
+        raise RuntimeError("native NetBird form source incomplete: " + ", ".join(missing))
+    forbidden = ["NETBIRD_CSS", 'type: "checkbox"', 'class: "netbird-input"', "syncNativeSaveButton"]
+    leaked = [token for token in forbidden if token in text]
+    if leaked:
+        raise RuntimeError("legacy custom NetBird UI leaked: " + ", ".join(leaked))
     check_js(name, text)
-    write_gz(name, text)
 
 
 def main() -> None:
     patch_model()
     patch_model_export()
     patch_page()
-    patch_form()
-    print("Factory VPN single-active + complete NetBird profile semantics patched")
+    check_native_form_source()
+    print("Factory VPN exclusivity patched; NetBird stock-component form preserved")
 
 
 if __name__ == "__main__":
