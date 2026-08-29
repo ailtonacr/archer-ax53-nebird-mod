@@ -10,7 +10,7 @@
 # The large NetBird ELF is NOT embedded in rootfs and NOT stored on any MTD/UBI
 # partition; it is downloaded over HTTPS and materialized into /tmp at runtime.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
@@ -194,14 +194,17 @@ grep -q 'description' "$R/usr/lib/lua/luci/model/netbird.lua" || {
   echo "Error: NetBird profile description persistence missing" >&2; exit 1;
 }
 NB_FORM_JS="$(zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz")"
-printf '%s' "$NB_FORM_JS" | grep -Fq '.su-modal-mask,.su-dialog,dialog' || {
-  echo "Error: TP-Link modal-aware native Save selector missing from NetBird form" >&2; exit 1;
+printf '%s' "$NB_FORM_JS" | grep -Fq 'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })' || {
+  echo "Error: NetBird subform does not expose TP-Link native isChanged contract" >&2; exit 1;
 }
-printf '%s' "$NB_FORM_JS" | grep -Fq 'querySelectorAll("button,[role=button],input[type=button],input[type=submit]")' || {
-  echo "Error: robust native Save control selector missing from NetBird form" >&2; exit 1;
+printf '%s' "$NB_FORM_JS" | grep -Fq 'throw new Error(error.value)' || {
+  echo "Error: NetBird validate() does not reject invalid state like stock forms" >&2; exit 1;
 }
-printf '%s' "$NB_FORM_JS" | grep -Fq 'data-netbird-dirty' || {
-  echo "Error: NetBird dirty-state marker missing from native Save integration" >&2; exit 1;
-}
+for legacy in 'syncNativeSaveButton' 'data-netbird-dirty' '__netbirdSaveListener' 'stopImmediatePropagation' 'netbirdSaveSyncTimer'; do
+  if printf '%s' "$NB_FORM_JS" | grep -Fq "$legacy"; then
+    echo "Error: legacy NetBird Save interception leaked into final form: $legacy" >&2
+    exit 1
+  fi
+done
 
 echo "### NetBird VPN Client integration complete ###"
