@@ -63,7 +63,12 @@ def check_auxiliary_boundary() -> None:
 def check_runtime_library() -> None:
     base = text("src/init/netbird.sh")
     runtime = text("src/init/netbird-runtime.sh")
-    require(base, 'NB_BIN="/tmp/netbird"', 'NB_CONFIG_DIR="/tp_data/netbird"', 'nb_materialize()', 'nb_payload_status()')
+    require(base,
+        'NB_BIN="/tmp/netbird"', 'NB_CONFIG_DIR="/tp_data/netbird"',
+        'nb_materialize()', 'nb_payload_status()', 'nb_daemon_start()', 'nb_daemon_stop()',
+        'nb_fw_access()', 'nb_fw_block()')
+    for token in ["/sbin/netbird-ctl", "nb_up_flags()", "nb_start()", "nb_stop()", "nb_enroll()", "nb_clean()"]:
+        assert token not in base, f"base library leaked lifecycle/controller implementation: {token}"
     require(runtime,
         'nb_up_flags()', '"--wireguard-port=${wg_port}"', 'nb_daemon_ping()', 'nb_status_json()',
         'nb_runtime_is_connected()', 'management="$(printf', 'grep -q \'"connected":true\'',
@@ -115,7 +120,9 @@ def check_build_pipeline() -> None:
         'cmp -s "$NATIVE_RUNTIME" "$R/lib/netbird/netbird-runtime.sh"',
         'if grep -q \'/sbin/netbird-ctl\' "$R/lib/netifd/proto/netbird.sh"',
         'rm -f "$R/etc/rc.d/S99netbird"', 'if [ "$vpntype" != "netbirdvpn" ]; then',
-        'python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"')
+        'python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"',
+        'const existing = !!(value && (value.key || value.id))',
+        'const creating = ref(true)')
     require(verifier,
         'EXPECTED_HEADER = bytes.fromhex("1b4c75615100010404040804")', 'OP_SETGLOBAL = 2',
         '"VPN_TBL"', '"VPN_CFG_TBL"', '"VPN_TYPE_TBL"', '"VPN_TYPE_NAME_TBL"',
