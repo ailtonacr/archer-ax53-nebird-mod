@@ -138,14 +138,32 @@ def patch_form() -> None:
     new_validate = 'const s = draft.value || settings.value || {};\n      if (!String(s.description || "").trim()) {\n        error.value = "Informe uma descrição para o perfil.";\n        return false;\n      }\n      if (!validHostname(s.hostname)) {\n        error.value = "Hostname inválido. Use apenas letras, números, ponto, hífen ou sublinhado (máx. 64 caracteres).";\n        return false;\n      }\n      if (!validWireGuardPort(s.wireguard_port)) {\n        error.value = "Informe uma porta WireGuard entre 1 e 65535.";\n        return false;\n      }\n      if (!validManagementUrl(s.management_url)) {'
     text = replace_once(text, old_validate, new_validate, "profile metadata validation")
 
-    old_fields = 'const serverFields = [field("URL de gerenciamento", _h("input", {'
-    new_fields = 'const serverFields = [field("Descrição", _h("input", {\n        type: "text", value: s.description || "", disabled: props.disabled || busy.value,\n        class: "netbird-input", maxlength: "64", onInput: function (ev) { updateDraft("description", ev.target.value); },\n      })), field("URL de gerenciamento", _h("input", {\n        type: "text", value: s.management_url || "", disabled: props.disabled || busy.value,\n        class: "netbird-input", onInput: function (ev) { updateDraft("management_url", ev.target.value); },\n      })), field("Hostname do peer", _h("input", {\n        type: "text", value: s.hostname || "", disabled: props.disabled || busy.value,\n        class: "netbird-input", maxlength: "64", placeholder: "Ex.: archer-ax53",\n        onInput: function (ev) { updateDraft("hostname", ev.target.value); },\n      })), field("Porta WireGuard", _h("input", {\n        type: "number", value: s.wireguard_port || "51820", min: "1", max: "65535",\n        disabled: props.disabled || busy.value, class: "netbird-input",\n        onInput: function (ev) { updateDraft("wireguard_port", ev.target.value); },\n      }))];\n\n      const _netbirdLegacyServerFieldSentinel = false;\n      if (_netbirdLegacyServerFieldSentinel) field("URL de gerenciamento", _h("input", {'
+    old_fields = '''const serverFields = [field("URL de gerenciamento", _h("input", {
+        type: "text", value: s.management_url || "", disabled: props.disabled || busy.value,
+        class: "netbird-input", onInput: function (ev) { updateDraft("management_url", ev.target.value); },
+      }))];'''
+    new_fields = '''const serverFields = [
+        field("Descrição", _h("input", {
+          type: "text", value: s.description || "", disabled: props.disabled || busy.value,
+          class: "netbird-input", maxlength: "64",
+          onInput: function (ev) { updateDraft("description", ev.target.value); },
+        })),
+        field("URL de gerenciamento", _h("input", {
+          type: "text", value: s.management_url || "", disabled: props.disabled || busy.value,
+          class: "netbird-input", onInput: function (ev) { updateDraft("management_url", ev.target.value); },
+        })),
+        field("Hostname do peer", _h("input", {
+          type: "text", value: s.hostname || "", disabled: props.disabled || busy.value,
+          class: "netbird-input", maxlength: "64", placeholder: "Ex.: archer-ax53",
+          onInput: function (ev) { updateDraft("hostname", ev.target.value); },
+        })),
+        field("Porta WireGuard", _h("input", {
+          type: "number", value: s.wireguard_port || "51820", min: "1", max: "65535",
+          disabled: props.disabled || busy.value, class: "netbird-input",
+          onInput: function (ev) { updateDraft("wireguard_port", ev.target.value); },
+        })),
+      ];'''
     text = replace_once(text, old_fields, new_fields, "advanced profile fields")
-    # The replacement above deliberately consumes the original URL field body by
-    # wrapping it in an unreachable sentinel. Remove that old body cleanly so the
-    # generated source remains readable and contains each field only once.
-    legacy_tail = '\n        type: "text", value: s.management_url || "", disabled: props.disabled || busy.value,\n        class: "netbird-input", onInput: function (ev) { updateDraft("management_url", ev.target.value); },\n      }))];'
-    text = text.replace('      if (_netbirdLegacyServerFieldSentinel) field("URL de gerenciamento", _h("input", {' + legacy_tail, '', 1)
 
     check_js(name, text)
     write_gz(name, text)
