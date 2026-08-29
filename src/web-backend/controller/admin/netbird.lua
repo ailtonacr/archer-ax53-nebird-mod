@@ -252,10 +252,10 @@ end
 -- Runtime/identity cleanup only. The stock /admin/vpn remove operation owns the
 -- actual vpn/server record; the frontend invokes this after that removal.
 local function op_profile_delete()
-    local stop_out, stop_rc = model.control("stop")
-    if stop_rc ~= 0 then
-        return error_reply("delete_failed", "failed to stop NetBird before identity cleanup: " .. (stop_out or "stop failed"):gsub("%s+$", ""))
-    end
+    -- netbird-ctl clean calls nb_clean() -> nb_stop() directly and therefore
+    -- does not materialize/download the payload merely to delete a never-started
+    -- profile. Calling the separate "stop" command here would go through run()
+    -- and could trigger materialization before cleanup.
     local clean_out, clean_rc = model.control("clean")
     if clean_rc ~= 0 then
         return error_reply("delete_failed", "failed to clean NetBird identity: " .. (clean_out or "clean failed"):gsub("%s+$", ""))
