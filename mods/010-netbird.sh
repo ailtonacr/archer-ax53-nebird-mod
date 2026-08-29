@@ -31,6 +31,7 @@ RUNTIME_SRC="$PROJECT_ROOT/src/init"
 R="$ROOTFS_DIR"
 WEB_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_web.py"
 FACTORY_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_factory_semantics.py"
+FORM_STATE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_form_state.py"
 NB_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird.lua"
 NB_MODEL="$PROJECT_ROOT/src/web-backend/model/netbird.lua"
 
@@ -97,10 +98,12 @@ is_stock_vpn "$VPN_CONTROLLER" || { echo "Error: TP-Link VPN controller restorat
 echo "[3/8] patching VPN Client frontend ..."
 [ -f "$WEB_PATCHER" ] || { echo "Error: missing $WEB_PATCHER" >&2; exit 1; }
 [ -f "$FACTORY_PATCHER" ] || { echo "Error: missing $FACTORY_PATCHER" >&2; exit 1; }
+[ -f "$FORM_STATE_PATCHER" ] || { echo "Error: missing $FORM_STATE_PATCHER" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required for frontend patching" >&2; exit 1; }
 command -v node >/dev/null 2>&1 || { echo "Error: node is required for frontend syntax validation" >&2; exit 1; }
 python3 "$WEB_PATCHER" "$R"
 python3 "$FACTORY_PATCHER" "$R"
+python3 "$FORM_STATE_PATCHER" "$R"
 
 echo "[4/8] adding CIDR-scoped fw_netbird_access/block ..."
 if ! grep -q "# NetBird v2 CIDR-scoped" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
