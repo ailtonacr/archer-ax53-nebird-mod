@@ -66,8 +66,8 @@ firmware: $(TARGET) test-netbird
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -q "Porta WireGuard" || { echo "Error: editable NetBird WireGuard port field missing" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "profile_delete" || { echo "Error: dedicated NetBird delete bridge missing from model bundle" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "/admin/netbird" || { echo "Error: dedicated NetBird API bridge missing from model bundle" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq 'e==="netbird"?a.request("/admin/netbird",{operation:"connected_status"}' || { echo "Error: native NetBird connected-status model bridge missing" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq 'a.request(y,{operation:"connected_status",key:e}' || { echo "Error: stock connected-status path was not preserved" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "e===\"netbird\"?a.request(\"/admin/netbird\",{operation:\"connected_status\"}" || { echo "Error: native NetBird connected-status model bridge missing" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "a.request(y,{operation:\"connected_status\",key:e}" || { echo "Error: stock connected-status path was not preserved" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -q "nbStopIfEnabled" || { echo "Error: stock-to-NetBird single-active guard missing" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -q "profileExists" || { echo "Error: NetBird synthetic list bridge missing from VPN page bundle" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -q "__nbActiveStockVpn" || { echo "Error: active stock VPN tracking missing" >&2; exit 1; }; \
