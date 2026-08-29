@@ -17,6 +17,7 @@ CTL      = "/sbin/netbird-ctl"
 KEYS = {
     enable                = { kind = "bool", default = "0" },
     enrolled              = { kind = "bool", default = "0", readonly = true },
+    description           = { kind = "text", default = "NetBird" },
     management_url        = { kind = "url",  default = "https://netbird.ailton.dev.br" },
     hostname              = { kind = "name", default = "" },
     disable_dns           = { kind = "bool", default = "1" },
@@ -50,13 +51,8 @@ local function valid_bool(v) return v == "0" or v == "1" end
 local function valid_url(v)
     if v == nil or v == "" then return true end
     if #v > 2048 or v:find("%s") then return false end
-
-    -- Lua patterns are not regular expressions: repetition modifiers cannot be
-    -- used to make capture groups optional. Parse the URL in simple stages so
-    -- ordinary values such as https://netbird.ailton.dev.br are accepted.
     local scheme, authority = v:match("^(https?)://([^/]+)")
     if not scheme or not authority or authority == "" then return false end
-
     local host, port = authority:match("^([^:]+):(%d+)$")
     if not host then
         host = authority
@@ -69,12 +65,12 @@ local function valid_url(v)
         local n = tonumber(port)
         if not n or n < 1 or n > 65535 then return false end
     end
-
     local prefix = scheme .. "://" .. authority
     local rest = v:sub(#prefix + 1)
     return rest == "" or rest:sub(1, 1) == "/"
 end
 local function valid_name(v) return v ~= nil and #v <= 64 and v:match("^[%w%.%-_]*$") ~= nil end
+local function valid_text(v) return v ~= nil and #v <= 64 and not v:find("[%c]") end
 local function valid_cidr(v)
     if v == nil or v == "" then return true end
     local ip, plen = v:match("^(%d+%.%d+%.%d+%.%d+)/(%d+)$")
@@ -95,6 +91,7 @@ local function sanitize(cand, allow_readonly)
                 ok = valid_bool(v)
             elseif spec.kind == "url" then v = tostring(v or ""); ok = valid_url(v)
             elseif spec.kind == "name" then v = tostring(v or ""); ok = valid_name(v)
+            elseif spec.kind == "text" then v = tostring(v or ""); ok = valid_text(v)
             elseif spec.kind == "cidr" then v = tostring(v or ""); ok = valid_cidr(v)
             elseif spec.kind == "int" then ok = valid_int(v, 1, 65535); if ok then v = tostring(v) end end
             if not ok then return nil, "invalid value for " .. k end
@@ -124,7 +121,6 @@ local function write_settings(cur)
     local lines = {}
     for k, spec in pairs(KEYS) do lines[#lines + 1] = k .. "=" .. (cur[k] or spec.default) end
     fs.mkdir("/tp_data/netbird")
-    -- This TP-Link nixio binding accepts chmod modes as strings, not integers.
     nixio.fs.chmod("/tp_data/netbird", "0700")
     if not fs.writefile(SETTINGS, table.concat(lines, "\n") .. "\n") then return nil, "failed to write settings" end
     nixio.fs.chmod(SETTINGS, "0600")
