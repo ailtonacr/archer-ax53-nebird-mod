@@ -13,8 +13,9 @@ NATIVE_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird_native
 NATIVE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_native_crud.py"
 BYTECODE_VERIFIER="$PROJECT_ROOT/scripts/verify-tplink-vpn-bytecode.py"
 VPN_CONTROLLER="$R/usr/lib/lua/luci/controller/admin/vpn.lua"
+VPN_CORE="$R/lib/vpn/vpn_core.sh"
 
-for f in "$NATIVE_MODEL" "$NATIVE_CONTROLLER" "$NATIVE_PATCHER" "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"; do
+for f in "$NATIVE_MODEL" "$NATIVE_CONTROLLER" "$NATIVE_PATCHER" "$BYTECODE_VERIFIER" "$VPN_CONTROLLER" "$VPN_CORE"; do
   [ -f "$f" ] || { echo "Error: missing native NetBird input: $f" >&2; exit 1; }
 done
 
@@ -39,6 +40,40 @@ python3 "$NATIVE_PATCHER" "$R"
 # the S99 autostart symlink installed by the historical hybrid integration.
 rm -f "$R/etc/rc.d/S99netbird"
 
+# TP-Link acceleration handlers only know the stock PPTP/L2TP/OpenVPN/WireGuard
+# families. NetBird manages wt0/userspace networking itself, so passing the new
+# vpntype token to those vendor acceleration hooks is both unnecessary and an
+# undefined contract. Preserve the exact stock calls for every other type and
+# skip them only for netbirdvpn.
+python3 - "$VPN_CORE" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+old = '''\t#init accelskip rule
+\tfw vpnc_access_accel_handle $vpntype
+\t
+\t#init accelskip rule
+\tfw vpnc_accelskip_add $vpntype
+'''
+new = '''\t# NetBird is a userspace/no-device netifd protocol and does not use the
+\t# vendor acceleration hooks for PPTP/L2TP/OpenVPN/WireGuard.
+\tif [ "$vpntype" != "netbirdvpn" ]; then
+\t\t#init accelskip rule
+\t\tfw vpnc_access_accel_handle $vpntype
+\t\t
+\t\t#init accelskip rule
+\t\tfw vpnc_accelskip_add $vpntype
+\tfi
+'''
+if new not in text:
+    if text.count(old) != 1:
+        raise SystemExit("Error: stock vpn_core acceleration block not found exactly once")
+    text = text.replace(old, new, 1)
+    path.write_text(text)
+PY
+
 # Structural checks: real stock registries are extended, not replaced.
 grep -q 'TYPE = "netbirdvpn"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'TYPE_ID = "5"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
@@ -49,6 +84,7 @@ grep -q 'vpn.VPN_TYPE_TBL\[TYPE\] = TYPE_ID' "$R/usr/lib/lua/luci/model/netbird_
 grep -q 'vpn.VPN_TYPE_NAME_TBL\[TYPE\] = TYPE_NAME' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'vpn.VPN_TBL\[TYPE\] = schema' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'native.install()' "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua"
+grep -Fq 'if [ "$vpntype" != "netbirdvpn" ]; then' "$VPN_CORE"
 
 test ! -e "$R/etc/rc.d/S99netbird" || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }
 
