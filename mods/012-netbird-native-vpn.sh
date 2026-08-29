@@ -11,11 +11,12 @@ case "$R" in /*) ;; *) R="$PROJECT_ROOT/$R" ;; esac
 NATIVE_MODEL="$PROJECT_ROOT/src/web-backend/model/netbird_vpn_native.lua"
 NATIVE_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird_native.lua"
 NATIVE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_native_crud.py"
+NATIVE_RUNTIME="$PROJECT_ROOT/src/init/netbird-runtime.sh"
 BYTECODE_VERIFIER="$PROJECT_ROOT/scripts/verify-tplink-vpn-bytecode.py"
 VPN_CONTROLLER="$R/usr/lib/lua/luci/controller/admin/vpn.lua"
 VPN_CORE="$R/lib/vpn/vpn_core.sh"
 
-for f in "$NATIVE_MODEL" "$NATIVE_CONTROLLER" "$NATIVE_PATCHER" "$BYTECODE_VERIFIER" "$VPN_CONTROLLER" "$VPN_CORE"; do
+for f in "$NATIVE_MODEL" "$NATIVE_CONTROLLER" "$NATIVE_PATCHER" "$NATIVE_RUNTIME" "$BYTECODE_VERIFIER" "$VPN_CONTROLLER" "$VPN_CORE"; do
   [ -f "$f" ] || { echo "Error: missing native NetBird input: $f" >&2; exit 1; }
 done
 
@@ -24,10 +25,13 @@ done
 # trusting only the Lua magic header or source-level assumptions.
 python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"
 
-mkdir -p "$R/usr/lib/lua/luci/model" "$R/usr/lib/lua/luci/controller/admin"
+mkdir -p "$R/usr/lib/lua/luci/model" "$R/usr/lib/lua/luci/controller/admin" "$R/lib/netbird"
 cp "$NATIVE_MODEL" "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 cp "$NATIVE_CONTROLLER" "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua"
-chmod 0644 "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua" "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua"
+cp "$NATIVE_RUNTIME" "$R/lib/netbird/netbird-runtime.sh"
+chmod 0644 "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua" \
+    "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua" \
+    "$R/lib/netbird/netbird-runtime.sh"
 
 if command -v luac >/dev/null 2>&1; then
   luac -p "$NATIVE_MODEL" "$NATIVE_CONTROLLER"
@@ -36,7 +40,7 @@ fi
 python3 "$NATIVE_PATCHER" "$R"
 
 # Native lifecycle ownership: vpnc/netifd is the only normal boot/start path.
-# Keep /etc/init.d/netbird as a manual compatibility/recovery command, but remove
+# Keep /etc/init.d/netbird as a manual compatibility/recovery wrapper, but remove
 # the S99 autostart symlink installed by the historical hybrid integration.
 rm -f "$R/etc/rc.d/S99netbird"
 
@@ -85,6 +89,18 @@ grep -q 'vpn.VPN_TYPE_NAME_TBL\[TYPE\] = TYPE_NAME' "$R/usr/lib/lua/luci/model/n
 grep -q 'vpn.VPN_TBL\[TYPE\] = schema' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'native.install()' "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua"
 grep -Fq 'if [ "$vpntype" != "netbirdvpn" ]; then' "$VPN_CORE"
+
+# Native runtime invariants: a single flag builder, direct netifd -> library
+# ownership, and no controller recursion from the protocol handler.
+cmp -s "$NATIVE_RUNTIME" "$R/lib/netbird/netbird-runtime.sh" || { echo "Error: packaged native NetBird runtime drifted" >&2; exit 1; }
+grep -q '^nb_runtime_connect()' "$R/lib/netbird/netbird-runtime.sh"
+grep -q '^nb_runtime_is_connected()' "$R/lib/netbird/netbird-runtime.sh"
+grep -q -- '--wireguard-port=' "$R/lib/netbird/netbird-runtime.sh"
+grep -q 'nb_runtime_connect' "$R/lib/netifd/proto/netbird.sh"
+if grep -q '/sbin/netbird-ctl' "$R/lib/netifd/proto/netbird.sh"; then
+  echo "Error: netifd NetBird protocol still depends on netbird-ctl" >&2
+  exit 1
+fi
 
 test ! -e "$R/etc/rc.d/S99netbird" || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }
 
