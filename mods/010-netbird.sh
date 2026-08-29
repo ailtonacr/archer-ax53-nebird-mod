@@ -193,8 +193,15 @@ grep -q 'profile_delete' "$R/usr/lib/lua/luci/controller/admin/netbird.lua" || {
 grep -q 'description' "$R/usr/lib/lua/luci/model/netbird.lua" || {
   echo "Error: NetBird profile description persistence missing" >&2; exit 1;
 }
-zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -q 'querySelectorAll("button,\[role=button\]")' || {
-  echo "Error: robust native Save selector missing from NetBird form" >&2; exit 1;
+NB_FORM_JS="$(zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz")"
+printf '%s' "$NB_FORM_JS" | grep -Fq '.su-modal-mask,.su-dialog,dialog' || {
+  echo "Error: TP-Link modal-aware native Save selector missing from NetBird form" >&2; exit 1;
+}
+printf '%s' "$NB_FORM_JS" | grep -Fq 'querySelectorAll("button,[role=button],input[type=button],input[type=submit]")' || {
+  echo "Error: robust native Save control selector missing from NetBird form" >&2; exit 1;
+}
+printf '%s' "$NB_FORM_JS" | grep -Fq 'data-netbird-dirty' || {
+  echo "Error: NetBird dirty-state marker missing from native Save integration" >&2; exit 1;
 }
 
 echo "### NetBird VPN Client integration complete ###"
