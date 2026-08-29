@@ -47,14 +47,14 @@ nb_fw_clear_priority() {
     nb_fw_priority_values
     [ -n "$NB_FW_CIDR" ] || return 0
     while iptables -D FORWARD -i wt0 -o "$NB_FW_HOMEIF" -d "$NB_FW_CIDR" -j ACCEPT 2>/dev/null; do :; done
+    # Remove both the old broad TP-Link return rule and our narrowed stateful
+    # return rule so repeated starts cannot accumulate either form.
+    while iptables -D FORWARD -i "$NB_FW_HOMEIF" -o wt0 -s "$NB_FW_CIDR" -j ACCEPT 2>/dev/null; do :; done
     while iptables -D FORWARD -i "$NB_FW_HOMEIF" -o wt0 -s "$NB_FW_CIDR" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do :; done
     while iptables -t nat -D POSTROUTING -o "$NB_FW_HOMEIF" -s 100.64.0.0/10 -d "$NB_FW_CIDR" -j MASQUERADE 2>/dev/null; do :; done
 }
 
 nb_fw_prioritize_lan() {
-    # Always clear the current CIDR's previous priority rules first. This keeps
-    # repeated start/restart idempotent and makes disabling LAN routing remove
-    # the privileged path instead of leaving stale ACCEPT/NAT entries behind.
     nb_fw_clear_priority
     [ "$(nb_get "$NB_SETTINGS_FILE" advertise_lan "0")" = "1" ] || return 0
     nb_fw_priority_values
