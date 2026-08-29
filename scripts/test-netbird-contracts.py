@@ -36,6 +36,7 @@ def check_native_registry() -> None:
         'vpn.VPN_TYPE_TBL[TYPE] = TYPE_ID',
         'vpn.VPN_TYPE_NAME_TBL[TYPE] = TYPE_NAME',
         'local function management_host(url)',
+        'nb_model.get_settings',
         'server = server',
         'connectable = cfg.connect or "1"',
         'nb_model.set_settings(settings)',
@@ -111,6 +112,10 @@ def check_build_pipeline() -> None:
         'new URL(n).hostname',
         'synthetic NetBird list bridge still present',
         'rm -f "$R/etc/rc.d/S99netbird"',
+        'if [ "$vpntype" != "netbirdvpn" ]; then',
+        'fw vpnc_access_accel_handle $vpntype',
+        'fw vpnc_accelskip_add $vpntype',
+        'stock vpn_core acceleration block not found exactly once',
     )
     require(
         finalizer,
@@ -135,7 +140,8 @@ def check_build_pipeline() -> None:
     )
     require(
         makefile,
-        'python3 -m py_compile src/web/patchnetbird_native_crud.py',
+        'python3 -m py_compile src/web/patchnetbird_native_crud.py scripts/verify-tplink-vpn-bytecode.py',
+        'python3 scripts/verify-tplink-vpn-bytecode.py rootfs/usr/lib/lua/luci/controller/admin/vpn.lua',
         'native NetBird VPN type registration missing',
         'native NetBird VPN type id is not 5',
         'VPN_TYPE_TBL NetBird registration missing',
@@ -143,6 +149,7 @@ def check_build_pipeline() -> None:
         'VPN_TBL NetBird schema registration missing',
         'stock list/add/modify/toggle/delete/connected-status path',
         'cmp -s src/init/netbird-proto.sh rootfs/lib/netifd/proto/netbird.sh',
+        'standalone NetBird boot lifecycle still enabled',
     )
 
 
