@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Execute the native frontend finalizer against an isolated rootfs fixture.
-
-The component source is intentionally still the historical/hybrid input used by
-010-netbird.sh. This test validates the artifact contract after 012 finalizes it,
-which is the code that actually ships in firmware.
-"""
+"""Execute the native frontend finalizer against an isolated rootfs fixture."""
 from __future__ import annotations
 
 import gzip
@@ -54,10 +49,14 @@ def main() -> int:
             'e.Netbird="netbirdvpn"',
             'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}',
             'new URL(n).hostname',
-            'type: "netbirdvpn", proto: "netbird"',
             'value.type === "netbirdvpn"',
             'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}',
             'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete()}',
+            'stockComponent(this, "su-form")',
+            'stockComponent(this, "su-form-item")',
+            'stockComponent(this, "su-input")',
+            'stockComponent(this, "su-checkbox")',
+            'stockComponent(this, "su-button")',
         ]
         for token in required:
             assert token in combined, f"final native frontend missing {token!r}"
@@ -68,19 +67,18 @@ def main() -> int:
             'e==="netbird"?a.request("/admin/netbird",{operation:"connected_status"}',
             'e==="netbird"&&await nbDelete()',
             'new URL(n).host}',
+            "NETBIRD_CSS",
+            'type: "checkbox"',
+            'class: "netbird-input"',
         ]
         for token in forbidden:
-            assert token not in combined, f"hybrid frontend bridge leaked: {token!r}"
+            assert token not in combined, f"hybrid/custom frontend bridge leaked: {token!r}"
 
         for name in FILES:
             body = read_gz(js / name)
-            subprocess.run(
-                ["node", "--input-type=module", "--check"],
-                input=body.encode(),
-                check=True,
-            )
+            subprocess.run(["node", "--input-type=module", "--check"], input=body.encode(), check=True)
 
-    print("netbird final native frontend migration contract ok")
+    print("netbird final stock-component/native CRUD frontend contract ok")
     return 0
 
 
