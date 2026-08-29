@@ -35,6 +35,9 @@ def check_controller():
         'wireguard_port = "scalar"',
         'elseif op == "settings_set"',
         'elseif op == "profile_delete"',
+        'elseif op == "connected_status"',
+        'local function op_connected_status()',
+        'return reply(model.connected_status())',
         'local function op_profile_delete()',
         'nixio.fs.unlink(SETTINGS)',
         'nixio.fs.unlink(PROFILE_CONFIG)',
@@ -61,6 +64,11 @@ def check_model():
         'elseif spec.kind == "text"',
         'elseif spec.kind == "name"',
         'elseif spec.kind == "int"',
+        'local function management_host(url)',
+        'function connected_status()',
+        'ping -c 1 -W 1',
+        'address = host',
+        'dns = ""',
     )
     assert '/profiles/' not in model
 
@@ -71,6 +79,10 @@ def check_frontend_bridge():
         patcher,
         'operation:"settings_set"',
         'operation:"profile_delete"',
+        'STOCK_CONNECTED_STATUS =',
+        'NATIVE_CONNECTED_STATUS =',
+        'e==="netbird"?a.request("/admin/netbird",{operation:"connected_status"}',
+        'a.request(y,{operation:"connected_status",key:e}',
         'DEDICATED_UPDATE =',
         'DEDICATED_DELETE =',
         'DEDICATED_LIST =',
@@ -83,6 +95,7 @@ def check_frontend_bridge():
     )
     assert 'const t=e.enable===!0||e.enable==="on"||e.enable==="1"' in patcher
     assert 'text = text.replace(R_NATIVE, R_MARKER)' in patcher
+    assert 'text = text.replace(STOCK_CONNECTED_STATUS, NATIVE_CONNECTED_STATUS)' in patcher
 
 
 def check_factory_semantics():
@@ -229,6 +242,9 @@ def check_makefile_verifier():
         'VPN controller is not untouched TP-Link bytecode',
         'dedicated NetBird profile delete operation missing',
         'dedicated NetBird settings operation missing',
+        'dedicated NetBird connected-status operation missing',
+        'native NetBird connected-status model bridge missing',
+        'ok native TP-Link connected-status tooltip contract',
         'ok untouched TP-Link VPN controller bytecode',
         '$(MAKE) -C vendor/mtd-utils',
         '$(MAKE) -C vendor/squashfs',
@@ -281,7 +297,7 @@ def main():
     check_makefile_verifier()
     check_runtime_source_canonicalization()
     check_form_boundary()
-    print("netbird factory-single-active/delete/native-form/singleton-add/hostname/port/firewall contracts ok")
+    print("netbird factory-single-active/delete/native-form/connected-status/singleton-add/hostname/port/firewall contracts ok")
 
 
 if __name__ == "__main__":
