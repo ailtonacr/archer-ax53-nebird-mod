@@ -32,6 +32,7 @@ R="$ROOTFS_DIR"
 WEB_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_web.py"
 FACTORY_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_factory_semantics.py"
 FORM_STATE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_form_state.py"
+NATIVE_SAVE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_native_save.py"
 NB_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird.lua"
 NB_MODEL="$PROJECT_ROOT/src/web-backend/model/netbird.lua"
 
@@ -99,11 +100,13 @@ echo "[3/8] patching VPN Client frontend ..."
 [ -f "$WEB_PATCHER" ] || { echo "Error: missing $WEB_PATCHER" >&2; exit 1; }
 [ -f "$FACTORY_PATCHER" ] || { echo "Error: missing $FACTORY_PATCHER" >&2; exit 1; }
 [ -f "$FORM_STATE_PATCHER" ] || { echo "Error: missing $FORM_STATE_PATCHER" >&2; exit 1; }
+[ -f "$NATIVE_SAVE_PATCHER" ] || { echo "Error: missing $NATIVE_SAVE_PATCHER" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required for frontend patching" >&2; exit 1; }
 command -v node >/dev/null 2>&1 || { echo "Error: node is required for frontend syntax validation" >&2; exit 1; }
 python3 "$WEB_PATCHER" "$R"
 python3 "$FACTORY_PATCHER" "$R"
 python3 "$FORM_STATE_PATCHER" "$R"
+python3 "$NATIVE_SAVE_PATCHER" "$R"
 
 echo "[4/8] adding CIDR-scoped fw_netbird_access/block ..."
 if ! grep -q "# NetBird v2 CIDR-scoped" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
@@ -189,6 +192,9 @@ grep -q 'profile_delete' "$R/usr/lib/lua/luci/controller/admin/netbird.lua" || {
 }
 grep -q 'description' "$R/usr/lib/lua/luci/model/netbird.lua" || {
   echo "Error: NetBird profile description persistence missing" >&2; exit 1;
+}
+zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -q 'querySelectorAll("button,\[role=button\]")' || {
+  echo "Error: robust native Save selector missing from NetBird form" >&2; exit 1;
 }
 
 echo "### NetBird VPN Client integration complete ###"
