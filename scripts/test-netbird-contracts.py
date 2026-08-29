@@ -10,6 +10,7 @@ NB_CONTROLLER = ROOT / "src/web-backend/controller/admin/netbird.lua"
 NB_MODEL = ROOT / "src/web-backend/model/netbird.lua"
 PATCHER = ROOT / "src/web/patchnetbird_web.py"
 FACTORY_PATCHER = ROOT / "src/web/patchnetbird_factory_semantics.py"
+FORM_STATE_PATCHER = ROOT / "src/web/patchnetbird_form_state.py"
 MOD = ROOT / "mods/010-netbird.sh"
 FORM = ROOT / "src/web/VpnServerNetbirdForm-NB.js"
 INIT = ROOT / "src/init/netbird.init"
@@ -49,6 +50,7 @@ def check_model():
     model = NB_MODEL.read_text()
     require(
         model,
+        'SETTINGS = "/tp_data/netbird/settings"',
         'description           = { kind = "text", default = "NetBird" }',
         'hostname              = { kind = "name", default = "" }',
         'wireguard_port        = { kind = "int",  default = "51820" }',
@@ -58,6 +60,10 @@ def check_model():
         'elseif spec.kind == "name"',
         'elseif spec.kind == "int"',
     )
+    # Current backend is intentionally a singleton. Until profile-scoped paths
+    # exist, the add form must refuse a second NetBird identity rather than
+    # overwrite this single settings/config/state tuple.
+    assert '/profiles/' not in model
 
 
 def check_frontend_bridge():
@@ -114,16 +120,38 @@ def check_factory_semantics():
     compact = 'name: "NetBird", des: "NetBird", description: "NetBird",'
     if compact in form:
         assert 'old_stock_compact' in factory
-    # The post-patcher must target the exact complete serverFields source block;
-    # this guards against another formatting mismatch during apply-mods.
     require(
         form,
         'const serverFields = [field("URL de gerenciamento", _h("input", {',
         'hostname: v.hostname !== undefined',
         'wireguard_port: v.wireguard_port !== undefined',
     )
+
+
+def check_form_state_semantics():
+    state = FORM_STATE_PATCHER.read_text()
+    require(
+        state,
+        'let netbirdSaveSyncTimer = null',
+        'function startDirtySaveSync()',
+        'setInterval(function ()',
+        'syncNativeSaveButton(true)',
+        'startDirtySaveSync();',
+        'const creating = ref(false)',
+        'creating.value && profileExists.value',
+        'Esta versão suporta um único perfil NetBird.',
+        'Já existe um perfil NetBird neste roteador.',
+        'draft.value.enrolled = "0"',
+        'draft.value.enable = "0"',
+        'creating.value ? {} : (settings.value || {})',
+        'stopDirtySaveSync()',
+    )
     mod = MOD.read_text()
-    require(mod, 'FACTORY_PATCHER=', 'python3 "$FACTORY_PATCHER" "$R"')
+    require(
+        mod,
+        'FORM_STATE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_form_state.py"',
+        'python3 "$FORM_STATE_PATCHER" "$R"',
+    )
 
 
 def check_boot_and_firewall():
@@ -219,12 +247,13 @@ def main():
     check_model()
     check_frontend_bridge()
     check_factory_semantics()
+    check_form_state_semantics()
     check_boot_and_firewall()
     check_stock_controller_restoration()
     check_makefile_verifier()
     check_runtime_source_canonicalization()
     check_form_boundary()
-    print("netbird factory-single-active/delete/description/hostname/port/firewall contracts ok")
+    print("netbird factory-single-active/delete/form-state/singleton-add/hostname/port/firewall contracts ok")
 
 
 if __name__ == "__main__":
