@@ -11,6 +11,8 @@ NB_MODEL = ROOT / "src/web-backend/model/netbird.lua"
 PATCHER = ROOT / "src/web/patchnetbird_web.py"
 FACTORY_PATCHER = ROOT / "src/web/patchnetbird_factory_semantics.py"
 FORM_STATE_PATCHER = ROOT / "src/web/patchnetbird_form_state.py"
+NATIVE_CONTRACT_PATCHER = ROOT / "src/web/patchnetbird_native_contract.py"
+NATIVE_SAVE_COMPAT = ROOT / "src/web/patchnetbird_native_save.py"
 MOD = ROOT / "mods/010-netbird.sh"
 FORM = ROOT / "src/web/VpnServerNetbirdForm-NB.js"
 INIT = ROOT / "src/init/netbird.init"
@@ -60,9 +62,6 @@ def check_model():
         'elseif spec.kind == "name"',
         'elseif spec.kind == "int"',
     )
-    # Current backend is intentionally a singleton. Until profile-scoped paths
-    # exist, the add form must refuse a second NetBird identity rather than
-    # overwrite this single settings/config/state tuple.
     assert '/profiles/' not in model
 
 
@@ -98,15 +97,12 @@ def check_factory_semantics():
         'nbEnabled(e)&&await nbDisableStockActive()',
         'name:s.description||"NetBird"',
         'description:s.description||"NetBird"',
-        'field("Descrição"',
         'field("Hostname do peer"',
         'field("Porta WireGuard"',
-        'updateDraft("description"',
         'updateDraft("hostname"',
         'updateDraft("wireguard_port"',
         'function validHostname(value)',
         'function validWireGuardPort(value)',
-        'Informe uma descrição para o perfil.',
         'Hostname inválido.',
         'Informe uma porta WireGuard entre 1 e 65535.',
         'nbStopIfEnabled as nbG',
@@ -117,9 +113,6 @@ def check_factory_semantics():
         'old_fields = \'\'\'const serverFields = [field("URL de gerenciamento"',
     )
     form = FORM.read_text()
-    compact = 'name: "NetBird", des: "NetBird", description: "NetBird",'
-    if compact in form:
-        assert 'old_stock_compact' in factory
     require(
         form,
         'const serverFields = [field("URL de gerenciamento", _h("input", {',
@@ -128,15 +121,10 @@ def check_factory_semantics():
     )
 
 
-def check_form_state_semantics():
+def check_singleton_add_semantics():
     state = FORM_STATE_PATCHER.read_text()
     require(
         state,
-        'let netbirdSaveSyncTimer = null',
-        'function startDirtySaveSync()',
-        'setInterval(function ()',
-        'syncNativeSaveButton(true)',
-        'startDirtySaveSync();',
         'const creating = ref(false)',
         'creating.value && profileExists.value',
         'Esta versão suporta um único perfil NetBird.',
@@ -144,13 +132,52 @@ def check_form_state_semantics():
         'draft.value.enrolled = "0"',
         'draft.value.enable = "0"',
         'creating.value ? {} : (settings.value || {})',
-        'stopDirtySaveSync()',
     )
     mod = MOD.read_text()
     require(
         mod,
         'FORM_STATE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_form_state.py"',
         'python3 "$FORM_STATE_PATCHER" "$R"',
+    )
+
+
+def check_native_form_contract():
+    native = NATIVE_CONTRACT_PATCHER.read_text()
+    compat = NATIVE_SAVE_COMPAT.read_text()
+    require(
+        native,
+        'baseFormRef.isChanged || subFormRef.isChanged',
+        'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
+        'throw new Error(error.value)',
+        'The stock base form owns description/type',
+        'legacy Save interception leaked',
+        'syncNativeSaveButton',
+        'netbirdSaveSyncTimer',
+        'data-netbird-dirty',
+        'stopImmediatePropagation',
+    )
+    require(
+        compat,
+        'strategy is retired',
+        'patchnetbird_native_contract.py',
+    )
+    assert 'addEventListener' not in compat
+    assert 'stopImmediatePropagation' not in compat
+
+    mod = MOD.read_text()
+    require(
+        mod,
+        'NetBird subform does not expose TP-Link native isChanged contract',
+        'NetBird validate() does not reject invalid state like stock forms',
+        'legacy NetBird Save interception leaked into final form',
+    )
+
+    makefile = MAKEFILE.read_text()
+    require(
+        makefile,
+        'native TP-Link NetBird isChanged contract missing',
+        'legacy NetBird Save interception remains in rootfs',
+        'ok native TP-Link form dirty/save contract',
     )
 
 
@@ -247,13 +274,14 @@ def main():
     check_model()
     check_frontend_bridge()
     check_factory_semantics()
-    check_form_state_semantics()
+    check_singleton_add_semantics()
+    check_native_form_contract()
     check_boot_and_firewall()
     check_stock_controller_restoration()
     check_makefile_verifier()
     check_runtime_source_canonicalization()
     check_form_boundary()
-    print("netbird factory-single-active/delete/form-state/singleton-add/hostname/port/firewall contracts ok")
+    print("netbird factory-single-active/delete/native-form/singleton-add/hostname/port/firewall contracts ok")
 
 
 if __name__ == "__main__":
