@@ -55,8 +55,9 @@ def main() -> int:
             'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}',
             'new URL(n).hostname',
             'type: "netbirdvpn", proto: "netbird"',
+            'value.type === "netbirdvpn"',
             'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}',
-            'e==="netbird"&&await nbDelete()',
+            'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete()}',
         ]
         for token in required:
             assert token in combined, f"final native frontend missing {token!r}"
@@ -65,12 +66,12 @@ def main() -> int:
             'a.value=_nb.concat(e)',
             'it.Netbird===i.type?await Nbs(i)',
             'e==="netbird"?a.request("/admin/netbird",{operation:"connected_status"}',
+            'e==="netbird"&&await nbDelete()',
             'new URL(n).host}',
         ]
         for token in forbidden:
             assert token not in combined, f"hybrid frontend bridge leaked: {token!r}"
 
-        # Final shipped JavaScript must still parse after all patch passes.
         for name in FILES:
             body = read_gz(js / name)
             subprocess.run(
