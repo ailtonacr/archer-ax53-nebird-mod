@@ -23,9 +23,11 @@ $(TARGET): $(SRCS)
 # Offline tests only. Deliberately no GitHub Actions: this target is run by the
 # local firmware build and can also be invoked explicitly during development.
 test-netbird:
+	sh -n src/init/netbird.sh src/init/netbird-runtime.sh src/init/netbird-ctl src/init/netbird-proto.sh src/init/netbird.init
 	node src/web/VpnServerNetbirdForm-NB.test.mjs
 	python3 scripts/test-netbird-contracts.py .
-	python3 -m py_compile src/web/patchnetbird_native_crud.py scripts/verify-tplink-vpn-bytecode.py
+	python3 scripts/test-netbird-native-frontend.py
+	python3 -m py_compile src/web/patchnetbird_native_crud.py scripts/verify-tplink-vpn-bytecode.py scripts/test-netbird-native-frontend.py
 
 firmware: $(TARGET) test-netbird
 	@bash -o pipefail -c 'set -e; \
@@ -60,14 +62,18 @@ firmware: $(TARGET) test-netbird
 		grep -q "native.install()" rootfs/usr/lib/lua/luci/controller/admin/netbird_native.lua || { echo "Error: native NetBird registry loader missing" >&2; exit 1; }; \
 		grep -q "settings_set" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: auxiliary NetBird settings operation missing" >&2; exit 1; }; \
 		grep -q "connected_status" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: auxiliary NetBird diagnostics endpoint missing" >&2; exit 1; }; \
+		grep -Fq "/etc/init.d/vpnc restart" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: UI restart bypasses native vpnc lifecycle" >&2; exit 1; }; \
 		cmp -s src/init/netbird.sh rootfs/lib/netbird/netbird.sh || { echo "Error: packaged netbird.sh drifted from canonical source" >&2; exit 1; }; \
+		cmp -s src/init/netbird-runtime.sh rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: packaged native runtime drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird-ctl rootfs/sbin/netbird-ctl || { echo "Error: packaged netbird-ctl drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird.init rootfs/etc/init.d/netbird || { echo "Error: packaged netbird init drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird-proto.sh rootfs/lib/netifd/proto/netbird.sh || { echo "Error: packaged netbird netifd handler drifted from canonical source" >&2; exit 1; }; \
 		grep -q "add_protocol netbird" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd NetBird protocol registration missing" >&2; exit 1; }; \
+		grep -q "nb_runtime_connect" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not call shared native runtime" >&2; exit 1; }; \
+		if grep -q "/sbin/netbird-ctl" rootfs/lib/netifd/proto/netbird.sh; then echo "Error: netifd still depends on netbird-ctl" >&2; exit 1; fi; \
 		test ! -e rootfs/etc/rc.d/S99netbird || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }; \
-		grep -q "nb_fw_prioritize_lan" rootfs/sbin/netbird-ctl || { echo "Error: prioritized LAN forwarding fix missing" >&2; exit 1; }; \
-		grep -q -- "--wireguard-port" rootfs/sbin/netbird-ctl || { echo "Error: WireGuard port is not applied to NetBird runtime" >&2; exit 1; }; \
+		grep -q "nb_fw_prioritize_lan" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: prioritized LAN forwarding helper missing" >&2; exit 1; }; \
+		grep -q -- "--wireguard-port" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: WireGuard port is not applied by canonical NetBird flag builder" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/update-store-DQkZxaRI.js.gz | grep -Fq "e.Netbird=\"netbirdvpn\"" || { echo "Error: frontend NetBird enum is not netbirdvpn" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "function f(e){return a.request(y,{operation:\"connected_status\",key:e},{preventSuccess:!0})}" || { echo "Error: NetBird connected-status is not using stock VPN endpoint" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "new URL(n).hostname" || { echo "Error: NetBird stock server field is not normalized to a pingable hostname" >&2; exit 1; }; \
@@ -82,8 +88,8 @@ firmware: $(TARGET) test-netbird
 		echo "    ok untouched TP-Link VPN controller bytecode + native registry extension"; \
 		echo "    ok NetBird native type netbirdvpn=5 / proto=netbird"; \
 		echo "    ok stock list/add/modify/toggle/delete/connected-status path"; \
-		echo "    ok netifd sole normal boot lifecycle owner"; \
-		echo "    ok canonical runtime sources + prioritized LAN forwarding"; \
+		echo "    ok vpnc/netifd sole normal lifecycle owner + shared runtime"; \
+		echo "    ok canonical runtime flags + prioritized LAN forwarding"; \
 		echo "    ok build identity: $$STAMPED_VERSION"; \
 		echo "=== [5/6] Repacking firmware ==="; \
 		rm -f "$(FIRMWARE_OUTPUT)"; \
