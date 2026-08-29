@@ -23,13 +23,16 @@ nb_bool_arg() {
 }
 
 nb_runtime_up_flags() {
+    local wg_port
+    wg_port="$(nb_get "$NB_SETTINGS_FILE" wireguard_port "$NB_DEFAULT_PORT")"
     printf '%s ' \
         "$(nb_bool_arg disable_dns --disable-dns 1)" \
         "$(nb_bool_arg disable_firewall --disable-firewall 1)" \
         "$(nb_bool_arg disable_client_routes --disable-client-routes 1)" \
         "$(nb_bool_arg disable_server_routes --disable-server-routes 1)" \
         "$(nb_bool_arg disable_ipv6 --disable-ipv6 1)" \
-        "$(nb_bool_arg network_monitor --network-monitor 0)"
+        "$(nb_bool_arg network_monitor --network-monitor 0)" \
+        "--wireguard-port=${wg_port}"
 }
 
 # NetBird v0.77.1 installs NETBIRD-RT-FWD-* and a terminal DROP on wt0 during
@@ -161,7 +164,7 @@ log)
 
 settings)
     nb_ensure_settings
-    sed -n 's/^\(enable\|enrolled\|management_url\|hostname\|disable_dns\|disable_firewall\|disable_client_routes\|disable_server_routes\|disable_ipv6\|network_monitor\|advertise_lan\|advertise_cidr\|wireguard_port\)=/\1=/p' \
+    sed -n 's/^\(description\|enable\|enrolled\|management_url\|hostname\|disable_dns\|disable_firewall\|disable_client_routes\|disable_server_routes\|disable_ipv6\|network_monitor\|advertise_lan\|advertise_cidr\|wireguard_port\)=/\1=/p' \
         "$NB_SETTINGS_FILE" 2>/dev/null
     ;;
 
