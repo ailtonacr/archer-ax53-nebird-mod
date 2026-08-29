@@ -71,6 +71,7 @@ firmware: $(TARGET) test-netbird
 		grep -q "add_protocol netbird" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd NetBird protocol registration missing" >&2; exit 1; }; \
 		grep -q "nb_runtime_connect" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not call shared native runtime" >&2; exit 1; }; \
 		if grep -q "/sbin/netbird-ctl" rootfs/lib/netifd/proto/netbird.sh; then echo "Error: netifd still depends on netbird-ctl" >&2; exit 1; fi; \
+		if grep -q "proto_set_available" rootfs/lib/netifd/proto/netbird.sh; then echo "Error: transient NetBird failure changes protocol availability" >&2; exit 1; fi; \
 		test ! -e rootfs/etc/rc.d/S99netbird || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }; \
 		grep -q "nb_fw_prioritize_lan" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: prioritized LAN forwarding helper missing" >&2; exit 1; }; \
 		grep -q -- "--wireguard-port" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: WireGuard port is not applied by canonical NetBird flag builder" >&2; exit 1; }; \
@@ -78,7 +79,10 @@ firmware: $(TARGET) test-netbird
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "function f(e){return a.request(y,{operation:\"connected_status\",key:e},{preventSuccess:!0})}" || { echo "Error: NetBird connected-status is not using stock VPN endpoint" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "new URL(n).hostname" || { echo "Error: NetBird stock server field is not normalized to a pingable hostname" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -Fq "i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}" || { echo "Error: VPN list is not sourced exclusively from stock endpoint" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "type: \"netbirdvpn\", proto: \"netbird\"" || { echo "Error: NetBird form does not serialize native type/proto" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "const existing = !!(value && (value.key || value.id))" || { echo "Error: NetBird Add/Edit is not keyed by persisted stock identity" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "const creating = ref(true)" || { echo "Error: NetBird Add form does not default to CREATE" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "stockComponent(this, \"su-form\")" || { echo "Error: NetBird form is not using stock TP-Link controls" >&2; exit 1; }; \
+		if zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "value.type === \"netbirdvpn\""; then echo "Error: NetBird Add/Edit still inferred from VPN type" >&2; exit 1; fi; \
 		if zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -Fq "a.value=_nb.concat(e)"; then echo "Error: synthetic NetBird list bridge remains" >&2; exit 1; fi; \
 		if zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "e===\"netbird\"?a.request(\"/admin/netbird\",{operation:\"connected_status\"}"; then echo "Error: dedicated NetBird connected-status bridge remains" >&2; exit 1; fi; \
 		if grep -q "NetBird adapter for TP-Link\|patch_dispatch_upvalues\|request_context" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua 2>/dev/null; then echo "Error: retired adapter leaked into stock VPN controller" >&2; exit 1; fi; \
@@ -89,6 +93,7 @@ firmware: $(TARGET) test-netbird
 		echo "    ok NetBird native type netbirdvpn=5 / proto=netbird"; \
 		echo "    ok stock list/add/modify/toggle/delete/connected-status path"; \
 		echo "    ok vpnc/netifd sole normal lifecycle owner + shared runtime"; \
+		echo "    ok key-based Add/Edit + stock TP-Link protocol subform"; \
 		echo "    ok canonical runtime flags + prioritized LAN forwarding"; \
 		echo "    ok build identity: $$STAMPED_VERSION"; \
 		echo "=== [5/6] Repacking firmware ==="; \
