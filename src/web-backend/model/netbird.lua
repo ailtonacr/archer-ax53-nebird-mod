@@ -79,7 +79,12 @@ local function valid_cidr(v)
     local p = tonumber(plen)
     return p ~= nil and p >= 0 and p <= 32
 end
-local function valid_int(v, lo, hi) local n = tonumber(v); return n ~= nil and n >= lo and n <= hi end
+local function valid_int(v, lo, hi)
+    local raw = tostring(v or "")
+    if not raw:match("^%d+$") then return false end
+    local n = tonumber(raw)
+    return n ~= nil and n >= lo and n <= hi
+end
 
 local function sanitize(cand, allow_readonly)
     local out = {}
@@ -109,6 +114,9 @@ local function merged_settings(cand)
     for k, spec in pairs(KEYS) do if cur[k] == nil then cur[k] = spec.default end end
     if cur.advertise_lan == "1" and cur.advertise_cidr == "" then
         return nil, "advertise_cidr required when LAN routing is enabled"
+    end
+    if cur.advertise_lan == "1" and cur.disable_server_routes ~= "0" then
+        return nil, "server routes must be enabled when LAN routing is enabled"
     end
     return cur
 end
