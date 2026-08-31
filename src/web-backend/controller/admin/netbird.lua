@@ -5,6 +5,8 @@
 -- only for NetBird-specific concerns that the generic VPN contract cannot own:
 -- enrollment, runtime diagnostics/logs/payload state, identity cleanup and a
 -- manual restart action that delegates back to the native vpnc/netifd lifecycle.
+-- It deliberately does not expose a writable profile-settings operation:
+-- vpn/server is the sole normal configuration authority.
 module("luci.controller.admin.netbird", package.seeall)
 
 local nixio = require "nixio"
@@ -63,26 +65,8 @@ local PROFILE_KEYS = {
     enable = "bool",
 }
 
-local function request_settings(body)
-    local src = body or http.formvaluetable() or {}
-    local cand = {}
-    for key, kind in pairs(PROFILE_KEYS) do
-        local value = src[key]
-        if value == nil then value = http.formvalue(key) end
-        if value ~= nil then
-            cand[key] = kind == "bool" and bool01(value, nil) or scalar(value)
-        end
-    end
-    if cand.enable == nil then
-        local enabled = src.enabled
-        if enabled == nil then enabled = http.formvalue("enabled") end
-        if enabled ~= nil then cand.enable = bool01(enabled, nil) end
-    end
-    return cand
-end
-
 -- vpn/server is the authoritative native profile store. The runtime settings
--- file is a materialized view used by the existing NetBird shell/runtime only.
+-- file is only a materialized view used by the existing NetBird shell/runtime.
 local function native_profile()
     local found
     uci:foreach("vpn", "server", function(section)
@@ -229,33 +213,35 @@ local function op_connected_status()
 end
 
 local function op_settings_get()
+    -- Read-only diagnostics. All writes must go through stock /admin/vpn CRUD.
     return reply({ settings = model.get_settings(), profileExists = native_profile_exists() })
 end
 
-local function op_settings_set(body)
-    local cand = request_settings(body)
-    local cur, write_err = model.set_settings(cand)
-    if not cur then return error_reply("bad_request", write_err or "failed to save settings") end
-    return reply({ settings = cur, profileExists = native_profile_exists() })
-end
-
--- Called after every successful stock remove. It is intentionally key-agnostic:
--- if any netbirdvpn profile remains in vpn/server, this is a no-op. Only when
--- the authoritative native profile is gone do we remove the external identity
--- and runtime state that generic TP-Link CRUD cannot know about.
+-- Called after every successful stock remove by the patched frontend. This is
+-- deliberately idempotent so deleting a non-NetBird stock profile is harmless:
+-- if a native NetBird profile still exists, cleanup is skipped; if no NetBird
+-- profile and no NetBird artifacts exist, this is a no-op. Stale orphan identity
+-- without a native profile is safely cleaned as recovery hygiene.
 local function op_profile_delete()
     if native_profile_exists() then
         return reply({ result = "skipped", profileExists = true })
+    end
+
+    if not lfs.access(SETTINGS) and not lfs.access(PROFILE_CONFIG) and not lfs.access(PROFILE_STATE) then
+        nixio.fs.unlink(TRAFFIC_STATE)
+        return reply({ result = "noop", profileExists = false })
     end
 
     local clean_out, clean_rc = model.control("clean")
     if clean_rc ~= 0 then
         return error_reply("delete_failed", "failed to clean NetBird identity: " .. (clean_out or "clean failed"):gsub("%s+$", ""))
     end
+
     nixio.fs.unlink(SETTINGS)
     nixio.fs.unlink(SETTINGS .. ".tmp")
     nixio.fs.unlink(PROFILE_CONFIG)
     nixio.fs.unlink(TRAFFIC_STATE)
+
     if lfs.access(SETTINGS) or lfs.access(PROFILE_CONFIG) or lfs.access(PROFILE_STATE) then
         return error_reply("delete_failed", "NetBird runtime files remain after cleanup")
     end
@@ -316,7 +302,6 @@ function dispatch(body)
         if op == "status" then return op_status()
         elseif op == "connected_status" then return op_connected_status()
         elseif op == "settings_get" then return op_settings_get()
-        elseif op == "settings_set" then return op_settings_set(body)
         elseif op == "profile_delete" then return op_profile_delete()
         elseif op == "enroll" then return op_enroll(body)
         elseif op == "restart" then return op_restart()
