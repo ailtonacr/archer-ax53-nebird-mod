@@ -3,62 +3,208 @@
 **Stop point: nothing below is flashed automatically. Run each step yourself
 after reviewing.**
 
-## What you get
+## Current architecture
 
-| Artifact | File | Size |
-|---|---|---|
-| Firmware (rootfs + NetBird integration) | `firmware/Archer-AX53-NetBird-r2.bin` | 39,457,554 B |
+NetBird is a fifth native TP-Link VPN Client type:
 
-The NetBird binary is **not** embedded in the firmware and **not** stored on any
-partition. At runtime it is downloaded over HTTPS from a public Cloudflare R2
-bucket, hash-validated (compressed + decoded SHA-256 pinned), and materialized
-into `/tmp` (`/tmp/netbird`). Identity and settings persist in `/tp_data/netbird`.
+```text
+TP-Link VPN Client UI
+  -> /admin/vpn?form=server
+  -> type=netbirdvpn / id=5
+  -> network.vpn.proto=netbird
+  -> /etc/init.d/vpnc
+  -> netifd
+  -> /lib/netifd/proto/netbird.sh
+  -> /lib/netbird/netbird-runtime.sh
+  -> /tmp/netbird + wt0
+```
+
+`/admin/netbird` is auxiliary only for enrollment, diagnostics/logs/payload,
+restart/recovery and idempotent identity cleanup. It does **not** own normal
+profile settings writes. The stock `/admin/vpn?form=server` profile is the
+normal configuration authority.
+
+The NetBird binary is **not** embedded in rootfs and is **not** stored on an
+extra MTD/UBI partition. At runtime it is fetched over HTTPS, validates the
+pinned compressed SHA-256, streams through `xzmini`, validates decoded size and
+SHA-256, and is promoted atomically to `/tmp/netbird`. Identity/runtime settings
+persist under `/tp_data/netbird/`.
 
 The historical MIBIB / `netbird_data` / UBI artifacts under `mibib/` and
-`netbird-data/` are **NOT used by the current runtime** (see the
-`NOT_USED_BY_CURRENT_RUNTIME.md` markers and `docs/R2-RUNTIME.md`).
+`netbird-data/` are **NOT used by the current runtime**. MIBIB remains stock.
 
-## Step 0 — backup
+## Step 0 — mandatory local gate
+
+Before producing a firmware image:
+
+```sh
+make test-netbird
+```
+
+Any failure is a **stop point**. Do not build/flash around a failing gate.
+
+Then build from an explicitly identified decrypted stock image:
+
+```sh
+make firmware STOCK=stock_decrypted.bin
+```
+
+The build recreates `rootfs/` from that stock image, applies the mods, validates
+the native NetBird contracts before repack, and refuses the image if the final
+bundle still contains hybrid writable `settings_set`, a parallel NetBird boot
+owner, type-derived Add/Edit semantics, or a missing routing/firewall invariant.
+
+## Step 1 — backup and flash
 
 Make a full NAND backup before any future flash (see
-`tp-link-ax53-fw-hacks/README.md` "Taking full Partition backup").
+`tp-link-ax53-fw-hacks/README.md` "Taking full Partition backup"). Keep physical
+recovery access available.
 
-## Step 1 — flash firmware (Web UI)
+Upload **only the firmware `.bin` produced by the validated build** via
+**Advanced → System Tools → Firmware Upgrade**, or use the already validated
+recovery path when required.
 
-Upload `Archer-AX53-NetBird-r2.bin` via **Advanced → System Tools → Firmware
-Upgrade**, or use recovery mode (hold Reset, 192.168.0.1). Reboot.
+After reboot, validate LAN/WAN/Wi-Fi/DHCP/NAT before testing NetBird. Do not
+remove the fallback WG-Easy/WireGuard path at this stage.
 
-After boot the router runs the stock UI + NetBird integration. The payload is
-downloaded on demand when NetBird is started; if the download fails (offline,
-TLS, or hash mismatch) the boot/UI continue normally and NetBird stays stopped.
-Wi-Fi/WAN/OpenVPN/WireGuard are unaffected.
-
-No MIBIB modification and no `netbird_data` partition are required.
-
-## Step 2 — enroll
+## Step 2 — create the native NetBird profile
 
 1. Open **VPN → VPN Client**.
 2. **Add** → **VPN Type: NetBird**.
-3. Enter the **Management URL** (default `https://netbird.ailton.dev.br`).
-4. Paste the **Setup Key** (never stored) → **Enroll**.
-5. NetBird connects; status shows **Connected** with NetBird IP / peers.
+3. Fill the protocol settings, including **Management URL** (default
+   `https://netbird.ailton.dev.br`).
+4. Click the TP-Link modal **SALVAR** first.
+5. Confirm the profile appears in the stock VPN Client list.
+6. Reopen **Edit** for that persisted NetBird profile.
+7. Only now enter the **Setup Key** and choose **Enrollment**.
 
-## Step 3 (optional) — routing peer
+The setup key is staged in a temporary file for the enrollment operation and is
+not persisted in the normal settings/profile store.
 
-In the NetBird client: enable **Advertise LAN (routing peer)** and set the CIDR
-(e.g. `192.168.10.0/24`). Define the Network/Resource/Policy in the NetBird
-dashboard; the local UI only controls the client behaviour.
+## Step 3 — enable and validate the peer
 
-## Verification
+After enrollment, enable the NetBird profile through the normal TP-Link VPN
+Client flow.
 
-```sh
-/etc/init.d/netbird status        # or netbird-ctl status
-netbird-ctl payload-status        # 0 READY / 1 PAYLOAD_NOT_DOWNLOADED
-                                  # 2 PAYLOAD_DOWNLOAD_FAILED / 3 PAYLOAD_INVALID
-netbird-ctl settings
-netbird-ctl log 50
+On the router, the link is considered UP only when all three conditions hold:
+
+- `wt0` exists;
+- NetBird reports `daemonStatus=Connected`;
+- `management.connected=true`.
+
+The normal lifecycle owner is:
+
+```text
+/etc/init.d/vpnc -> netifd -> proto=netbird -> shared runtime
 ```
 
-The UI VPN Client page shows the payload state (READY /
-PAYLOAD_NOT_DOWNLOADED / PAYLOAD_DOWNLOAD_FAILED / PAYLOAD_INVALID) without any
-MIBIB/UBI concept.
+`/etc/init.d/netbird` is only a compatibility/recovery wrapper and has no
+`S99netbird` boot link in the final native image.
+
+## Step 4 (optional) — make the AX53 a routing peer
+
+In the NetBird profile, enable **Permitir roteamento da LAN** and set the exact
+local CIDR, for example:
+
+```text
+192.168.10.0/24
+```
+
+When local LAN routing is enabled, **Rotas de servidor** must also be enabled.
+The UI forces this state and both backend/runtime reject the contradictory
+combination `advertise_lan=1 + disable_server_routes=1`.
+
+This local option does **not** create a NetBird Network/Resource in the control
+plane. In NetBird Management you still need to create/confirm the corresponding
+Network/Resource/Policy and select the AX53 as the routing peer. The router does
+not receive administrative credentials to create control-plane resources.
+
+The local CIDR is used to scope forwarding/NAT. Runtime firewall bookkeeping is
+stored only in:
+
+```text
+/tmp/netbird-firewall.state
+```
+
+It records the actually applied port/access/CIDR/home interface so changing
+CIDR or WireGuard port can remove the old rules deterministically before adding
+the new ones. This bookkeeping is ephemeral and is not written to NAND.
+
+## Post-flash validation
+
+Use the repository validator after copying it temporarily to the router:
+
+```sh
+NB_PEER_IP=<overlay-peer> \
+LAN_TARGET_IP=<lan-host> \
+sh /tmp/validate-netbird-native-router.sh
+```
+
+Also inspect:
+
+```sh
+uci show vpn.client
+uci show network.vpn
+ubus call network.interface.vpn status
+/sbin/netbird-ctl status
+/sbin/netbird-ctl payload-status
+/sbin/netbird-ctl settings
+ip addr show wt0
+cat /tmp/netbird-firewall.state
+iptables -S FORWARD | grep -E 'wt0|NETBIRD'
+iptables -t nat -S POSTROUTING | grep -E 'wt0|100\.64\.'
+```
+
+The router-local validator can prove router → peer and router → LAN, but it
+**cannot prove the opposite traffic direction**. From a real remote NetBird
+peer, separately test:
+
+1. remote peer → AX53 NetBird IP;
+2. remote peer → a LAN host through the AX53;
+3. Proxmox/VMs/local Coolify as applicable;
+4. DNS through the intended non-WG-Easy path.
+
+For firewall mutation, explicitly test at least once:
+
+```text
+CIDR A -> CIDR B
+routing ON -> OFF
+WireGuard port X -> Y
+```
+
+and confirm rules for A/X are absent after the transition.
+
+## Payload/runtime checks
+
+```sh
+/sbin/netbird-ctl payload-status
+/sbin/netbird-ctl status
+/sbin/netbird-ctl log 50
+```
+
+Payload states are:
+
+- `READY`
+- `PAYLOAD_NOT_DOWNLOADED`
+- `PAYLOAD_DOWNLOAD_FAILED`
+- `PAYLOAD_INVALID`
+
+Failure to materialize NetBird is fail-closed for the NetBird feature and must
+not take down WAN, Wi-Fi, DHCP or the fallback VPN.
+
+## Stop conditions
+
+Do **not** remove WG-Easy and do not proceed with migration if any of these are
+true:
+
+- `make test-netbird` fails;
+- build pre-repack validation fails;
+- `vpn.client.vpntype != netbirdvpn` for the active NetBird profile;
+- `network.vpn.proto != netbird`;
+- more than one lifecycle owner starts NetBird;
+- `network.interface.vpn` is UP without `wt0` and management connectivity;
+- LAN routing is enabled with server routes disabled;
+- `/tmp/netbird-firewall.state` disagrees with the active configuration;
+- old CIDR/port rules remain after a settings transition;
+- remote peer → AX53 or remote peer → LAN validation fails;
+- DNS still depends on the historical `10.8.0.1` WG-Easy path.
