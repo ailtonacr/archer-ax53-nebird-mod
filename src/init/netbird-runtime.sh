@@ -39,10 +39,25 @@ nb_up_flags() {
         "--wireguard-port=${wg_port}"
 }
 
+# Routing-peer mode must preserve NetBird's own route ACL enforcement. NetBird
+# v0.77.1 installs NETBIRD-RT-FWD-* chains plus a final DROP for inbound wt0
+# forwarding; bypassing that firewall with a higher-priority ACCEPT would turn
+# management policies into advisory configuration. Therefore LAN routing is
+# fail-closed unless both server routes and the NetBird firewall are enabled.
 nb_runtime_validate_settings() {
-    if [ "$(nb_get "$NB_SETTINGS_FILE" advertise_lan "0")" = "1" ] && \
-       [ "$(nb_get "$NB_SETTINGS_FILE" disable_server_routes "1")" != "0" ]; then
+    local advertise_lan disable_server_routes disable_firewall
+    advertise_lan="$(nb_get "$NB_SETTINGS_FILE" advertise_lan "0")"
+    [ "$advertise_lan" = "1" ] || return 0
+
+    disable_server_routes="$(nb_get "$NB_SETTINGS_FILE" disable_server_routes "1")"
+    if [ "$disable_server_routes" != "0" ]; then
         echo "netbird: LAN routing requires server routes to be enabled" >&2
+        return 1
+    fi
+
+    disable_firewall="$(nb_get "$NB_SETTINGS_FILE" disable_firewall "1")"
+    if [ "$disable_firewall" != "0" ]; then
+        echo "netbird: LAN routing requires NetBird firewall policy enforcement" >&2
         return 1
     fi
     return 0
@@ -128,32 +143,12 @@ nb_fw_read_state() {
     return 0
 }
 
-nb_fw_clear_priority_values() {
-    local cidr="$1" homeif="$2"
-    [ -n "$cidr" ] || return 0
-    while iptables -D FORWARD -i "$NB_IFNAME" -o "$homeif" -d "$cidr" -j ACCEPT 2>/dev/null; do :; done
-    while iptables -D FORWARD -i "$homeif" -o "$NB_IFNAME" -s "$cidr" -j ACCEPT 2>/dev/null; do :; done
-    while iptables -D FORWARD -i "$homeif" -o "$NB_IFNAME" -s "$cidr" -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do :; done
-    while iptables -t nat -D POSTROUTING -o "$homeif" -s 100.64.0.0/10 -d "$cidr" -j MASQUERADE 2>/dev/null; do :; done
-}
-
-nb_fw_prioritize_lan_values() {
-    local access="$1" cidr="$2" homeif="$3"
-    nb_fw_clear_priority_values "$cidr" "$homeif"
-    [ "$access" = "lan" ] || return 0
-    [ -n "$cidr" ] || return 1
-
-    iptables -I FORWARD 1 -i "$NB_IFNAME" -o "$homeif" -d "$cidr" -j ACCEPT || return 1
-    iptables -I FORWARD 2 -i "$homeif" -o "$NB_IFNAME" -s "$cidr" \
-        -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT || return 1
-    iptables -t nat -I POSTROUTING 1 -o "$homeif" -s 100.64.0.0/10 \
-        -d "$cidr" -j MASQUERADE || return 1
-    return 0
-}
-
+# TP-Link's scoped rules are bookkeeping/NAT integration only. They must never
+# be promoted ahead of NetBird's NETBIRD-RT-FWD-* chains. Route authorization is
+# owned by NetBird policy; the canonical firewall source appends its FORWARD
+# rules so an ACL ACCEPT/DROP decision always happens first.
 nb_runtime_remove_firewall() {
     if nb_fw_read_state; then
-        nb_fw_clear_priority_values "$NB_FW_CIDR" "$NB_FW_HOMEIF"
         nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"
         rm -f "$NB_FW_STATE" "$NB_FW_STATE_NEW"
         return 0
@@ -161,7 +156,6 @@ nb_runtime_remove_firewall() {
 
     # Upgrade/recovery fallback when no applied-state snapshot exists yet.
     nb_fw_current_values
-    nb_fw_clear_priority_values "$NB_FW_CIDR" "$NB_FW_HOMEIF"
     nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"
     rm -f "$NB_FW_STATE" "$NB_FW_STATE_NEW"
 }
@@ -177,10 +171,6 @@ nb_runtime_apply_firewall() {
     fi
     if ! nb_fw_write_state; then
         nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"
-        return 1
-    fi
-    if ! nb_fw_prioritize_lan_values "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"; then
-        nb_runtime_remove_firewall
         return 1
     fi
     return 0
