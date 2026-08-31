@@ -118,6 +118,9 @@ local function merged_settings(cand)
     if cur.advertise_lan == "1" and cur.disable_server_routes ~= "0" then
         return nil, "server routes must be enabled when LAN routing is enabled"
     end
+    if cur.advertise_lan == "1" and cur.disable_firewall ~= "0" then
+        return nil, "NetBird firewall must be enabled when LAN routing is enabled"
+    end
     return cur
 end
 
