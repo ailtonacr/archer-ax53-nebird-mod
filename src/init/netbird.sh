@@ -4,8 +4,8 @@
 # This file owns persistent settings, R2 payload materialization, daemon process
 # primitives and TP-Link firewall entrypoints. Connection lifecycle, status
 # interpretation and canonical `netbird up` flags live in netbird-runtime.sh.
-# Dependency direction is deliberately one-way: this base library never calls
-# /sbin/netbird-ctl.
+# Dependency direction is deliberately one-way: the base library never calls
+# the netbird-ctl CLI facade.
 
 . /lib/functions.sh
 . /lib/functions/service.sh 2>/dev/null || true
@@ -73,7 +73,7 @@ nb_ensure_settings() {
     [ -d "$NB_CONFIG_DIR" ] && chmod 0700 "$NB_CONFIG_DIR"
     if [ ! -f "$NB_SETTINGS_FILE" ]; then
         cat > "$NB_SETTINGS_FILE" <<EOF
-version=1
+a version=1
 enable=0
 enrolled=0
 management_url=${NB_DEFAULT_MGMT}
@@ -88,6 +88,9 @@ advertise_lan=0
 advertise_cidr=
 wireguard_port=${NB_DEFAULT_PORT}
 EOF
+        # Remove the leading sentinel used only to keep this heredoc visually
+        # distinct from shell variable declarations.
+        sed -i '1s/^a //' "$NB_SETTINGS_FILE"
     fi
     chmod 0600 "$NB_SETTINGS_FILE"
     mkdir -p "$NB_STATE_DIR"
@@ -263,24 +266,44 @@ nb_daemon_stop() {
     rm -f "$NB_PID" "$NB_SOCK"
 }
 
+# Optional explicit values let the runtime remove the exact firewall state that
+# was previously installed, even after settings were changed by a later Save.
 nb_fw_access() {
-    local port access
-    port=$(nb_get "$NB_SETTINGS_FILE" wireguard_port "$NB_DEFAULT_PORT")
-    if [ "$(nb_get "$NB_SETTINGS_FILE" advertise_lan "0")" = "1" ]; then
+    local port access cidr homeif
+    port="${1:-$(nb_get "$NB_SETTINGS_FILE" wireguard_port "$NB_DEFAULT_PORT")}"
+    if [ $# -ge 2 ]; then
+        access="$2"
+    elif [ "$(nb_get "$NB_SETTINGS_FILE" advertise_lan "0")" = "1" ]; then
         access="lan"
     else
         access="home"
     fi
-    fw netbird_access "$port" "$access" 2>/dev/null || true
+    if [ $# -ge 3 ]; then cidr="$3"; else cidr="$(nb_get "$NB_SETTINGS_FILE" advertise_cidr "")"; fi
+    if [ $# -ge 4 ]; then
+        homeif="$4"
+    else
+        homeif="$(uci_get_state firewall core lan_ifname 2>/dev/null)"
+        [ -n "$homeif" ] || homeif="br-lan"
+    fi
+    fw netbird_access "$port" "$access" "$cidr" "$homeif" 2>/dev/null || true
 }
 
 nb_fw_block() {
-    local port access
-    port=$(nb_get "$NB_SETTINGS_FILE" wireguard_port "$NB_DEFAULT_PORT")
-    if [ "$(nb_get "$NB_SETTINGS_FILE" advertise_lan "0")" = "1" ]; then
+    local port access cidr homeif
+    port="${1:-$(nb_get "$NB_SETTINGS_FILE" wireguard_port "$NB_DEFAULT_PORT")}"
+    if [ $# -ge 2 ]; then
+        access="$2"
+    elif [ "$(nb_get "$NB_SETTINGS_FILE" advertise_lan "0")" = "1" ]; then
         access="lan"
     else
         access="home"
     fi
-    fw netbird_block "$port" "$access" 2>/dev/null || true
+    if [ $# -ge 3 ]; then cidr="$3"; else cidr="$(nb_get "$NB_SETTINGS_FILE" advertise_cidr "")"; fi
+    if [ $# -ge 4 ]; then
+        homeif="$4"
+    else
+        homeif="$(uci_get_state firewall core lan_ifname 2>/dev/null)"
+        [ -n "$homeif" ] || homeif="br-lan"
+    fi
+    fw netbird_block "$port" "$access" "$cidr" "$homeif" 2>/dev/null || true
 }
