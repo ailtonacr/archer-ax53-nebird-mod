@@ -76,6 +76,10 @@ proto_netbird_setup() {
     esac
 
     if ! nb_runtime_connect >/dev/null 2>&1; then
+        # nb_runtime_connect may fail after the daemon or wt0 already exists
+        # (for example, while installing firewall state). Always rollback the
+        # shared runtime before reporting setup failure to netifd.
+        nb_runtime_stop >/dev/null 2>&1 || true
         echo "netbird: runtime start failed" >/dev/console
         proto_notify_error "$config" START_FAILED
         proto_setup_failed "$config"
