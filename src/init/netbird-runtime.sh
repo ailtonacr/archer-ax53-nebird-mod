@@ -171,7 +171,10 @@ nb_runtime_apply_firewall() {
     # settings. This makes CIDR/port changes A->B deterministic and fail closed.
     nb_runtime_remove_firewall
     nb_fw_current_values
-    nb_fw_access "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"
+    if ! nb_fw_access "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"; then
+        nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"
+        return 1
+    fi
     if ! nb_fw_write_state; then
         nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"
         return 1
