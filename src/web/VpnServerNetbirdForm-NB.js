@@ -137,11 +137,16 @@ export default defineComponent({
     const error = ref("");
     const showLog = ref(false);
     const dirty = ref(false);
-    const creating = ref(false);
+    // Add is the safe default. Only a persisted stock key/id proves Edit mode;
+    // type=netbirdvpn is present in both Add and Edit and must not decide this.
+    const creating = ref(true);
     let statusRequestPending = false;
 
     function updateDraft(key, value) {
       draft.value[key] = value;
+      // A routing peer must process server routes delivered by NetBird
+      // management. Enabling local routing therefore enables server routes too.
+      if (key === "advertise_lan" && value === "1") draft.value.disable_server_routes = "0";
       dirty.value = true;
       error.value = "";
       message.value = "";
@@ -207,11 +212,12 @@ export default defineComponent({
       if (!validWireGuardPort(s.wireguard_port)) { error.value = "Informe uma porta WireGuard entre 1 e 65535."; throw new Error(error.value); }
       if (!validManagementUrl(s.management_url)) { error.value = "Informe uma URL de gerenciamento válida (http:// ou https://)."; throw new Error(error.value); }
       if (s.advertise_lan === "1" && !validCidr(s.advertise_cidr)) { error.value = "Informe uma rede LAN válida em CIDR, por exemplo 192.168.10.0/24."; throw new Error(error.value); }
+      if (s.advertise_lan === "1" && s.disable_server_routes !== "0") { error.value = "Para rotear a LAN, habilite Rotas de servidor do NetBird."; throw new Error(error.value); }
       return true;
     }
 
     function setForm(value) {
-      const existing = !!(value && (value.type === "netbirdvpn" || value.type === "netbird" || value.key === "netbird" || value.id === "netbird"));
+      const existing = !!(value && (value.key || value.id));
       creating.value = !existing;
       draft.value = normalizeForm(value || {}, creating.value ? {} : (settings.value || {}));
       if (creating.value) { draft.value.enable = "0"; draft.value.enrolled = "0"; }
@@ -281,7 +287,7 @@ export default defineComponent({
       ["Rotas de servidor", "disable_server_routes", s.disable_server_routes === "0", true],
       ["IPv6", "disable_ipv6", s.disable_ipv6 === "0", true],
       ["Monitor de rede", "network_monitor", s.network_monitor === "1", false],
-      ["Anunciar rede local", "advertise_lan", s.advertise_lan === "1", false],
+      ["Permitir roteamento da LAN", "advertise_lan", s.advertise_lan === "1", false],
     ];
     for (const [label, key, checked, inverted] of flags) {
       items.push(_h(SuFormContentItem, null, { default: () => _h(SuCheckbox, { checked, "onUpdate:checked": value => this.updateDraft(key, inverted ? (value ? "0" : "1") : (value ? "1" : "0")), disabled }, textSlot(label)) }));
