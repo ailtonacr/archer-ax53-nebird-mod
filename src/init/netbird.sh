@@ -73,7 +73,7 @@ nb_ensure_settings() {
     [ -d "$NB_CONFIG_DIR" ] && chmod 0700 "$NB_CONFIG_DIR"
     if [ ! -f "$NB_SETTINGS_FILE" ]; then
         cat > "$NB_SETTINGS_FILE" <<EOF
-a version=1
+version=1
 enable=0
 enrolled=0
 management_url=${NB_DEFAULT_MGMT}
@@ -88,9 +88,6 @@ advertise_lan=0
 advertise_cidr=
 wireguard_port=${NB_DEFAULT_PORT}
 EOF
-        # Remove the leading sentinel used only to keep this heredoc visually
-        # distinct from shell variable declarations.
-        sed -i '1s/^a //' "$NB_SETTINGS_FILE"
     fi
     chmod 0600 "$NB_SETTINGS_FILE"
     mkdir -p "$NB_STATE_DIR"
@@ -285,7 +282,7 @@ nb_fw_access() {
         homeif="$(uci_get_state firewall core lan_ifname 2>/dev/null)"
         [ -n "$homeif" ] || homeif="br-lan"
     fi
-    fw netbird_access "$port" "$access" "$cidr" "$homeif" 2>/dev/null || true
+    fw netbird_access "$port" "$access" "$cidr" "$homeif" 2>/dev/null
 }
 
 nb_fw_block() {
