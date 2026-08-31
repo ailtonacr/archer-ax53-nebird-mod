@@ -112,7 +112,13 @@ nb_runtime_validate_settings || {
 uci_get_state() { printf '%s\n' "br-lan"; }
 nb_fw_access() { printf 'access port=%s mode=%s cidr=%s homeif=%s\n' "$1" "$2" "$3" "$4" >> "$TMP/fw.log"; return 0; }
 nb_fw_block() { printf 'block port=%s mode=%s cidr=%s homeif=%s\n' "$1" "$2" "$3" "$4" >> "$TMP/fw.log"; return 0; }
-iptables() { printf '%s\n' "$*" >> "$TMP/iptables.log"; return 0; }
+iptables() {
+    printf '%s\n' "$*" >> "$TMP/iptables.log"
+    case " $* " in
+        *" -D "*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
 
 cat > "$NB_SETTINGS_FILE" <<'EOF'
 advertise_lan=1
