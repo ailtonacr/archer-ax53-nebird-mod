@@ -1,11 +1,11 @@
 #!/bin/bash -e
 #
-# 010-netbird.sh -- integrate NetBird (0.77.1) in the stock VPN Client UI.
+# 010-netbird.sh -- install the NetBird runtime and frontend prerequisites.
 #
-# NetBird is visually integrated with TP-Link's VPN Client page, but profile
-# CRUD/control uses /admin/netbird. Hardware validation proved the compiled
-# TP-Link /admin/vpn dispatcher does not call replacement Lua handlers, so the
-# vendor VPN controller is deliberately kept byte-for-byte stock.
+# This is the bootstrap stage consumed by 012-netbird-native-vpn.sh. The final
+# image uses NetBird as native type=netbirdvpn/proto=netbird through the stock
+# /admin/vpn endpoint; the dedicated /admin/netbird endpoint remains auxiliary
+# for enrollment/diagnostics only.
 #
 # The large NetBird ELF is NOT embedded in rootfs and NOT stored on any MTD/UBI
 # partition; it is downloaded over HTTPS and materialized into /tmp at runtime.
@@ -35,12 +35,13 @@ FORM_STATE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_form_state.py"
 NATIVE_SAVE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_native_save.py"
 NB_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird.lua"
 NB_MODEL="$PROJECT_ROOT/src/web-backend/model/netbird.lua"
+FIREWALL_SRC="$RUNTIME_SRC/netbird_firewall.inc"
 
 echo "### NetBird VPN Client integration ###"
 echo "    rootfs: $R"
 
 echo "[1/8] copying NetBird runtime files into rootfs ..."
-for f in netbird.sh netbird-ctl netbird.init netbird-proto.sh; do
+for f in netbird.sh netbird-ctl netbird.init netbird-proto.sh netbird_firewall.inc; do
   [ -f "$RUNTIME_SRC/$f" ] || { echo "Error: missing canonical runtime source $RUNTIME_SRC/$f" >&2; exit 1; }
 done
 mkdir -p "$R/lib/netbird" "$R/lib/netifd/proto" "$R/sbin" "$R/etc/init.d"
@@ -110,53 +111,19 @@ python3 "$FACTORY_PATCHER" "$R"
 python3 "$FORM_STATE_PATCHER" "$R"
 python3 "$NATIVE_SAVE_PATCHER" "$R"
 
-echo "[4/8] adding CIDR-scoped fw_netbird_access/block ..."
-if ! grep -q "# NetBird v2 CIDR-scoped" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
-  cat >> "$R/lib/firewall/tpcmd.sh" <<'FIREWALL_EOF'
+echo "[4/8] adding canonical CIDR-scoped NetBird firewall integration ..."
+if ! grep -q "# NetBird v3 CIDR-scoped/applied-state" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
+  # Remove previous NetBird function definitions when rebuilding an already
+  # patched rootfs. Fresh firmware builds start from stock, so this path is only
+  # a defensive migration aid and the final definition below remains canonical.
+  cat >> "$R/lib/firewall/tpcmd.sh" <<'FIREWALL_SEPARATOR'
 
-# NetBird v2 CIDR-scoped -- later definition intentionally overrides v1.
-fw_netbird_access(){
-    local port=$1
-    local access=$2
-    local homeif="$(uci_get_state firewall core lan_ifname)"
-    local cidr="$(sed -n 's/^advertise_cidr=//p' /tp_data/netbird/settings 2>/dev/null | head -n 1)"
-
-    fw_s_add 4 f INPUT ACCEPT 1 { "-p udp -m udp --dport $port" }
-    fw_s_add 4 f INPUT ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
-    fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
-
-    fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif" }
-    fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0" }
-    fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10" }
-
-    if [ "$access" == "lan" ] && [ -n "$cidr" ]; then
-        fw_s_add 4 f FORWARD ACCEPT 1 { "-i wt0 -o $homeif -d $cidr" }
-        fw_s_add 4 f FORWARD ACCEPT 1 { "-i $homeif -o wt0 -s $cidr" }
-        fw_s_add 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }
-    fi
-}
-
-fw_netbird_block(){
-    local port=$1
-    local access=$2
-    local homeif="$(uci_get_state firewall core lan_ifname)"
-    local cidr="$(sed -n 's/^advertise_cidr=//p' /tp_data/netbird/settings 2>/dev/null | head -n 1)"
-
-    fw_s_del 4 f INPUT ACCEPT { "-p udp -m udp --dport $port" }
-    fw_s_del 4 f INPUT ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
-    fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
-    if [ -n "$cidr" ]; then
-        fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }
-        fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }
-        fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }
-    fi
-    fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif" }
-    fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0" }
-    fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10" }
-}
-FIREWALL_EOF
+# NetBird canonical firewall definition follows.
+FIREWALL_SEPARATOR
+  cat "$FIREWALL_SRC" >> "$R/lib/firewall/tpcmd.sh"
+  printf '\n' >> "$R/lib/firewall/tpcmd.sh"
 else
-  echo "    (CIDR-scoped override already present, skipping)"
+  echo "    (canonical NetBird firewall definition already present, skipping)"
 fi
 
 echo "[5/8] wiring netbird_access|netbird_block into /sbin/fw ..."
@@ -175,7 +142,7 @@ if ! grep -q "tp_data/netbird" "$R/sbin/reset" 2>/dev/null; then
   sed -i 's#^sleep 3$#rm -rf /tp_data/netbird\nsleep 3#' "$R/sbin/reset"
 fi
 
-echo "[7/8] enabling service (rc.d S99netbird) ..."
+echo "[7/8] enabling transitional service link ..."
 mkdir -p "$R/etc/rc.d"
 ln -sfn "../init.d/netbird" "$R/etc/rc.d/S99netbird" 2>/dev/null || true
 
@@ -190,10 +157,13 @@ done
 [ ! -e "$LEGACY_VPN_STOCK" ] || { echo "Error: legacy vpn_stock.lua remains in controller tree" >&2; exit 1; }
 is_stock_vpn "$VPN_CONTROLLER" || { echo "Error: /admin/vpn controller is not original TP-Link bytecode" >&2; exit 1; }
 grep -q 'profile_delete' "$R/usr/lib/lua/luci/controller/admin/netbird.lua" || {
-  echo "Error: dedicated NetBird profile CRUD controller incomplete" >&2; exit 1;
+  echo "Error: NetBird identity cleanup operation missing" >&2; exit 1;
 }
 grep -q 'description' "$R/usr/lib/lua/luci/model/netbird.lua" || {
   echo "Error: NetBird profile description persistence missing" >&2; exit 1;
+}
+grep -q '# NetBird v3 CIDR-scoped/applied-state' "$R/lib/firewall/tpcmd.sh" || {
+  echo "Error: canonical NetBird firewall source was not installed" >&2; exit 1;
 }
 NB_FORM_JS="$(zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz")"
 printf '%s' "$NB_FORM_JS" | grep -Fq 'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })' || {
