@@ -89,18 +89,17 @@ done
 
 # Routing peer invariant: advertise_lan cannot coexist with disabled server
 # routes because NetBird v0.77.1 would then refuse to act as a route server.
-cat >> "$NB_SETTINGS_FILE" <<'EOF'
+cat > "$NB_SETTINGS_FILE" <<'EOF'
 advertise_lan=1
 advertise_cidr=192.168.10.0/24
 disable_server_routes=1
+wireguard_port=51820
 EOF
 if nb_runtime_validate_settings >/dev/null 2>&1; then
     echo "routing invariant accepted advertise_lan=1 + disable_server_routes=1" >&2
     exit 1
 fi
-sed -i '0,/^disable_server_routes=1$/s//disable_server_routes=0/' "$NB_SETTINGS_FILE"
-# Remove the later duplicate invalid value before validating the fixed state.
-sed -i '$d' "$NB_SETTINGS_FILE"
+sed -i 's/^disable_server_routes=1$/disable_server_routes=0/' "$NB_SETTINGS_FILE"
 nb_runtime_validate_settings || {
     echo "routing invariant rejected valid server-route configuration" >&2
     exit 1
