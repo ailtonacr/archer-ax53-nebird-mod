@@ -1,120 +1,260 @@
-# NetBird on Archer AX53 V1 — Offline Validation
+# NetBird on Archer AX53 V1 — Validation Status
 
-All checks below were run offline (host, no device). Results as of 2026-08-26.
+This document describes the **current validation contract** for the native
+NetBird VPN Client integration. Historical validation of the abandoned
+MIBIB/`netbird_data` and dedicated-CRUD implementations remains available in
+Git history and in the project Notion timeline/ADR; it is not the current
+acceptance baseline.
 
-## Shell
+## Current implementation under validation
 
-`bash -n` on every added/modified shell file:
+```text
+TP-Link VPN Client UI
+  -> /admin/vpn?form=server
+  -> netbirdvpn = type 5
+  -> network.vpn.proto = netbird
+  -> /etc/init.d/vpnc
+  -> netifd proto_netbird
+  -> /lib/netbird/netbird-runtime.sh
+  -> R2 materialization -> /tmp/netbird
+  -> wt0
+```
 
-| File | Result |
-|---|---|
-| `sbin/netbird-ctl` | OK |
-| `lib/netbird/netbird.sh` | OK |
-| `etc/init.d/netbird` | OK |
-| `sbin/fw` (patched) | OK |
-| `sbin/reset` (patched) | OK |
-| `lib/firewall/tpcmd.sh` (patched) | OK |
+Normal profile CRUD/list/toggle/connected-status remains on the stock TP-Link
+VPN endpoint. `/admin/netbird` is auxiliary only: enrollment, diagnostics,
+read-only settings inspection, logs/payload, restart/recovery and idempotent
+identity cleanup.
 
-## Lua (source modules)
+The vendor `vpn.lua` remains byte-for-byte TP-Link bytecode. NetBird extends the
+module-global registries verified by `scripts/verify-tplink-vpn-bytecode.py`.
 
-`luaparser` parse on both added modules: **OK**
-`usr/lib/lua/luci/controller/admin/netbird.lua`, `usr/lib/lua/luci/model/netbird.lua`.
+## Storage/runtime facts already validated on hardware
 
-## Frontend (patched Vue bundles)
+These facts predate the current native-CRUD refactor and remain applicable:
 
-`node --input-type=module --check` on decompressed bundles:
+- NetBird version: `0.77.1`.
+- Decoded ELF size: `39,125,176` bytes.
+- Decoded SHA-256:
+  `6cc347b741695e6664d4ba0ba7004e823a77ab0705a4de5ebe92b290623bb8e6`.
+- Compressed XZ size: `9,455,188` bytes.
+- Compressed SHA-256:
+  `4b0648305e5f4126fa58be391e5db995447a58d867d5d290a15b2df972c58941`.
+- Payload is downloaded over HTTPS and materialized to `/tmp/netbird`.
+- Compressed and decoded hashes are pinned in firmware.
+- Streaming materialization succeeded on the real AX53.
+- Failure paths for bad URL/hash/XZ were previously observed fail-closed for
+  the payload materializer.
+- Identity/settings persist under `/tp_data/netbird/`.
+- Current architecture uses **stock MIBIB**; the historical `netbird_data`
+  partition is not part of the runtime.
 
-| File | Result |
-|---|---|
-| `update-store-DQkZxaRI.js` | OK |
-| `util-JEiJiY0O.js` | OK |
-| `model-CI6Gt3Hz.js` | OK |
-| `index-DTNtPvwx.js` | OK |
-| `VpnServerNetbirdForm-NB.js` | OK |
+These facts do **not** by themselves validate the current native
+`/admin/vpn -> vpnc -> netifd` integration.
 
-Patch presence (verified in decompressed output): `e.Netbird="netbird"` enum,
-`typeNetbird` i18n, `[t.Netbird, ...]` getType map, `nbStatus/nbSettingsSet/...`
-model RPC, `case it.Netbird:return VpnServerNetbirdForm` switch, `Dt()` filter,
-client-list injection, generic-save skip for `netbird`, 27/27 locale bundles.
+## Code corrections after the 2026-08-31 re-audit
 
-## MIBIB
+The branch `fix/netbird-ui-state-routing` was corrected after an end-to-end
+file-by-file audit found several false assumptions in the previous gate.
 
-`mibib-netbird.bin` is generated ONLY via `mibib/make-mibib.sh` (regenerates
-from `mibib-original.bin` with `mibib_tool.py patch()`, which updates BOTH the
-system and user partition tables and recalculates the footer CRC), and is
-gated by three independent checks: `mibib_tool.py show`, `mibib_check.pl`, and
-`mibib_verify.py` (a committed read-only re-implementation that re-derives the
-CRC bitwise). A previous hand-patched artifact had a stale CRC and an
-un-updated user partition table (count 16); it was rejected by
-`mibib_tool.py show` and replaced. See `mibib/make-mibib.sh` for the process.
+### Profile authority
 
-Current artifact: sha256 `d5e7a4f78a2164e3cc651271828c14dcc5c85af324c8d83412b0ebfe097d63f5`
-— **17 entries**, system + user tables (count 17 in both copies), footer CRC
-valid in both copies (copy 0 `774dac3d`, copy 1 `dabbcca0`), copies identical,
-no overlap. `netbird_data` at `start=0x06740000 size=0x01000000
-end=0x07740000` (start_eb 826, len 128). `rootfs`/`rootfs_1`/`tp_data`/
-`radio`/`data` geometry **unchanged** vs original.
+- `/admin/vpn?form=server` is the normal profile settings authority.
+- `/admin/netbird` no longer dispatches `settings_set`.
+- The final frontend model must not contain `operation:"settings_set"`,
+  `nbSettingsSet` or the old dedicated connected-status/list/save bridge.
 
-## Payload (R2 runtime)
+### Delete / identity cleanup
 
-| Field | Value |
-|---|---|
-| R2 bucket | `ax53-netbird` |
-| Object | `netbird/0.77.1/linux-armv6/netbird-dict8.xz` |
-| Public URL | `https://netbird-dl.ailtonrodrigues1324.workers.dev/netbird/0.77.1/linux-armv6/netbird-dict8.xz` |
-| compressed SHA-256 | `4b0648305e5f4126fa58be391e5db995447a58d867d5d290a15b2df972c58941` |
-| decoded SHA-256 (v0.77.1) | `6cc347b741695e6664d4ba0ba7004e823a77ab0705a4de5ebe92b290623bb8e6` |
-| `xzmini` (ARMv7 static-pie) | `b0d7464d643bb52c9f975a8192686f69ae5fbb82d771271f7c4eb3aa1415f9f7` |
+- `nb_clean()` removes identity/state without recreating `state/`.
+- Auxiliary `profile_delete` is idempotent:
+  - native NetBird profile still exists -> skip;
+  - no profile and no artifacts -> no-op;
+  - no profile but orphan identity exists -> cleanup.
+- Stock deletion remains authoritative; auxiliary cleanup only handles NetBird
+  external identity/runtime artifacts.
 
-Round-trip (host + on-device):
-1. Public download → sha256 `4b064830…` (matches local).
-2. `xzmini` (stdin→stdout) → ELF 39,125,176 B, sha256 `6cc347b7…` (matches).
-3. On-device `nb_materialize` (real curl + device CA bundle): `READY`; tmpfs
-   peak measured 31.6 → 69.8 MiB (< 96.7 MiB), free RAM 63.9 → 23.7 MiB.
-4. Fail-closed paths verified on-device: bad URL → `PAYLOAD_DOWNLOAD_FAILED`;
-   wrong pinned compressed hash → `PAYLOAD_INVALID`; corrupt XZ → `PAYLOAD_INVALID`;
-   cooldown blocks auto-retry; `force` (manual start/restart/enroll) retries.
+### Routing peer invariant
 
-The historical MIBIB (`mibib/`) and `netbird-data`/UBI artifacts are **NOT
-used by the current runtime** (see `NOT_USED_BY_CURRENT_RUNTIME.md` markers and
-`docs/R2-RUNTIME.md`). The MIBIB section below documents that experiment only;
-the runtime MIBIB must be restored to the original (`mibib-original.bin`,
-sha256 `d12086f6…`) before any reboot — handled separately.
+NetBird v0.77.1 documents `--disable-server-routes=true` as disabling route
+server behaviour. Therefore the local routing state is invalid when:
 
-## netbird-data image
+```text
+advertise_lan=1
+and
+disable_server_routes=1
+```
 
-`netbird-data.ubi` parses as a valid UBI image (min I/O 2048, LEB 126976, PEB
-131072) with a single **dynamic** volume `netbird_data`. Round-trip extraction
-yields `metadata` + `netbird-0.77.1.xz` (payload sha256 matches original).
+The frontend, Lua model and shell runtime all reject/prevent that state.
 
-## Firmware round-trip
+`advertise_lan`/`advertise_cidr` do not create a control-plane Network/Resource.
+The corresponding Network/Resource/Policy must exist in NetBird Management and
+the AX53 must be selected as its routing peer.
 
-`Archer-AX53-NetBird.bin`: header + UBI at offset 4882; UBI volumes `kernel`
-(17 PEBs) + `ubi_rootfs` (282 PEBs); total 39,457,554 B (== stock). Extracted
-rootfs (via `extract_xz_patch.py`, XZ interception fired) contains all added
-files and patched bundles. Executable bits correct in the packed rootfs
-(755 for `netbird-ctl`/`xzmini`/`init.d/netbird`).
+### Deterministic firewall mutation
 
-## Command-injection / secrets static audit
+Applied firewall values are snapshotted in RAM:
 
-- All control paths build argv via the model's local `shellquote()` (POSIX
-  single-quote; TP-Link's `luci.util` has no `shellquote`). Setup key goes only
-  through a 0600 temp file → `--setup-key-file` → `unlink`; never
-  argv/logs/rootfs/NAND.
-- No new admin endpoint without auth (registered under LuCI `admin` tree).
-- CIDR/URL/name/port whitelist validation in `model/netbird.lua`.
-- No secrets in logs/settings; `/tp_data/netbird` 0700, private files 0600.
+```text
+/tmp/netbird-firewall.state
+```
 
-## Residual risks
+Fields:
 
-1. **Frontend form is a new chunk** using plain controls styled with the same
-   design tokens (not the proprietary `su-*` component library). Functionally
-   complete; visual parity is partial.
-2. **Enrollment + connection** were validated on the real AX53 in the prior
-   phase; this phase's UI/backend wiring is validated offline only — the first
-   device test must exercise enroll → connect → status via the web UI.
-3. **NSS acceleration bypass** for NetBird traffic is not added (not required
-   for the proven peer-only path); verify throughput if routing-peer mode is used.
-4. The custom TP-Link Lua is bytecode-compiled; the two new modules ship as
-   **source** `.lua` (Lua 5.1 loads source transparently). Loader behaviour was
-   inferred, not exercised on-device (can be checked in `/tmp` on the device).
+```text
+port=
+access=
+cidr=
+homeif=
+```
+
+Before applying configuration B, the runtime removes the values recorded for A.
+This avoids trying to remove A by reading an already-updated settings file that
+contains B.
+
+`src/init/netbird_firewall.inc` is the canonical firewall implementation
+packaged by `mods/010-netbird.sh`.
+
+### netifd rollback
+
+Both immediate failure from `nb_runtime_connect()` and connection timeout call
+`nb_runtime_stop()` before `proto_setup_failed`. A failed netifd setup must not
+leave daemon/socket/wt0/firewall state orphaned.
+
+### Frontend source/final artifact parity
+
+The authored `VpnServerNetbirdForm-NB.js` now directly implements the final
+contract:
+
+- Add starts with `creating=true`.
+- `type=netbirdvpn` does not imply Edit.
+- Only persisted `key`/`id` establishes Edit.
+- The protocol subform does not own the stock profile key/type.
+- Enabling LAN routing enables server routes and validation prevents the
+  contradictory state.
+
+The finalizer still removes intermediate hybrid helpers from the TP-Link shared
+bundles, but it should not need to rewrite the subform's CREATE/EDIT semantics.
+
+## Offline gate
+
+Run in a current local clone:
+
+```sh
+make test-netbird
+```
+
+The target checks shell syntax, runtime behaviour, the authored frontend,
+structural contracts and a hermetic finalizer contract. It must pass before any
+firmware build.
+
+Important behavioural coverage includes:
+
+- `daemonStatus=Connected` **and** `management.connected=true` status semantics;
+- canonical `netbird up` flags without duplicates;
+- LAN routing requiring server routes;
+- firewall CIDR/port A -> B cleanup using applied state;
+- `nb_clean` not recreating identity state;
+- source CREATE/EDIT by persisted key/id.
+
+## Build gate
+
+Build only from an explicitly identified decrypted stock image:
+
+```sh
+make firmware STOCK=stock_decrypted.bin
+```
+
+Before repack, the build verifies at least:
+
+- original TP-Link VPN bytecode contract;
+- `netbirdvpn=5` registry extension;
+- `network.vpn.proto=netbird` handler chain;
+- no `S99netbird` in the final image;
+- netifd does not depend on `netbird-ctl`;
+- immediate-failure and timeout rollback paths are present;
+- routing/server-route validation exists;
+- applied firewall state support exists;
+- final frontend uses stock list/CRUD/status and key/id Add/Edit;
+- final model has no writable `settings_set` helper.
+
+Any failure is a stop point.
+
+## Hardware gate
+
+After a controlled flash, first validate LAN/WAN/Wi-Fi/DHCP/NAT and the fallback
+VPN. Then run `scripts/validate-netbird-native-router.sh` from `/tmp` or another
+temporary location.
+
+Required observations include:
+
+```sh
+uci show vpn.client
+uci show network.vpn
+ubus call network.interface.vpn status
+/sbin/netbird-ctl status
+/sbin/netbird-ctl payload-status
+ip addr show wt0
+cat /tmp/netbird-firewall.state
+iptables -S FORWARD | grep -E 'wt0|NETBIRD'
+iptables -t nat -S POSTROUTING | grep -E 'wt0|100\.64\.'
+```
+
+When LAN routing is enabled:
+
+- `disable_server_routes=0`;
+- applied firewall mode is `lan`;
+- applied CIDR matches the active profile;
+- scoped forwarding/MASQUERADE rules match that CIDR;
+- the matching Network/Resource exists in NetBird Management.
+
+Also test mutations on hardware:
+
+```text
+CIDR A -> CIDR B
+routing ON -> OFF
+WireGuard port X -> Y
+```
+
+No rule from A/X may remain after the transition.
+
+## External-direction acceptance
+
+A router-local test cannot prove routing in the direction users actually need.
+From a real remote NetBird peer, separately test:
+
+1. remote peer -> AX53 overlay address;
+2. remote peer -> LAN host through AX53;
+3. remote peer -> Proxmox/VMs/local Coolify where applicable;
+4. DNS using the target architecture without the historical `10.8.0.1`
+   dependency.
+
+Only those tests can validate the routing-peer path end to end.
+
+## Open hypothesis: INPUT traffic to the AX53 itself
+
+The current explicit NetBird firewall rule accepts `ESTABLISHED,RELATED` input
+on `wt0`; no broad rule for new inbound traffic was added. The observed stock
+firewall has global INPUT ACCEPT, but the exact chain/zone behaviour for `wt0`
+must be confirmed on hardware.
+
+If remote peer -> AX53 fails, inspect INPUT-chain counters/ordering first. Do
+**not** add a broad `-i wt0 -j ACCEPT` workaround without evidence.
+
+## Current validation status
+
+As of 2026-08-31, the code corrections and gates are committed on
+`fix/netbird-ui-state-routing`, but the current suite/build/hardware sequence has
+**not** been executed by the ChatGPT session environment because that executor
+could not resolve/clone `github.com`.
+
+Therefore:
+
+```text
+code correction: implemented
+static remote review: performed
+make test-netbird: pending local execution
+firmware build/repack: pending
+hardware flash: pending
+remote peer -> AX53/LAN acceptance: pending
+WG-Easy decommission: NOT authorized
+```
