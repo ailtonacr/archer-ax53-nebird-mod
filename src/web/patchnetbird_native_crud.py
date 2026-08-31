@@ -5,6 +5,10 @@ The stock base form owns profile identity fields (description/type/vendor/key).
 The NetBird subform owns protocol-specific fields only. A saved row is identified
 by its persisted key/id; VPN type alone must never be used to distinguish Add
 from Edit because both modes legitimately use type=netbirdvpn.
+
+The final model bundle keeps only the auxiliary identity-cleanup helper needed
+after stock DELETE. Hybrid writable settings/control helpers are removed so
+/admin/vpn?form=server remains the sole normal profile configuration path.
 """
 from __future__ import annotations
 
@@ -17,6 +21,10 @@ import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "rootfs"
 JS = os.path.join(ROOT, "www/webpages/js")
+
+LEGACY_HELPERS = 'const nb="/admin/netbird";function nbStatus(e){return a.request(nb,{operation:"status",...e},{preventSuccess:!0,preventError:!0})}function nbSettingsSet(e){return a.request(nb,{operation:"settings_set",...e},{preventSuccess:!0,preventError:!0})}function nbControl(e){return a.request(nb,{operation:e},{preventSuccess:!0,preventError:!0})}function nbDelete(){return a.request(nb,{operation:"profile_delete"},{preventSuccess:!0,preventError:!0})}'
+FACTORY_HELPERS = 'const nb="/admin/netbird";function nbEnabled(e){return!!(e&&(e.enable===!0||e.enable==="on"||e.enable==="1"||e.enabled===!0))}function nbStatus(e){return a.request(nb,{operation:"status",...e},{preventSuccess:!0,preventError:!0})}async function nbDisableStockActive(){const e=globalThis.__nbActiveStockVpn;if(!e)return;const n={...e,enable:!1,enabled:!1};await a.update(y,{key:e.key},R(n),R(e),{preventSuccess:!0});globalThis.__nbActiveStockVpn=null}async function nbStopIfEnabled(){const e=await nbStatus();e&&e.profileExists&&e.settings&&e.settings.enable==="1"&&await nbControl("stop")}async function nbSettingsSet(e){nbEnabled(e)&&await nbDisableStockActive();return a.request(nb,{operation:"settings_set",...e},{preventSuccess:!0,preventError:!0})}async function nbControl(e){e==="start"&&await nbDisableStockActive();return a.request(nb,{operation:e},{preventSuccess:!0,preventError:!0})}function nbDelete(){return a.request(nb,{operation:"profile_delete"},{preventSuccess:!0,preventError:!0})}'
+DELETE_HELPER = 'const nb="/admin/netbird";function nbDelete(){return a.request(nb,{operation:"profile_delete"},{preventSuccess:!0,preventError:!0})}'
 
 
 def read_gz(name: str) -> str:
@@ -54,6 +62,23 @@ def patch_update_store() -> None:
     text = replace_once(text, 'e.Netbird="netbird"', 'e.Netbird="netbirdvpn"', "native NetBird enum")
     check_js(name, text)
     write_gz(name, text)
+
+
+def strip_hybrid_helpers(text: str) -> str:
+    if FACTORY_HELPERS in text:
+        text = text.replace(FACTORY_HELPERS, DELETE_HELPER, 1)
+    elif LEGACY_HELPERS in text:
+        text = text.replace(LEGACY_HELPERS, DELETE_HELPER, 1)
+    elif DELETE_HELPER not in text:
+        raise RuntimeError("native helpers: expected hybrid or delete-only helper block")
+
+    export_variants = (
+        ('j as z,nbStatus as nbA,nbSettingsSet as nbB,nbControl as nbD,nbDelete as nbF,nbStopIfEnabled as nbG};', 'j as z,nbDelete as nbF};'),
+        ('j as z,nbStatus as nbA,nbSettingsSet as nbB,nbControl as nbD,nbDelete as nbF};', 'j as z,nbDelete as nbF};'),
+    )
+    for old, new in export_variants:
+        text = text.replace(old, new)
+    return text
 
 
 def patch_model() -> None:
@@ -96,6 +121,7 @@ def patch_model() -> None:
             raise RuntimeError("native serializer: stock R(e) marker not unique")
         text = text.replace(marker, native_serializer, 1)
 
+    text = strip_hybrid_helpers(text)
     check_js(name, text)
     write_gz(name, text)
 
@@ -147,6 +173,7 @@ def assert_native(root: str) -> None:
         'type:u.Netbird,server:n,management_url:e.management_url||""',
         'new URL(n).hostname',
         'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete()}',
+        'function nbDelete(){return a.request(nb,{operation:"profile_delete"}',
         'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}',
         'const existing = !!(value && (value.key || value.id))',
         'const creating = ref(true)',
@@ -154,12 +181,16 @@ def assert_native(root: str) -> None:
         'stockComponent(this, "su-form-item")',
         'stockComponent(this, "su-input")',
         'stockComponent(this, "su-checkbox")',
+        's.advertise_lan === "1" && s.disable_server_routes !== "0"',
     ]
     missing = [x for x in required if x not in combined]
     if missing:
         raise RuntimeError("native NetBird CRUD/form contract incomplete: " + ", ".join(missing))
     forbidden = [
         'e==="netbird"?a.request("/admin/netbird",{operation:"connected_status"}',
+        'operation:"settings_set"',
+        'function nbSettingsSet(',
+        'function nbControl(',
         'a.value=_nb.concat(e)',
         'it.Netbird===i.type?await Nbs(i)',
         'if(e==="netbird"){await nbDelete();return}',
@@ -182,7 +213,7 @@ def main() -> None:
     patch_page()
     patch_form()
     assert_native(ROOT)
-    print("Native NetBird finalization complete: stock CRUD/base form + key-based Add/Edit protocol subform")
+    print("Native NetBird finalization complete: stock CRUD/base form + auxiliary delete-only bridge")
 
 
 if __name__ == "__main__":
