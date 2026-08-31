@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Post-patch AX53 VPN Client bundles with factory-compatible exclusivity.
 
-This pass now touches only TP-Link's shared model/page bundles. The NetBird
-subform itself is authored with the complete native form contract in
+This pass touches only TP-Link's shared model/page bundles. The NetBird subform
+itself is authored with the complete native form contract in
 VpnServerNetbirdForm-NB.js and must not be rewritten through brittle string
 substitutions after installation.
 """
@@ -107,15 +107,20 @@ def check_native_form_source() -> None:
         'stockComponent(this, "su-checkbox")',
         'stockComponent(this, "su-button")',
         'stockComponent(this, "su-alert")',
-        'value.type === "netbirdvpn"',
+        'const creating = ref(true)',
+        'const existing = !!(value && (value.key || value.id))',
+        's.advertise_lan === "1" && s.disable_server_routes !== "0"',
     ]
     missing = [token for token in required if token not in text]
     if missing:
         raise RuntimeError("native NetBird form source incomplete: " + ", ".join(missing))
-    forbidden = ["NETBIRD_CSS", 'type: "checkbox"', 'class: "netbird-input"', "syncNativeSaveButton"]
+    forbidden = [
+        "NETBIRD_CSS", 'type: "checkbox"', 'class: "netbird-input"', "syncNativeSaveButton",
+        'value.type === "netbirdvpn"', 'value.type === "netbird"', "const creating = ref(false)",
+    ]
     leaked = [token for token in forbidden if token in text]
     if leaked:
-        raise RuntimeError("legacy custom NetBird UI leaked: " + ", ".join(leaked))
+        raise RuntimeError("legacy/type-derived NetBird UI leaked: " + ", ".join(leaked))
     check_js(name, text)
 
 
@@ -124,7 +129,7 @@ def main() -> None:
     patch_model_export()
     patch_page()
     check_native_form_source()
-    print("Factory VPN exclusivity patched; NetBird stock-component form preserved")
+    print("Factory VPN exclusivity patched; final NetBird stock-component form preserved")
 
 
 if __name__ == "__main__":
