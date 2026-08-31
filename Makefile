@@ -25,7 +25,8 @@ $(TARGET): $(SRCS)
 # It is hermetic with respect to rootfs/: generated bundles are checked after
 # unpack/apply-mods against the selected STOCK image in the firmware target.
 test-netbird:
-	sh -n src/init/netbird.sh src/init/netbird-runtime.sh src/init/netbird-ctl src/init/netbird-proto.sh src/init/netbird.init scripts/test-netbird-runtime.sh
+	sh -n src/init/netbird.sh src/init/netbird-runtime.sh src/init/netbird-ctl src/init/netbird-proto.sh src/init/netbird.init src/init/netbird_firewall.inc scripts/test-netbird-runtime.sh
+	bash -n mods/010-netbird.sh mods/012-netbird-native-vpn.sh
 	sh scripts/test-netbird-runtime.sh
 	node src/web/VpnServerNetbirdForm-NB.test.mjs
 	python3 scripts/test-netbird-contracts.py .
