@@ -110,6 +110,9 @@ def check_native_form_source() -> None:
         'const creating = ref(true)',
         'const existing = !!(value && (value.key || value.id))',
         's.advertise_lan === "1" && s.disable_server_routes !== "0"',
+        's.advertise_lan === "1" && s.disable_firewall !== "0"',
+        'draft.value.disable_firewall = "0"',
+        'Permitir roteamento da LAN',
     ]
     missing = [token for token in required if token not in text]
     if missing:
@@ -117,6 +120,7 @@ def check_native_form_source() -> None:
     forbidden = [
         "NETBIRD_CSS", 'type: "checkbox"', 'class: "netbird-input"', "syncNativeSaveButton",
         'value.type === "netbirdvpn"', 'value.type === "netbird"', "const creating = ref(false)",
+        'Anunciar rede local',
     ]
     leaked = [token for token in forbidden if token in text]
     if leaked:
