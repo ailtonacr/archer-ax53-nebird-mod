@@ -69,7 +69,8 @@ firmware: $(TARGET) test-netbird
 		grep -q "result = \"noop\"" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: NetBird delete cleanup is not idempotent" >&2; exit 1; }; \
 		grep -q "connected_status" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: auxiliary NetBird diagnostics endpoint missing" >&2; exit 1; }; \
 		grep -Fq "/etc/init.d/vpnc restart" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: UI restart bypasses native vpnc lifecycle" >&2; exit 1; }; \
-		grep -q "server routes must be enabled when LAN routing is enabled" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: backend does not reject impossible routing-peer settings" >&2; exit 1; }; \
+		grep -q "server routes must be enabled when LAN routing is enabled" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: backend does not reject routing with server routes disabled" >&2; exit 1; }; \
+		grep -q "NetBird firewall must be enabled when LAN routing is enabled" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: backend does not require NetBird firewall policy enforcement for LAN routing" >&2; exit 1; }; \
 		cmp -s src/init/netbird.sh rootfs/lib/netbird/netbird.sh || { echo "Error: packaged netbird.sh drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird-runtime.sh rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: packaged native runtime drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird-ctl rootfs/sbin/netbird-ctl || { echo "Error: packaged netbird-ctl drifted from canonical source" >&2; exit 1; }; \
@@ -83,10 +84,13 @@ firmware: $(TARGET) test-netbird
 		test "$$(printf "%s\n" "$$PROTO_SETUP" | grep -c "nb_runtime_stop")" -ge 2 || { echo "Error: netifd setup rollback is incomplete" >&2; exit 1; }; \
 		test ! -e rootfs/etc/rc.d/S99netbird || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }; \
 		grep -q "NB_FW_STATE=\"/tmp/netbird-firewall.state\"" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: applied firewall state snapshot missing" >&2; exit 1; }; \
-		grep -q "nb_fw_prioritize_lan_values" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: prioritized LAN forwarding helper missing" >&2; exit 1; }; \
 		grep -q "nb_runtime_validate_settings" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: runtime routing settings validation missing" >&2; exit 1; }; \
+		grep -q "LAN routing requires NetBird firewall policy enforcement" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: runtime does not preserve NetBird Route ACL enforcement" >&2; exit 1; }; \
+		if grep -Eq "iptables[[:space:]].*(-I|--insert)[[:space:]]+FORWARD" rootfs/lib/netbird/netbird-runtime.sh; then echo "Error: runtime contains a priority FORWARD bypass" >&2; exit 1; fi; \
+		if grep -q "nb_fw_prioritize_lan" rootfs/lib/netbird/netbird-runtime.sh; then echo "Error: retired Route ACL bypass helper remains" >&2; exit 1; fi; \
 		grep -q -- "--wireguard-port" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: WireGuard port is not applied by canonical NetBird flag builder" >&2; exit 1; }; \
-		grep -q "# NetBird v3 CIDR-scoped/applied-state" rootfs/lib/firewall/tpcmd.sh || { echo "Error: canonical NetBird firewall source missing" >&2; exit 1; }; \
+		grep -q "# NetBird v4 CIDR-scoped/applied-state" rootfs/lib/firewall/tpcmd.sh || { echo "Error: ACL-safe canonical NetBird firewall source missing" >&2; exit 1; }; \
+		if grep -Fq "fw_s_add 4 f FORWARD ACCEPT 1 {" rootfs/lib/firewall/tpcmd.sh; then echo "Error: TP-Link NetBird FORWARD rules bypass Route ACL ordering" >&2; exit 1; fi; \
 		zcat rootfs/www/webpages/js/update-store-DQkZxaRI.js.gz | grep -Fq "e.Netbird=\"netbirdvpn\"" || { echo "Error: frontend NetBird enum is not netbirdvpn" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "function f(e){return a.request(y,{operation:\"connected_status\",key:e},{preventSuccess:!0})}" || { echo "Error: NetBird connected-status is not using stock VPN endpoint" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "new URL(n).hostname" || { echo "Error: NetBird stock server field is not normalized to a pingable hostname" >&2; exit 1; }; \
@@ -95,8 +99,11 @@ firmware: $(TARGET) test-netbird
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "const existing = !!(value && (value.key || value.id))" || { echo "Error: NetBird Add/Edit is not keyed by persisted stock identity" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "const creating = ref(true)" || { echo "Error: NetBird Add form does not default to CREATE" >&2; exit 1; }; \
 		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "stockComponent(this, \"su-form\")" || { echo "Error: NetBird form is not using stock TP-Link controls" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "s.advertise_lan === \"1\" && s.disable_server_routes !== \"0\"" || { echo "Error: frontend routing-peer invariant missing" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "s.advertise_lan === \"1\" && s.disable_server_routes !== \"0\"" || { echo "Error: frontend server-route invariant missing" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "s.advertise_lan === \"1\" && s.disable_firewall !== \"0\"" || { echo "Error: frontend NetBird firewall invariant missing" >&2; exit 1; }; \
+		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "Permitir roteamento da LAN" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; exit 1; }; \
 		if zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "value.type === \"netbirdvpn\""; then echo "Error: NetBird Add/Edit still inferred from VPN type" >&2; exit 1; fi; \
+		if zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "Anunciar rede local"; then echo "Error: misleading LAN announcement label remains" >&2; exit 1; fi; \
 		if zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -Fq "a.value=_nb.concat(e)"; then echo "Error: synthetic NetBird list bridge remains" >&2; exit 1; fi; \
 		if zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "e===\"netbird\"?a.request(\"/admin/netbird\",{operation:\"connected_status\"}"; then echo "Error: dedicated NetBird connected-status bridge remains" >&2; exit 1; fi; \
 		if zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "operation:\"settings_set\""; then echo "Error: writable hybrid NetBird helper remains in final bundle" >&2; exit 1; fi; \
@@ -111,7 +118,7 @@ firmware: $(TARGET) test-netbird
 		echo "    ok auxiliary endpoint read-only for profile settings"; \
 		echo "    ok vpnc/netifd sole normal lifecycle owner + rollback"; \
 		echo "    ok key-based Add/Edit + stock TP-Link protocol subform"; \
-		echo "    ok routing-peer/server-route invariant + applied firewall state"; \
+		echo "    ok routing-peer invariants + NetBird Route ACL ordering + applied firewall state"; \
 		echo "    ok build identity: $$STAMPED_VERSION"; \
 		echo "=== [5/6] Repacking firmware ==="; \
 		rm -f "$(FIRMWARE_OUTPUT)"; \
