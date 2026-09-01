@@ -77,6 +77,7 @@ printf '%s' "$UBUS" | grep -q 'wt0' && ok "network.interface.vpn references wt0"
 ADVERTISE_LAN="$(sed -n 's/^advertise_lan=//p' /tp_data/netbird/settings 2>/dev/null | head -n1)"
 ADVERTISE_CIDR="$(sed -n 's/^advertise_cidr=//p' /tp_data/netbird/settings 2>/dev/null | head -n1)"
 DISABLE_SERVER_ROUTES="$(sed -n 's/^disable_server_routes=//p' /tp_data/netbird/settings 2>/dev/null | head -n1)"
+DISABLE_FIREWALL="$(sed -n 's/^disable_firewall=//p' /tp_data/netbird/settings 2>/dev/null | head -n1)"
 WG_PORT="$(sed -n 's/^wireguard_port=//p' /tp_data/netbird/settings 2>/dev/null | head -n1)"
 HOME_IF="$(uci_get_state firewall core lan_ifname 2>/dev/null)"
 [ -n "$HOME_IF" ] || HOME_IF="br-lan"
@@ -95,14 +96,29 @@ fi
 
 if [ "$ADVERTISE_LAN" = "1" ]; then
     expect_eq "disable_server_routes for routing peer" "$DISABLE_SERVER_ROUTES" "0"
+    expect_eq "disable_firewall for Route ACL enforcement" "$DISABLE_FIREWALL" "0"
     [ -n "$ADVERTISE_CIDR" ] && ok "LAN routing CIDR configured: $ADVERTISE_CIDR" || fail "advertise_lan=1 without advertise_cidr"
     if [ -f "$FW_STATE" ]; then
         expect_eq "applied firewall mode" "$APPLIED_ACCESS" "lan"
         expect_eq "applied firewall CIDR" "$APPLIED_CIDR" "$ADVERTISE_CIDR"
     fi
+
+    # NetBird v0.77.1 owns inbound routed authorization. Its jump must be the
+    # first wt0-specific FORWARD decision; an earlier ACCEPT would bypass Route ACLs.
+    FORWARD_RULES="$(iptables -S FORWARD 2>/dev/null || true)"
+    FIRST_WT0="$(printf '%s\n' "$FORWARD_RULES" | grep -- '-i wt0' | head -n1)"
+    if printf '%s' "$FIRST_WT0" | grep -Fq -- '-j NETBIRD-RT-FWD-IN'; then
+        ok "NetBird Route ACL jump precedes local wt0 FORWARD rules"
+    else
+        fail "first wt0 FORWARD rule is not NETBIRD-RT-FWD-IN: ${FIRST_WT0:-<none>}"
+    fi
+    iptables -S NETBIRD-RT-FWD-IN >/dev/null 2>&1 \
+        && ok "NETBIRD-RT-FWD-IN chain exists" \
+        || fail "NETBIRD-RT-FWD-IN chain missing while LAN routing is enabled"
+
     if [ -n "$ADVERTISE_CIDR" ]; then
-        iptables -S FORWARD 2>/dev/null | grep -F -- "-i wt0 -o $HOME_IF -d $ADVERTISE_CIDR -j ACCEPT" >/dev/null \
-            && ok "priority wt0 -> LAN rule present" || fail "missing priority wt0 -> LAN rule"
+        printf '%s\n' "$FORWARD_RULES" | grep -F -- "-i wt0 -o $HOME_IF -d $ADVERTISE_CIDR -j ACCEPT" >/dev/null \
+            && ok "scoped wt0 -> LAN integration rule present" || fail "missing scoped wt0 -> LAN integration rule"
         iptables -t nat -S POSTROUTING 2>/dev/null | grep -F -- "-o $HOME_IF -s 100.64.0.0/10 -d $ADVERTISE_CIDR -j MASQUERADE" >/dev/null \
             && ok "overlay -> LAN scoped MASQUERADE present" || fail "missing scoped overlay -> LAN MASQUERADE"
     fi
