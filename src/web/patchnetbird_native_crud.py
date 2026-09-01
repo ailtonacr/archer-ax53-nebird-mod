@@ -182,6 +182,9 @@ def assert_native(root: str) -> None:
         'stockComponent(this, "su-input")',
         'stockComponent(this, "su-checkbox")',
         's.advertise_lan === "1" && s.disable_server_routes !== "0"',
+        's.advertise_lan === "1" && s.disable_firewall !== "0"',
+        'draft.value.disable_firewall = "0"',
+        'Permitir roteamento da LAN',
     ]
     missing = [x for x in required if x not in combined]
     if missing:
@@ -201,6 +204,7 @@ def assert_native(root: str) -> None:
         "NETBIRD_CSS",
         'type: "checkbox"',
         'class: "netbird-input"',
+        'Anunciar rede local',
     ]
     leaked = [x for x in forbidden if x in combined]
     if leaked:
@@ -213,7 +217,7 @@ def main() -> None:
     patch_page()
     patch_form()
     assert_native(ROOT)
-    print("Native NetBird finalization complete: stock CRUD/base form + auxiliary delete-only bridge")
+    print("Native NetBird finalization complete: stock CRUD/base form + policy-safe routing + auxiliary delete-only bridge")
 
 
 if __name__ == "__main__":
