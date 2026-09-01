@@ -101,7 +101,16 @@ grep -q '^nb_runtime_is_connected()' "$R/lib/netbird/netbird-runtime.sh"
 grep -q '^nb_runtime_validate_settings()' "$R/lib/netbird/netbird-runtime.sh"
 grep -q 'NB_FW_STATE="/tmp/netbird-firewall.state"' "$R/lib/netbird/netbird-runtime.sh"
 grep -q 'LAN routing requires server routes to be enabled' "$R/lib/netbird/netbird-runtime.sh"
+grep -q 'LAN routing requires NetBird firewall policy enforcement' "$R/lib/netbird/netbird-runtime.sh"
 grep -q -- '--wireguard-port=' "$R/lib/netbird/netbird-runtime.sh"
+if grep -Eq 'iptables[[:space:]].*(-I|--insert)[[:space:]]+FORWARD' "$R/lib/netbird/netbird-runtime.sh"; then
+  echo "Error: runtime contains a priority FORWARD bypass ahead of NetBird Route ACLs" >&2
+  exit 1
+fi
+if grep -q 'nb_fw_prioritize_lan' "$R/lib/netbird/netbird-runtime.sh"; then
+  echo "Error: retired NetBird Route ACL bypass helper remains" >&2
+  exit 1
+fi
 grep -q 'nb_runtime_connect' "$R/lib/netifd/proto/netbird.sh"
 if grep -q '/sbin/netbird-ctl' "$R/lib/netifd/proto/netbird.sh"; then
   echo "Error: netifd NetBird protocol still depends on netbird-ctl" >&2
@@ -118,6 +127,20 @@ PROTO_SETUP="$(sed -n '/^proto_netbird_setup()/,/^proto_netbird_teardown()/p' "$
 }
 test ! -e "$R/etc/rc.d/S99netbird" || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }
 
+# Canonical firewall must preserve NetBird v0.77.1 Route ACL ordering.
+grep -q '# NetBird v4 CIDR-scoped/applied-state' "$R/lib/firewall/tpcmd.sh" || {
+  echo "Error: ACL-safe canonical NetBird firewall source missing" >&2
+  exit 1
+}
+if grep -Fq 'fw_s_add 4 f FORWARD ACCEPT 1 {' "$R/lib/firewall/tpcmd.sh"; then
+  echo "Error: TP-Link NetBird FORWARD rule is inserted ahead of NetBird Route ACLs" >&2
+  exit 1
+fi
+grep -Fq 'fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }' "$R/lib/firewall/tpcmd.sh" || {
+  echo "Error: ACL-safe appended wt0 -> LAN rule missing" >&2
+  exit 1
+}
+
 # Final frontend contract: stock CRUD/base form, protocol-only su-* subform.
 zcat "$R/www/webpages/js/update-store-DQkZxaRI.js.gz" | grep -Fq 'e.Netbird="netbirdvpn"'
 zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
@@ -129,9 +152,15 @@ zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'const creati
 zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'stockComponent(this, "su-form")'
 zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'stockComponent(this, "su-checkbox")'
 zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 's.advertise_lan === "1" && s.disable_server_routes !== "0"'
+zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 's.advertise_lan === "1" && s.disable_firewall !== "0"'
+zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'Permitir roteamento da LAN'
 
 if zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'value.type === "netbirdvpn"'; then
   echo "Error: NetBird Add/Edit still inferred from VPN type instead of persisted key/id" >&2
+  exit 1
+fi
+if zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'Anunciar rede local'; then
+  echo "Error: UI still claims the router announces a NetBird management resource" >&2
   exit 1
 fi
 if zcat "$R/www/webpages/js/index-DTNtPvwx.js.gz" | grep -Fq 'a.value=_nb.concat(e)'; then
@@ -143,7 +172,7 @@ if zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'e==="netbird"?a.re
   exit 1
 fi
 if zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'operation:"settings_set"'; then
-  echo "Error: writable hybrid NetBird settings helper remains in final model bundle" >&2
+  echo "Error: writable hybrid NetBird settings helper remains in final bundle" >&2
   exit 1
 fi
 if zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'function nbSettingsSet('; then
