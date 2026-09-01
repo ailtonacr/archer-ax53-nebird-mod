@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import sys
 
 ROOT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else pathlib.Path(__file__).resolve().parents[1]
@@ -69,6 +70,8 @@ def check_auxiliary_boundary() -> None:
     require(model,
         'cur.advertise_lan == "1" and cur.disable_server_routes ~= "0"',
         'server routes must be enabled when LAN routing is enabled',
+        'cur.advertise_lan == "1" and cur.disable_firewall ~= "0"',
+        'NetBird firewall must be enabled when LAN routing is enabled',
         'if not raw:match("^%d+$") then return false end')
 
 
@@ -86,14 +89,19 @@ def check_runtime_library() -> None:
 
     require(runtime,
         'nb_up_flags()', '"--wireguard-port=${wg_port}"', 'nb_runtime_validate_settings()',
-        'LAN routing requires server routes to be enabled', 'nb_daemon_ping()', 'nb_status_json()',
+        'LAN routing requires server routes to be enabled',
+        'LAN routing requires NetBird firewall policy enforcement',
+        'nb_daemon_ping()', 'nb_status_json()',
         'nb_runtime_is_connected()', 'management="$(printf', 'grep -q \'"connected":true\'',
         'NB_FW_STATE="/tmp/netbird-firewall.state"', 'nb_fw_write_state()', 'nb_fw_read_state()',
-        'nb_fw_clear_priority_values()', 'nb_runtime_connect()', 'nb_runtime_disconnect()',
-        'nb_runtime_stop()', 'nb_runtime_restart()', 'nb_runtime_apply_firewall()',
-        'nb_runtime_remove_firewall()', 'nb_enroll()', 'nb_runtime_connect "$keyfile"',
-        'nb_clean()', 'if [ -f "$NB_SETTINGS_FILE" ]; then')
-    assert "/sbin/netbird-ctl" not in shell_code(runtime)
+        'nb_runtime_connect()', 'nb_runtime_disconnect()', 'nb_runtime_stop()', 'nb_runtime_restart()',
+        'nb_runtime_apply_firewall()', 'nb_runtime_remove_firewall()', 'nb_enroll()',
+        'nb_runtime_connect "$keyfile"', 'nb_clean()', 'if [ -f "$NB_SETTINGS_FILE" ]; then')
+    runtime_code = shell_code(runtime)
+    assert "/sbin/netbird-ctl" not in runtime_code
+    assert not re.search(r'iptables\s+.*(?:-I|--insert)\s+FORWARD', runtime_code), \
+        "shared runtime must not bypass NetBird Route ACLs with priority FORWARD ACCEPT"
+    assert "nb_fw_prioritize_lan" not in runtime, "retired Route ACL bypass helper remains"
     connect = between(runtime, "nb_runtime_connect()", "nb_runtime_disconnect()")
     assert connect.count('"$NB_BIN" up') == 2
     assert connect.count("$(nb_up_flags)") == 2
@@ -139,14 +147,18 @@ def check_firewall_source() -> None:
     fw = text("src/init/netbird_firewall.inc")
     mod = text("mods/010-netbird.sh")
     require(fw,
-        '# NetBird v3 CIDR-scoped/applied-state firewall integration.',
+        '# NetBird v4 CIDR-scoped/applied-state firewall integration.',
+        'NetBird v0.77.1 owns route authorization through NETBIRD-RT-FWD-* chains',
         'local cidr="$3"', 'local homeif="$4"',
         'fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }',
+        'fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }',
+        'fw_s_add 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }',
         'fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }')
+    assert 'fw_s_add 4 f FORWARD ACCEPT 1 {' not in fw, \
+        "TP-Link scoped rules must append after NetBird Route ACL chains"
     require(mod,
         'FIREWALL_SRC="$RUNTIME_SRC/netbird_firewall.inc"',
-        'cat "$FIREWALL_SRC" >> "$R/lib/firewall/tpcmd.sh"',
-        '# NetBird v3 CIDR-scoped/applied-state')
+        'cat "$FIREWALL_SRC" >> "$R/lib/firewall/tpcmd.sh"')
     assert "fw_netbird_access(){" not in mod, "firewall implementation must have one canonical source"
 
 
@@ -184,13 +196,16 @@ def check_frontend_tests_are_final_artifact_aligned() -> None:
     integration = text("scripts/test-netbird-native-frontend.py")
     require(source,
         'const creating = ref(true)', 'const existing = !!(value && (value.key || value.id))',
-        's.advertise_lan === "1" && s.disable_server_routes !== "0"')
+        's.advertise_lan === "1" && s.disable_server_routes !== "0"',
+        's.advertise_lan === "1" && s.disable_firewall !== "0"',
+        'draft.value.disable_firewall = "0"', 'Permitir roteamento da LAN')
     assert 'value.type === "netbirdvpn"' not in source
+    assert 'Anunciar rede local' not in source
     require(source_test,
         'type: "netbirdvpn", management_url:', 'assert.equal(state.creating.value, true)',
         'key: "arbitrary-stock-key", type: "netbirdvpn"',
         'assert.equal(state.creating.value, false)', 'Rotas de servidor',
-        'protocol subform must not own TP-Link profile key')
+        'firewall do NetBird', 'protocol subform must not own TP-Link profile key')
     require(integration,
         'patchnetbird_native_crud.py', 'e.Netbird="netbirdvpn"',
         'const existing = !!(value && (value.key || value.id))', 'const creating = ref(true)',
