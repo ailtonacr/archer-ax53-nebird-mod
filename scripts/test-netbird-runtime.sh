@@ -87,12 +87,14 @@ do
     }
 done
 
-# Routing peer invariant: advertise_lan cannot coexist with disabled server
-# routes because NetBird v0.77.1 would then refuse to act as a route server.
+# Routing peer invariants from NetBird v0.77.1:
+# - server routes must be enabled so this peer can route management-delivered routes;
+# - NetBird firewall must be enabled so NETBIRD-RT-FWD-* Route ACLs remain authoritative.
 cat > "$NB_SETTINGS_FILE" <<'EOF'
 advertise_lan=1
 advertise_cidr=192.168.10.0/24
 disable_server_routes=1
+disable_firewall=1
 wireguard_port=51820
 EOF
 if nb_runtime_validate_settings >/dev/null 2>&1; then
@@ -100,30 +102,36 @@ if nb_runtime_validate_settings >/dev/null 2>&1; then
     exit 1
 fi
 sed -i 's/^disable_server_routes=1$/disable_server_routes=0/' "$NB_SETTINGS_FILE"
+if nb_runtime_validate_settings >/dev/null 2>&1; then
+    echo "routing invariant accepted advertise_lan=1 + disable_firewall=1" >&2
+    exit 1
+fi
+sed -i 's/^disable_firewall=1$/disable_firewall=0/' "$NB_SETTINGS_FILE"
 nb_runtime_validate_settings || {
-    echo "routing invariant rejected valid server-route configuration" >&2
+    echo "routing invariant rejected policy-safe route configuration" >&2
     exit 1
 }
+
+# The shared runtime must not install direct FORWARD ACCEPT rules ahead of the
+# NetBird routing ACL chains. Policy ordering belongs to the canonical firewall
+# adapter, which appends scoped TP-Link rules after NetBird's own jumps.
+if grep -Eq 'iptables[[:space:]].*-I[[:space:]]+FORWARD|iptables[[:space:]].*--insert[[:space:]]+FORWARD' "$ROOT/src/init/netbird-runtime.sh"; then
+    echo "runtime contains a direct FORWARD priority bypass" >&2
+    exit 1
+fi
 
 # Mock firewall primitives and prove A -> B removes A using applied-state data,
 # rather than reading already-mutated settings and trying to remove B twice.
 : > "$TMP/fw.log"
-: > "$TMP/iptables.log"
 uci_get_state() { printf '%s\n' "br-lan"; }
 nb_fw_access() { printf 'access port=%s mode=%s cidr=%s homeif=%s\n' "$1" "$2" "$3" "$4" >> "$TMP/fw.log"; return 0; }
 nb_fw_block() { printf 'block port=%s mode=%s cidr=%s homeif=%s\n' "$1" "$2" "$3" "$4" >> "$TMP/fw.log"; return 0; }
-iptables() {
-    printf '%s\n' "$*" >> "$TMP/iptables.log"
-    case " $* " in
-        *" -D "*) return 1 ;;
-        *) return 0 ;;
-    esac
-}
 
 cat > "$NB_SETTINGS_FILE" <<'EOF'
 advertise_lan=1
 advertise_cidr=192.168.10.0/24
 disable_server_routes=0
+disable_firewall=0
 wireguard_port=51820
 EOF
 nb_runtime_apply_firewall
@@ -135,6 +143,7 @@ cat > "$NB_SETTINGS_FILE" <<'EOF'
 advertise_lan=1
 advertise_cidr=172.24.10.0/24
 disable_server_routes=0
+disable_firewall=0
 wireguard_port=51999
 EOF
 nb_runtime_apply_firewall
@@ -176,4 +185,4 @@ nb_clean
 grep -Fxq 'enable=0' "$NB_SETTINGS_FILE"
 grep -Fxq 'enrolled=0' "$NB_SETTINGS_FILE"
 
-echo "netbird runtime status/flags/routing/firewall-cleanup behavior ok"
+echo "netbird runtime status/flags/policy-safe-routing/firewall-cleanup behavior ok"
