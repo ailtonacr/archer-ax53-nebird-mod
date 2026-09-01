@@ -26,22 +26,26 @@ required = [
     'draft.value.enrolled = "0"',
     'creating.value && profileExists.value',
     's.advertise_lan === "1" && s.disable_server_routes !== "0"',
+    's.advertise_lan === "1" && s.disable_firewall !== "0"',
+    'draft.value.disable_firewall = "0"',
+    'Permitir roteamento da LAN',
 ]
 missing = [token for token in required if token not in text]
 if missing:
-    raise RuntimeError("native CREATE/EDIT contract incomplete: " + ", ".join(missing))
+    raise RuntimeError("native CREATE/EDIT/routing contract incomplete: " + ", ".join(missing))
 
 forbidden = [
     'value.type === "netbirdvpn"',
     'value.type === "netbird"',
     "const creating = ref(false)",
+    'Anunciar rede local',
 ]
 leaked = [token for token in forbidden if token in text]
 if leaked:
-    raise RuntimeError("type-derived CREATE/EDIT semantics leaked: " + ", ".join(leaked))
+    raise RuntimeError("type-derived/misleading NetBird form semantics leaked: " + ", ".join(leaked))
 
 check = subprocess.run(["node", "--input-type=module", "--check"], input=text.encode(), capture_output=True)
 if check.returncode:
     raise RuntimeError("node --check failed for NetBird form:\n" + check.stderr.decode()[:2000])
 
-print("NetBird CREATE/EDIT authored source contract verified")
+print("NetBird CREATE/EDIT and ACL-safe routing source contract verified")
