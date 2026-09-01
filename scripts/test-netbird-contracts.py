@@ -86,6 +86,9 @@ def check_runtime_library() -> None:
     base_code = shell_code(base)
     for token in ["/sbin/netbird-ctl", "nb_up_flags()", "nb_start()", "nb_stop()", "nb_enroll()", "nb_clean()"]:
         assert token not in base_code, f"base library leaked lifecycle/controller implementation: {token}"
+    block_impl = base.split("nb_fw_block()", 1)[1]
+    assert 'fw netbird_block "$port" "$access" "$cidr" "$homeif" 2>/dev/null || true' not in block_impl, \
+        "base firewall wrapper must propagate cleanup failure"
 
     require(runtime,
         'nb_up_flags()', '"--wireguard-port=${wg_port}"', 'nb_runtime_validate_settings()',
@@ -94,6 +97,8 @@ def check_runtime_library() -> None:
         'nb_daemon_ping()', 'nb_status_json()',
         'nb_runtime_is_connected()', 'management="$(printf', 'grep -q \'"connected":true\'',
         'NB_FW_STATE="/tmp/netbird-firewall.state"', 'nb_fw_write_state()', 'nb_fw_read_state()',
+        'failed to remove previously applied firewall state',
+        'nb_runtime_remove_firewall || return 1',
         'nb_runtime_connect()', 'nb_runtime_disconnect()', 'nb_runtime_stop()', 'nb_runtime_restart()',
         'nb_runtime_apply_firewall()', 'nb_runtime_remove_firewall()', 'nb_enroll()',
         'nb_runtime_connect "$keyfile"', 'nb_clean()', 'if [ -f "$NB_SETTINGS_FILE" ]; then')
