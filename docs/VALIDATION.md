@@ -73,22 +73,43 @@ file-by-file audit found several false assumptions in the previous gate.
 - Stock deletion remains authoritative; auxiliary cleanup only handles NetBird
   external identity/runtime artifacts.
 
-### Routing peer invariant
+### Routing peer invariants
 
 NetBird v0.77.1 documents `--disable-server-routes=true` as disabling route
-server behaviour. Therefore the local routing state is invalid when:
+server behaviour. It also owns routed authorization through
+`NETBIRD-RT-FWD-IN`/`NETBIRD-RT-FWD-OUT` and drops unmatched inbound routed
+traffic. Therefore LAN routing is valid only when:
 
 ```text
 advertise_lan=1
-and
-disable_server_routes=1
+disable_server_routes=0
+disable_firewall=0
 ```
 
-The frontend, Lua model and shell runtime all reject/prevent that state.
+The frontend automatically enables the two prerequisites; the Lua model and
+shell runtime independently reject contradictory settings.
 
 `advertise_lan`/`advertise_cidr` do not create a control-plane Network/Resource.
 The corresponding Network/Resource/Policy must exist in NetBird Management and
 the AX53 must be selected as its routing peer.
+
+### Route ACL preservation
+
+A previous workaround inserted a local `iptables -I FORWARD ... ACCEPT` ahead
+of NetBird's own routing chains to overcome an observed terminal DROP. Review of
+the exact NetBird v0.77.1 source proved that DROP is intentional Route ACL
+enforcement, not incidental isolation.
+
+The current contract therefore forbids any local priority FORWARD bypass:
+
+- `netbird-runtime.sh` contains no direct `iptables -I/--insert FORWARD` rule;
+- TP-Link scoped `wt0 <-> LAN` rules are appended, not inserted at position 1;
+- routing mode requires the NetBird firewall to remain enabled;
+- post-flash validation requires the first `-i wt0` FORWARD rule to jump to
+  `NETBIRD-RT-FWD-IN`.
+
+The TP-Link rules provide only scoped integration/NAT after NetBird policy has
+had the opportunity to authorize/drop the routed flow.
 
 ### Deterministic firewall mutation
 
@@ -122,18 +143,21 @@ leave daemon/socket/wt0/firewall state orphaned.
 
 ### Frontend source/final artifact parity
 
-The authored `VpnServerNetbirdForm-NB.js` now directly implements the final
+The authored `VpnServerNetbirdForm-NB.js` directly implements the final
 contract:
 
 - Add starts with `creating=true`.
 - `type=netbirdvpn` does not imply Edit.
 - Only persisted `key`/`id` establishes Edit.
 - The protocol subform does not own the stock profile key/type.
-- Enabling LAN routing enables server routes and validation prevents the
-  contradictory state.
+- The option is named **Permitir roteamento da LAN**, not “Anunciar”, because it
+  does not create a control-plane resource.
+- Enabling LAN routing enables server routes and NetBird firewall policy.
+- Validation prevents either prerequisite from being disabled while routing.
 
 The finalizer still removes intermediate hybrid helpers from the TP-Link shared
-bundles, but it should not need to rewrite the subform's CREATE/EDIT semantics.
+bundles, but it should not need to rewrite the subform's CREATE/EDIT/routing
+semantics.
 
 ## Offline gate
 
@@ -152,6 +176,8 @@ Important behavioural coverage includes:
 - `daemonStatus=Connected` **and** `management.connected=true` status semantics;
 - canonical `netbird up` flags without duplicates;
 - LAN routing requiring server routes;
+- LAN routing requiring NetBird firewall policy enforcement;
+- absence of direct priority FORWARD bypasses in the shared runtime;
 - firewall CIDR/port A -> B cleanup using applied state;
 - `nb_clean` not recreating identity state;
 - source CREATE/EDIT by persisted key/id.
@@ -172,8 +198,10 @@ Before repack, the build verifies at least:
 - no `S99netbird` in the final image;
 - netifd does not depend on `netbird-ctl`;
 - immediate-failure and timeout rollback paths are present;
-- routing/server-route validation exists;
+- routing/server-route/firewall validation exists;
 - applied firewall state support exists;
+- canonical firewall uses appended scoped FORWARD rules rather than position-1
+  ACCEPT rules;
 - final frontend uses stock list/CRUD/status and key/id Add/Edit;
 - final model has no writable `settings_set` helper.
 
@@ -196,16 +224,21 @@ ubus call network.interface.vpn status
 ip addr show wt0
 cat /tmp/netbird-firewall.state
 iptables -S FORWARD | grep -E 'wt0|NETBIRD'
+iptables -S NETBIRD-RT-FWD-IN
 iptables -t nat -S POSTROUTING | grep -E 'wt0|100\.64\.'
 ```
 
 When LAN routing is enabled:
 
 - `disable_server_routes=0`;
+- `disable_firewall=0`;
 - applied firewall mode is `lan`;
 - applied CIDR matches the active profile;
-- scoped forwarding/MASQUERADE rules match that CIDR;
-- the matching Network/Resource exists in NetBird Management.
+- `NETBIRD-RT-FWD-IN` exists;
+- the first `FORWARD` rule specifically matching `-i wt0` jumps to
+  `NETBIRD-RT-FWD-IN`, not directly to ACCEPT;
+- scoped TP-Link forwarding/MASQUERADE rules match that CIDR;
+- the matching Network/Resource/Policy exists in NetBird Management.
 
 Also test mutations on hardware:
 
@@ -232,10 +265,11 @@ Only those tests can validate the routing-peer path end to end.
 
 ## Open hypothesis: INPUT traffic to the AX53 itself
 
-The current explicit NetBird firewall rule accepts `ESTABLISHED,RELATED` input
-on `wt0`; no broad rule for new inbound traffic was added. The observed stock
-firewall has global INPUT ACCEPT, but the exact chain/zone behaviour for `wt0`
-must be confirmed on hardware.
+The current explicit TP-Link NetBird firewall rule accepts
+`ESTABLISHED,RELATED` input on `wt0`; no broad rule for new inbound traffic was
+added. NetBird v0.77.1 has its own peer INPUT ACL chain and the stock firewall
+has a global INPUT policy, but the exact composed chain behaviour for remote
+peer -> AX53 must be confirmed on hardware.
 
 If remote peer -> AX53 fails, inspect INPUT-chain counters/ordering first. Do
 **not** add a broad `-i wt0 -j ACCEPT` workaround without evidence.
@@ -245,7 +279,7 @@ If remote peer -> AX53 fails, inspect INPUT-chain counters/ordering first. Do
 As of 2026-08-31, the code corrections and gates are committed on
 `fix/netbird-ui-state-routing`, but the current suite/build/hardware sequence has
 **not** been executed by the ChatGPT session environment because that executor
-could not resolve/clone `github.com`.
+cannot resolve/clone `github.com`.
 
 Therefore:
 
