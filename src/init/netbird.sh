@@ -247,6 +247,7 @@ nb_daemon_start() {
     nb_materialize || return $?
     nb_ensure_settings
     mkdir -p /var/run
+    rm -f "$NB_PID" "$NB_SOCK"
     local hostname args
     hostname=$(nb_get "$NB_SETTINGS_FILE" hostname "")
     args="service run --config $NB_CONFIG_FILE --management-url $(nb_mgmt_url) --daemon-addr unix://$NB_SOCK --log-file $NB_LOG --log-level info"
@@ -302,5 +303,5 @@ nb_fw_block() {
         homeif="$(uci_get_state firewall core lan_ifname 2>/dev/null)"
         [ -n "$homeif" ] || homeif="br-lan"
     fi
-    fw netbird_block "$port" "$access" "$cidr" "$homeif" 2>/dev/null || true
+    fw netbird_block "$port" "$access" "$cidr" "$homeif" 2>/dev/null
 }
