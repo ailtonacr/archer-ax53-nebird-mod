@@ -112,10 +112,9 @@ python3 "$FORM_STATE_PATCHER" "$R"
 python3 "$NATIVE_SAVE_PATCHER" "$R"
 
 echo "[4/8] adding canonical CIDR-scoped NetBird firewall integration ..."
-if ! grep -q "# NetBird v3 CIDR-scoped/applied-state" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
-  # Remove previous NetBird function definitions when rebuilding an already
-  # patched rootfs. Fresh firmware builds start from stock, so this path is only
-  # a defensive migration aid and the final definition below remains canonical.
+if ! grep -q "# NetBird v4 CIDR-scoped/applied-state" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
+  # Fresh firmware builds start from stock. This guard also makes repeated local
+  # packaging idempotent when the exact canonical v4 definition is present.
   cat >> "$R/lib/firewall/tpcmd.sh" <<'FIREWALL_SEPARATOR'
 
 # NetBird canonical firewall definition follows.
@@ -162,7 +161,7 @@ grep -q 'profile_delete' "$R/usr/lib/lua/luci/controller/admin/netbird.lua" || {
 grep -q 'description' "$R/usr/lib/lua/luci/model/netbird.lua" || {
   echo "Error: NetBird profile description persistence missing" >&2; exit 1;
 }
-grep -q '# NetBird v3 CIDR-scoped/applied-state' "$R/lib/firewall/tpcmd.sh" || {
+grep -q '# NetBird v4 CIDR-scoped/applied-state' "$R/lib/firewall/tpcmd.sh" || {
   echo "Error: canonical NetBird firewall source was not installed" >&2; exit 1;
 }
 NB_FORM_JS="$(zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz")"
