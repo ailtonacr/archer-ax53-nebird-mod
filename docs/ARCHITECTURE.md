@@ -1,155 +1,261 @@
-# NOTE: current runtime is the R2 runtime (payload downloaded over HTTPS, no netbird_data/MIBIB/UBI). This file documents the historical MIBIB/netbird_data architecture unless stated otherwise. See docs/R2-RUNTIME.md for the current architecture and INSTALL.md for the current install flow.
-# NetBird on TP-Link Archer AX53 V1 — Architecture
+# NetBird on TP-Link Archer AX53 V1 — Current Architecture
 
-## Overview
+This document describes the **current** architecture. Historical experiments
+with a `netbird_data` NAND/UBI partition, modified MIBIB, standalone S99 service,
+synthetic frontend rows and dedicated `/admin/netbird` CRUD are retired. Their
+history remains in Git and the project Notion ADR/Timeline; they are not part of
+the current firmware design.
 
-NetBird 0.77.1 is integrated as a **VPN Client type** in the stock TP-Link web UI,
-alongside OpenVPN / PPTP / L2TP / WireGuard. The NetBird binary is **not** stored in
-the root filesystem; it lives in a dedicated 16 MiB NAND partition (`netbird_data`)
-and is stream-decompressed into `/tmp` (tmpfs) at runtime. Configuration/identity
-persist in `/tp_data/netbird`.
+## End-to-end flow
 
-```
-Web UI (Vue SPA) ── stok ──> LuCI dispatcher ──> admin/netbird.lua (source Lua)
-                                                     │ fork_exec (argv, shell-quoted)
-                                                     ▼
-                                              /sbin/netbird-ctl
-                                                     │  . /lib/netbird/netbird.sh
-                                                     ▼
-                                       netbird_data (UBI) ──xzmini──> /tmp/netbird
-                                                                        │
-                                                            netbird daemon (wt0)
-                                                                        │
-                                                        kernel wireguard + fw rules
-```
+NetBird is a genuine fifth TP-Link VPN Client type:
 
-## Storage layout
-
-| Path | FS | Contents | Perms |
-|---|---|---|---|
-| `netbird_data` (MTD, 16 MiB) | UBI/UBIFS | `netbird-0.77.1.xz` (9.45 MB), `metadata` | 0644 |
-| `/tp_data/netbird/` | UBIFS | NetBird identity + settings | 0700 |
-| `/tp_data/netbird/default.json` | UBIFS | NetBird profile (mgmt URL, wg key, ssh key) | 0600 |
-| `/tp_data/netbird/state/` | UBIFS | NetBird runtime state (`NB_STATE_DIR`) | 0700 |
-| `/tp_data/netbird/settings` | UBIFS | our key=value settings (no secrets) | 0600 |
-| `/tmp/netbird` | tmpfs | materialized binary (39,125,176 B) | 0755 |
-| `/tmp/netbird.new` | tmpfs | staging during decode | 0600 |
-| `/tmp/netbird.sock` | tmpfs | daemon control socket | — |
-| `/tmp/netbird.log` | tmpfs | runtime log (rotated by NB_LOG_MAX_SIZE_MB) | 0644 |
-
-The rootfs only carries: `sbin/xzmini` (78,996 B), `sbin/netbird-ctl`,
-`lib/netbird/netbird.sh`, `etc/init.d/netbird`, two source Lua files, the
-firewall functions and the frontend bundle patches. **No 9.45 MB payload is in
-the rootfs.**
-
-## Payload versioning
-
-`/netbird_data/metadata` (key=value):
-
-```
-schema=1
-version=0.77.1
-payload=netbird-0.77.1.xz
-size=39125176
-sha256=6cc347b741695e6664d4ba0ba7004e823a77ab0705a4de5ebe92b290623bb8e6
+```text
+TP-Link VPN Client UI
+        |
+        v
+/admin/vpn?form=server
+        |
+        +-- type=netbirdvpn / type id=5 / display=NetBird
+        +-- vpn/server                 authoritative profile
+        +-- vpn.client                 authoritative active type
+        +-- network.vpn.proto=netbird
+                    |
+                    v
+          /etc/init.d/vpnc
+                    |
+                    v
+             vpn_core.sh
+                    |
+                    v
+                 netifd
+                    |
+                    v
+       /lib/netifd/proto/netbird.sh
+                    |
+                    v
+       /lib/netbird/netbird-runtime.sh
+                    |
+          +---------+----------+
+          |                    |
+          v                    v
+/lib/netbird/netbird.sh   NetBird v0.77.1
+          |                    |
+          v                    v
+R2 HTTPS -> xzmini       /tmp/netbird.sock
+          |                    |
+          v                    v
+     /tmp/netbird              wt0
 ```
 
-`nb_materialize()` honours the metadata so a future NetBird version can be
-provisioned (new `netbird-X.Y.Z.xz` + updated `metadata`) **without** changing
-any code.
+The vendor `usr/lib/lua/luci/controller/admin/vpn.lua` remains byte-for-byte
+TP-Link bytecode. `luci.model.netbird_vpn_native` extends its module-global
+registries at LuCI load time:
 
-## Boot / materialization
+```text
+VPN_TYPE_TBL[netbirdvpn]      = 5
+VPN_TYPE_NAME_TBL[netbirdvpn] = NetBird
+VPN_TBL[netbirdvpn]           = stock-shaped schema, proto=netbird
+VPN_CFG_TBL[netbirdvpn]       = NetBird config normalizer
+```
 
-1. `/etc/init.d/netbird` runs at `START=99` (after `network` S25, `firewall` S45,
-   `openvpn`/`vpnc` S90).
-2. `nb_materialize()`:
-   - if `/tmp/netbird` already hash-valid → skip;
-   - attach/mount `netbird_data` **only if** `/proc/mtd` already lists it
-     (i.e. the MIBIB was updated) — via a **fail-closed, non-destructive**
-     `ubiattach` + `mount -t ubifs` (no `flash_erase`/`ubiformat`/`ubimkvol`
-     ever at runtime; provisioning/format is done only by the provisioner);
-   - distinct states: `READY`, `PARTITION_MISSING`, `PAYLOAD_STORAGE_INVALID`,
-     `PAYLOAD_MISSING`, `PAYLOAD_INVALID`;
-   - stream `xzmini < netbird-0.77.1.xz > /tmp/netbird.new` (CRC64 checked by liblzma);
-   - validate size `39125176` and sha256;
-   - `chmod 0755` + atomic `mv` to `/tmp/netbird`.
-3. Any failure logs to `/tmp/netbird.log` and returns without blocking boot
-   (Wi-Fi / WAN / DHCP / NAT / existing VPN are untouched).
+`scripts/verify-tplink-vpn-bytecode.py` fails the build if the stock bytecode no
+longer exports those registries.
 
-## Service lifecycle
+## Configuration authority
 
-- **daemon**: `netbird service run` in foreground, PID-tracked via
-  `start-stop-daemon` (rc.common `service_start`), env `NB_STATE_DIR`,
-  `NB_LOG_MAX_SIZE_MB=2`. Auto-connects on start when an enrolled config exists.
-- **connect**: `netbird up` (with `--setup-key-file` for enrollment).
-- **disconnect**: `netbird down`.
-- **status**: `netbird status -j` (JSON parsed by the backend).
-- The daemon is a single **global** profile (NetBird = one identity/interface
-  `wt0`), so the UI allows exactly one NetBird client.
+Normal profile CRUD/list/toggle/status is owned by the stock endpoint:
 
-## Config model (`/tp_data/netbird/settings`)
+```text
+/admin/vpn?form=server
+```
 
-`enable`, `enrolled`, `management_url` (default `https://netbird.ailton.dev.br`),
-`hostname`, `disable_dns`, `disable_firewall`, `disable_client_routes`,
-`disable_server_routes`, `disable_ipv6`, `network_monitor`, `advertise_lan`,
-`advertise_cidr`, `wireguard_port`.
+`vpn/server` is the authoritative profile configuration store. `vpn.client`
+controls which VPN Client type is active. `/tp_data/netbird/settings` is a
+runtime materialized view consumed by the existing shell/runtime; it is updated
+from the native profile handler and is not a second browser-writable profile
+store.
 
-Safe defaults: all `disable_*` = 1, `network_monitor` = 0, `advertise_lan` = 0 —
-i.e. NetBird starts as a **peer only**. Routing/firewall are opt-in via the UI.
+The auxiliary endpoint:
 
-## Backend (source Lua, loaded by LuCI 5.1)
+```text
+/admin/netbird
+```
 
-- `usr/lib/lua/luci/model/netbird.lua` — settings persistence/validation,
-  shell-quoted control, status parse.
-- `usr/lib/lua/luci/controller/admin/netbird.lua` — registered under the `admin`
-  tree (inherits `stok` session auth). Operations: `status`, `settings_get`,
-  `settings_set`, `enroll`, `start`, `stop`, `restart`, `clean`, `log`,
-  `payload_status`.
+is restricted to concerns the generic TP-Link VPN contract does not own:
 
-The existing bytecode controllers are **not** modified; NetBird is a clean,
-self-contained source module.
+- status/diagnostics and read-only settings inspection;
+- setup-key enrollment/re-enrollment;
+- logs and payload state;
+- manual restart delegated back to `/etc/init.d/vpnc`;
+- recovery/identity cleanup after stock profile deletion.
 
-## Frontend (compiled Vue, patched in place)
+It does not expose normal writable `settings_set` CRUD.
 
-- `update-store-DQkZxaRI.js` — `Netbird="netbird"` added to the Type enum;
-  English `typeNetbird` label.
-- `util-JEiJiY0O.js` — `netbird` added to the `getType` map (inserted before
-  WireGuard so the Add-Profile default stays WireGuard).
-- `model-CI6Gt3Hz.js` — `nbStatus/nbSettingsSet/nbEnroll/nbControl/nbLog` RPC.
-- `index-DTNtPvwx.js` — `VpnServerNetbirdForm` component + `case it.Netbird`
-  in the sub-form switch; `Dt()` whitelist relaxed for `netbird`; the client
-  list is injected with the single NetBird entry; generic insert/update is
-  skipped for `netbird` (it persists via its own backend).
-- `VpnServerNetbirdForm-NB.js` — new self-contained chunk (management URL,
-  setup key enrollment, enable/advanced/routing toggles, status, start/stop/
-  restart/re-enroll/delete, logs).
-- `locale/*/index-*.js.gz` (27) — `typeNetbird` added.
+## Runtime storage
 
-## Firewall
+Persistent:
 
-`fw_netbird_access` / `fw_netbird_block` (appended to `lib/firewall/tpcmd.sh`,
-dispatched from `sbin/fw`). Minimal and explicit — **no broad `-i wt0 -j ACCEPT`**:
+```text
+/tp_data/netbird/default.json   NetBird identity/profile data
+/tp_data/netbird/settings       runtime materialized settings
+/tp_data/netbird/state/         NetBird runtime state
+```
 
-- `INPUT ACCEPT 1` for UDP `wireguard_port` (handshake/ICE);
-- `INPUT`/`FORWARD ACCEPT` on `wt0` limited to `ctstate ESTABLISHED,RELATED`;
-- FORWARD `wt0 <-> br-lan` + `POSTROUTING MASQUERADE` **only** when
-  `advertise_lan` (routing peer) is enabled.
+Ephemeral:
 
-NetBird's own firewall manager is controlled separately by `disable_firewall`
-(default on), so NetBird policies stay meaningful and no wide bypass is created.
+```text
+/tmp/netbird                    validated executable
+/tmp/netbird.new                decode staging
+/tmp/netbird.sock               daemon control socket
+/tmp/netbird.log                runtime log
+/tmp/netbird-firewall.state     exact applied TP-Link firewall bookkeeping
+```
 
-## Factory reset / upgrade / A/B
+The large NetBird executable is not stored in rootfs or a new NAND partition.
+MIBIB remains stock.
 
-- **Factory reset** (`sbin/reset`): removes `/tp_data/netbird` (identity+settings)
-  → NetBird reappears as "Enrollment required". The `netbird_data` payload is
-  kept.
-- **Firmware upgrade**: the stock updater writes only `rootfs`/`rootfs_1`;
-  `netbird_data`, `/tp_data` and the payload survive.
-- **A/B**: `rootfs`/`rootfs_1`/`tp_boot_idx` geometry is unchanged by the MIBIB
-  edit (only a 17th partition is appended after `data`).
+## R2 materialization
 
-## Multi-profile decision
+Pinned payload:
 
-NetBird uses one identity/config per daemon/`wt0` interface. The architecture is
-**single global NetBird client**; the UI allows only one and surfaces
-"Enrollment required" until enrolled.
+```text
+version:            0.77.1
+compressed size:    9,455,188 bytes
+compressed SHA-256: 4b0648305e5f4126fa58be391e5db995447a58d867d5d290a15b2df972c58941
+decoded size:       39,125,176 bytes
+decoded SHA-256:    6cc347b741695e6664d4ba0ba7004e823a77ab0705a4de5ebe92b290623bb8e6
+```
+
+Materialization is two-pass streaming:
+
+1. HTTPS download -> `sha256sum`, without storing the compressed payload.
+2. HTTPS download -> `xzmini` -> `/tmp/netbird.new`.
+3. Validate decoded size and SHA-256.
+4. `chmod 0755` and atomic rename to `/tmp/netbird`.
+
+No executable is promoted before both pinned hashes and decoded size pass.
+Failure leaves NetBird unavailable but must not take down WAN/Wi-Fi/DHCP or the
+fallback VPN path.
+
+## Lifecycle ownership
+
+Normal lifecycle has exactly one owner:
+
+```text
+vpnc -> netifd -> proto_netbird -> shared runtime
+```
+
+`netbird-ctl` is a CLI facade over the same shared runtime; netifd does not call
+it. `/etc/init.d/netbird` is a compatibility/recovery wrapper and is **not**
+linked as `/etc/rc.d/S99netbird` in the final native image.
+
+The netifd interface publishes UP only if all are true:
+
+```text
+wt0 exists
+daemonStatus == Connected
+management.connected == true
+```
+
+`signal.connected` cannot substitute for management connectivity. Immediate
+setup failure and timeout both rollback the runtime before `proto_setup_failed`.
+
+## Routing-peer mode
+
+The UI option is **Permitir roteamento da LAN**. It does not create or announce
+a NetBird Network/Resource. The matching Network/Resource/Policy must already
+exist in NetBird Management with the AX53 selected as routing peer.
+
+Local routing requires:
+
+```text
+advertise_lan=1
+advertise_cidr=<local CIDR>
+disable_server_routes=0
+disable_firewall=0
+```
+
+Why both prerequisites are mandatory:
+
+- NetBird v0.77.1 defines `--disable-server-routes=true` as preventing the peer
+  from acting as router for server routes delivered by Management.
+- NetBird v0.77.1 enforces routed authorization through
+  `NETBIRD-RT-FWD-IN`/`NETBIRD-RT-FWD-OUT` Route ACL chains. Disabling its
+  firewall or inserting a local ACCEPT ahead of those chains would bypass
+  management policy.
+
+The frontend automatically enables server routes and NetBird firewall when LAN
+routing is selected. The Lua model and shell runtime independently reject an
+invalid combination.
+
+## Firewall integration
+
+`src/init/netbird_firewall.inc` is the single canonical TP-Link firewall source
+and is appended to `/lib/firewall/tpcmd.sh` by `mods/010-netbird.sh`.
+
+Its purpose is scoped platform integration, not policy replacement:
+
+- UDP `wireguard_port` INPUT transport rule;
+- established/related return handling;
+- optional CIDR-scoped `wt0 <-> LAN` forwarding integration;
+- optional CIDR-scoped overlay -> LAN MASQUERADE.
+
+Crucially, scoped TP-Link FORWARD rules are **appended**, not inserted at
+position 1. NetBird's `NETBIRD-RT-FWD-*` chains must see inbound routed traffic
+first. A direct `iptables -I FORWARD ... ACCEPT` workaround is prohibited.
+
+The exact applied port/access/CIDR/home interface is snapshotted in RAM at:
+
+```text
+/tmp/netbird-firewall.state
+```
+
+When configuration changes A -> B, A is removed using that snapshot before B
+is installed. This prevents stale CIDR/port rules after profile edits.
+
+## Frontend
+
+The NetBird protocol subform uses registered TP-Link `su-*` components and the
+same dynamic-form contract as stock protocols:
+
+```text
+isChanged
+validate()
+setForm()
+getForm()
+resetForm()
+clearValidate()
+```
+
+The outer TP-Link dialog owns Description, Type, key/id, Save/Cancel and row
+identity. NetBird's subform owns protocol-specific fields only. Add starts in
+CREATE mode; only a persisted stock `key`/`id` proves EDIT. `type=netbirdvpn`
+is present in both modes and is not used as an Edit signal.
+
+## Identity / single profile
+
+The runtime uses one NetBird identity, one daemon and one `wt0`. The supported
+product model is one NetBird profile on the router. The UI prevents creating a
+second profile and the auxiliary status/enrollment code resolves the native
+`vpn/server` profile by `type=netbirdvpn`.
+
+Server-side hard enforcement against deliberately crafted duplicate admin API
+requests remains a defense-in-depth item until the stock insert/update context
+is proven sufficiently to implement it without breaking native CRUD.
+
+## Historical architectures
+
+The following are preserved only as history and must not be reintroduced into
+the current build:
+
+- MIBIB modification and a `netbird_data` UBI partition;
+- payload stored in NAND instead of R2;
+- standalone `/etc/rc.d/S99netbird` lifecycle;
+- synthetic NetBird row merged into the stock VPN list;
+- writable profile CRUD through `/admin/netbird`;
+- monkey-patching stock dispatcher closures/upvalues;
+- priority `FORWARD ACCEPT` rules ahead of NetBird Route ACLs.
+
+See `docs/R2-RUNTIME.md`, `docs/VALIDATION.md`, `docs/INSTALL.md` and the project
+Notion ADR/Timeline for rationale, evidence and migration history.
