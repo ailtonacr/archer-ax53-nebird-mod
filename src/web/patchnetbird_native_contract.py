@@ -28,6 +28,10 @@ required = [
     'stockComponent(this, "su-input")',
     'stockComponent(this, "su-checkbox")',
     'stockComponent(this, "su-button")',
+    's.advertise_lan === "1" && s.disable_server_routes !== "0"',
+    's.advertise_lan === "1" && s.disable_firewall !== "0"',
+    'draft.value.disable_firewall = "0"',
+    'Permitir roteamento da LAN',
 ]
 missing = [token for token in required if token not in text]
 if missing:
@@ -42,6 +46,7 @@ forbidden = [
     "NETBIRD_CSS",
     'type: "checkbox"',
     'class: "netbird-input"',
+    'Anunciar rede local',
 ]
 leaked = [token for token in forbidden if token in text]
 if leaked:
@@ -51,4 +56,4 @@ check = subprocess.run(["node", "--input-type=module", "--check"], input=text.en
 if check.returncode:
     raise RuntimeError("node --check failed for NetBird form:\n" + check.stderr.decode()[:2000])
 
-print("NetBird TP-Link native form contract verified")
+print("NetBird TP-Link native form + policy-safe routing contract verified")
