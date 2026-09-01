@@ -52,7 +52,8 @@ make firmware STOCK=stock_decrypted.bin
 The build recreates `rootfs/` from that stock image, applies the mods, validates
 the native NetBird contracts before repack, and refuses the image if the final
 bundle still contains hybrid writable `settings_set`, a parallel NetBird boot
-owner, type-derived Add/Edit semantics, or a missing routing/firewall invariant.
+owner, type-derived Add/Edit semantics, a routing invariant violation, or a
+TP-Link FORWARD rule that bypasses NetBird Route ACL ordering.
 
 ## Step 1 — backup and flash
 
@@ -110,17 +111,29 @@ local CIDR, for example:
 192.168.10.0/24
 ```
 
-When local LAN routing is enabled, **Rotas de servidor** must also be enabled.
-The UI forces this state and both backend/runtime reject the contradictory
-combination `advertise_lan=1 + disable_server_routes=1`.
+This option means **permit the AX53 to route a management-delivered NetBird
+resource into this local CIDR**. It does not announce or create that resource in
+the NetBird control plane.
 
-This local option does **not** create a NetBird Network/Resource in the control
-plane. In NetBird Management you still need to create/confirm the corresponding
+Routing-peer mode has two mandatory NetBird prerequisites:
+
+```text
+disable_server_routes=0   # Rotas de servidor enabled
+disable_firewall=0        # Firewall do NetBird enabled
+```
+
+The UI enables both automatically when LAN routing is selected. The Lua model
+and shell runtime independently reject contradictory settings. The firewall
+requirement is intentional: NetBird v0.77.1 authorizes routed traffic through
+its `NETBIRD-RT-FWD-*` Route ACL chains; local TP-Link integration rules must not
+bypass those policy decisions.
+
+In NetBird Management you still need to create/confirm the corresponding
 Network/Resource/Policy and select the AX53 as the routing peer. The router does
 not receive administrative credentials to create control-plane resources.
 
-The local CIDR is used to scope forwarding/NAT. Runtime firewall bookkeeping is
-stored only in:
+The local CIDR is used to scope TP-Link forwarding/NAT integration. Runtime
+firewall bookkeeping is stored only in:
 
 ```text
 /tmp/netbird-firewall.state
@@ -129,6 +142,10 @@ stored only in:
 It records the actually applied port/access/CIDR/home interface so changing
 CIDR or WireGuard port can remove the old rules deterministically before adding
 the new ones. This bookkeeping is ephemeral and is not written to NAND.
+
+The TP-Link scoped FORWARD rules are appended after NetBird's own routing ACL
+jumps. Never reintroduce a higher-priority `-I FORWARD ... ACCEPT` workaround:
+that would allow routed traffic before NetBird policy has authorized it.
 
 ## Post-flash validation
 
@@ -152,8 +169,13 @@ ubus call network.interface.vpn status
 ip addr show wt0
 cat /tmp/netbird-firewall.state
 iptables -S FORWARD | grep -E 'wt0|NETBIRD'
+iptables -S NETBIRD-RT-FWD-IN
 iptables -t nat -S POSTROUTING | grep -E 'wt0|100\.64\.'
 ```
+
+When routing is enabled, the first `FORWARD` rule that specifically matches
+`-i wt0` must jump to `NETBIRD-RT-FWD-IN`; a local ACCEPT before that jump is a
+**stop condition** because it bypasses Route ACL policy.
 
 The router-local validator can prove router → peer and router → LAN, but it
 **cannot prove the opposite traffic direction**. From a real remote NetBird
@@ -204,6 +226,8 @@ true:
 - more than one lifecycle owner starts NetBird;
 - `network.interface.vpn` is UP without `wt0` and management connectivity;
 - LAN routing is enabled with server routes disabled;
+- LAN routing is enabled with NetBird firewall disabled;
+- the first `-i wt0` FORWARD rule does not enter `NETBIRD-RT-FWD-IN`;
 - `/tmp/netbird-firewall.state` disagrees with the active configuration;
 - old CIDR/port rules remain after a settings transition;
 - remote peer → AX53 or remote peer → LAN validation fails;
