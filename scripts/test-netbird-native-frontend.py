@@ -29,8 +29,12 @@ def main() -> int:
         'stockComponent(this, "su-input")',
         'stockComponent(this, "su-checkbox")',
         'stockComponent(this, "su-button")',
+        'key === "advertise_lan" && value === "1"',
+        'draft.value.disable_server_routes = "0"',
+        'draft.value.disable_firewall = "0"',
         's.advertise_lan === "1" && s.disable_server_routes !== "0"',
-        'if (key === "advertise_lan" && value === "1") draft.value.disable_server_routes = "0"',
+        's.advertise_lan === "1" && s.disable_firewall !== "0"',
+        'Permitir roteamento da LAN',
     ]
     for token in required_form:
         assert token in form, f"authored final form missing {token!r}"
@@ -42,6 +46,7 @@ def main() -> int:
         "NETBIRD_CSS",
         'type: "checkbox"',
         'class: "netbird-input"',
+        'Anunciar rede local',
     ]
     for token in forbidden_form:
         assert token not in form, f"legacy/type-derived form token leaked: {token!r}"
@@ -54,6 +59,8 @@ def main() -> int:
         'function nbDelete(){return a.request(nb,{operation:"profile_delete"}',
         'DELETE_HELPER =',
         'strip_hybrid_helpers',
+        's.advertise_lan === "1" && s.disable_firewall !== "0"',
+        'Permitir roteamento da LAN',
         'operation:"settings_set"',
         'function nbSettingsSet(',
     ]
@@ -73,7 +80,7 @@ def main() -> int:
         check=True,
     )
 
-    print("netbird hermetic authored-form/finalizer frontend contract ok")
+    print("netbird hermetic authored-form/finalizer policy-safe-routing contract ok")
     return 0
 
 
