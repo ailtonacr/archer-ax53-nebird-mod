@@ -147,30 +147,41 @@ nb_fw_read_state() {
 # be promoted ahead of NetBird's NETBIRD-RT-FWD-* chains. Route authorization is
 # owned by NetBird policy; the canonical firewall source appends its FORWARD
 # rules so an ACL ACCEPT/DROP decision always happens first.
+#
+# The applied-state snapshot is deleted only after the exact old rules were
+# removed successfully. If cleanup fails, keep the snapshot for retry and stop
+# the transition instead of losing the only deterministic reference to state A.
 nb_runtime_remove_firewall() {
     if nb_fw_read_state; then
-        nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"
+        if ! nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"; then
+            echo "netbird: failed to remove previously applied firewall state" >&2
+            return 1
+        fi
         rm -f "$NB_FW_STATE" "$NB_FW_STATE_NEW"
         return 0
     fi
 
     # Upgrade/recovery fallback when no applied-state snapshot exists yet.
     nb_fw_current_values
-    nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"
+    if ! nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"; then
+        echo "netbird: failed to remove current firewall state" >&2
+        return 1
+    fi
     rm -f "$NB_FW_STATE" "$NB_FW_STATE_NEW"
+    return 0
 }
 
 nb_runtime_apply_firewall() {
     # Remove the exact previously-applied rules before installing the current
     # settings. This makes CIDR/port changes A->B deterministic and fail closed.
-    nb_runtime_remove_firewall
+    nb_runtime_remove_firewall || return 1
     nb_fw_current_values
     if ! nb_fw_access "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"; then
-        nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"
+        nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF" >/dev/null 2>&1 || true
         return 1
     fi
     if ! nb_fw_write_state; then
-        nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF"
+        nb_fw_block "$NB_FW_PORT" "$NB_FW_ACCESS" "$NB_FW_CIDR" "$NB_FW_HOMEIF" >/dev/null 2>&1 || true
         return 1
     fi
     return 0
@@ -204,28 +215,32 @@ nb_runtime_connect() {
             return 1
         fi
     else
-        nb_runtime_remove_firewall
+        nb_runtime_remove_firewall >/dev/null 2>&1 || true
     fi
     return "$rc"
 }
 
 nb_runtime_disconnect() {
-    local rc=0
+    local rc=0 fw_rc=0
     if [ -S "$NB_SOCK" ] && [ -x "$NB_BIN" ]; then
         "$NB_BIN" down --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1 || rc=$?
     fi
-    nb_runtime_remove_firewall
-    return "$rc"
+    nb_runtime_remove_firewall >/dev/null 2>&1 || fw_rc=$?
+    [ "$rc" -ne 0 ] && return "$rc"
+    return "$fw_rc"
 }
 
 nb_runtime_stop() {
-    nb_runtime_disconnect >/dev/null 2>&1 || true
-    nb_daemon_stop
-    return 0
+    local rc=0
+    nb_runtime_disconnect >/dev/null 2>&1 || rc=$?
+    nb_daemon_stop >/dev/null 2>&1 || {
+        [ "$rc" -ne 0 ] || rc=$?
+    }
+    return "$rc"
 }
 
 nb_runtime_restart() {
-    nb_runtime_stop
+    nb_runtime_stop || return 1
     nb_runtime_connect
 }
 
@@ -246,7 +261,8 @@ nb_enroll() {
 }
 
 nb_clean() {
-    nb_runtime_stop
+    local rc=0
+    nb_runtime_stop || rc=$?
     rm -f "$NB_CONFIG_FILE"
     rm -rf "$NB_STATE_DIR"
     # Do not call nb_ensure_settings() here: profile deletion must not recreate
@@ -256,5 +272,5 @@ nb_clean() {
         nb_set "$NB_SETTINGS_FILE" enrolled 0
         nb_set "$NB_SETTINGS_FILE" enable 0
     fi
-    return 0
+    return "$rc"
 }
