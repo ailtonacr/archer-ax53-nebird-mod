@@ -123,9 +123,17 @@ fi
 # Mock firewall primitives and prove A -> B removes A using applied-state data,
 # rather than reading already-mutated settings and trying to remove B twice.
 : > "$TMP/fw.log"
+FW_BLOCK_FAIL=0
 uci_get_state() { printf '%s\n' "br-lan"; }
-nb_fw_access() { printf 'access port=%s mode=%s cidr=%s homeif=%s\n' "$1" "$2" "$3" "$4" >> "$TMP/fw.log"; return 0; }
-nb_fw_block() { printf 'block port=%s mode=%s cidr=%s homeif=%s\n' "$1" "$2" "$3" "$4" >> "$TMP/fw.log"; return 0; }
+nb_fw_access() {
+    printf 'access port=%s mode=%s cidr=%s homeif=%s\n' "$1" "$2" "$3" "$4" >> "$TMP/fw.log"
+    return 0
+}
+nb_fw_block() {
+    printf 'block port=%s mode=%s cidr=%s homeif=%s\n' "$1" "$2" "$3" "$4" >> "$TMP/fw.log"
+    [ "$FW_BLOCK_FAIL" = "1" ] && return 1
+    return 0
+}
 
 cat > "$NB_SETTINGS_FILE" <<'EOF'
 advertise_lan=1
@@ -160,6 +168,41 @@ grep -Fq 'access port=51999 mode=lan cidr=172.24.10.0/24 homeif=br-lan' "$TMP/fw
 grep -Fxq 'port=51999' "$NB_FW_STATE"
 grep -Fxq 'cidr=172.24.10.0/24' "$NB_FW_STATE"
 
+# B -> C with a cleanup failure must abort before C is applied and retain B's
+# snapshot so the exact old rules can be retried later.
+cat > "$NB_SETTINGS_FILE" <<'EOF'
+advertise_lan=1
+advertise_cidr=172.24.20.0/24
+disable_server_routes=0
+disable_firewall=0
+wireguard_port=52000
+EOF
+FW_BLOCK_FAIL=1
+before_access_c="$(grep -Fc 'access port=52000 mode=lan cidr=172.24.20.0/24 homeif=br-lan' "$TMP/fw.log" || true)"
+if nb_runtime_apply_firewall >/dev/null 2>&1; then
+    echo "B -> C unexpectedly succeeded while old-rule cleanup was forced to fail" >&2
+    exit 1
+fi
+grep -Fxq 'port=51999' "$NB_FW_STATE" || { echo "failed cleanup lost B port snapshot" >&2; exit 1; }
+grep -Fxq 'cidr=172.24.10.0/24' "$NB_FW_STATE" || { echo "failed cleanup lost B CIDR snapshot" >&2; exit 1; }
+after_access_c="$(grep -Fc 'access port=52000 mode=lan cidr=172.24.20.0/24 homeif=br-lan' "$TMP/fw.log" || true)"
+[ "$before_access_c" = "$after_access_c" ] || { echo "C was applied despite B cleanup failure" >&2; exit 1; }
+
+# Retry with cleanup healthy: B is removed using the preserved snapshot and C
+# becomes the new applied state.
+FW_BLOCK_FAIL=0
+nb_runtime_apply_firewall
+grep -Fq 'block port=51999 mode=lan cidr=172.24.10.0/24 homeif=br-lan' "$TMP/fw.log" || {
+    echo "retry did not remove B from the preserved snapshot" >&2
+    exit 1
+}
+grep -Fq 'access port=52000 mode=lan cidr=172.24.20.0/24 homeif=br-lan' "$TMP/fw.log" || {
+    echo "retry did not apply C" >&2
+    exit 1
+}
+grep -Fxq 'port=52000' "$NB_FW_STATE"
+grep -Fxq 'cidr=172.24.20.0/24' "$NB_FW_STATE"
+
 # Identity cleanup must not recreate state/ after deleting it.
 NB_CONFIG_FILE="$TMP/default.json"
 NB_STATE_DIR="$TMP/state"
@@ -185,4 +228,4 @@ nb_clean
 grep -Fxq 'enable=0' "$NB_SETTINGS_FILE"
 grep -Fxq 'enrolled=0' "$NB_SETTINGS_FILE"
 
-echo "netbird runtime status/flags/policy-safe-routing/firewall-cleanup behavior ok"
+echo "netbird runtime status/flags/policy-safe-routing/firewall-transition/cleanup behavior ok"
