@@ -17,10 +17,13 @@ for (const token of [
   'const creating = ref(true)',
   'const existing = !!(value && (value.key || value.id))',
   's.advertise_lan === "1" && s.disable_server_routes !== "0"',
+  's.advertise_lan === "1" && s.disable_firewall !== "0"',
+  'Permitir roteamento da LAN',
 ]) assert.ok(original.includes(token), `missing authored token ${token}`);
 for (const token of [
   "NETBIRD_CSS", 'type: "checkbox"', 'class: "netbird-input"', "syncNativeSaveButton", "unknown error",
   'value.type === "netbirdvpn"', 'value.type === "netbird"', "const creating = ref(false)",
+  'Anunciar rede local',
 ]) assert.equal(original.includes(token), false, `legacy/custom UI token leaked: ${token}`);
 
 const source = original
@@ -35,7 +38,7 @@ let response = {
   profileExists: true,
   settings: {
     enrolled: "1", management_url: "https://netbird.example", advertise_cidr: "192.168.10.0/24",
-    disable_dns: "1", disable_firewall: "1", disable_client_routes: "1",
+    disable_dns: "1", disable_firewall: "0", disable_client_routes: "1",
     disable_server_routes: "0", disable_ipv6: "1", network_monitor: "0",
     advertise_lan: "1", enable: "1", wireguard_port: "51820", hostname: "",
   },
@@ -75,7 +78,7 @@ assert.equal(typeof context.component.render, "function");
 state.profileExists.value = false;
 assert.equal(exposed.setForm({
   type: "netbirdvpn", management_url: "https://netbird.example",
-  advertise_lan: "0", disable_server_routes: "1", wireguard_port: "51820",
+  advertise_lan: "0", disable_server_routes: "1", disable_firewall: "1", wireguard_port: "51820",
 }), true);
 assert.equal(state.creating.value, true);
 assert.equal(await exposed.validate(), true);
@@ -86,7 +89,7 @@ assert.equal(exposed.setForm({
   key: "arbitrary-stock-key", type: "netbirdvpn", server: "https://netbird.example",
   management_url: "https://netbird.example", enable: "on", enrolled: "1",
   advertise_lan: "1", advertise_cidr: "192.168.10.0/24", disable_server_routes: "0",
-  wireguard_port: "51820",
+  disable_firewall: "0", wireguard_port: "51820",
 }), true);
 assert.equal(state.creating.value, false);
 assert.equal(await exposed.validate(), true);
@@ -98,17 +101,23 @@ assert.equal(form.enable, "on");
 assert.equal("key" in form, false, "protocol subform must not own TP-Link profile key");
 assert.equal("type" in form, false, "protocol subform must not own TP-Link profile type");
 
-// Enabling LAN routing also enables server routes because a NetBird routing peer
-// must accept server routes from management.
+// Enabling LAN routing enables both prerequisites: server routes from management
+// and NetBird firewall policy enforcement. Neither may be disabled while routing.
 state.updateDraft("advertise_lan", "0");
 state.updateDraft("disable_server_routes", "1");
+state.updateDraft("disable_firewall", "1");
 state.updateDraft("advertise_lan", "1");
 assert.equal(state.draft.value.disable_server_routes, "0");
+assert.equal(state.draft.value.disable_firewall, "0");
 state.updateDraft("advertise_cidr", "192.168.10.0/24");
 assert.equal(await exposed.validate(), true);
 state.updateDraft("disable_server_routes", "1");
 await assert.rejects(() => exposed.validate(), /Rotas de servidor/);
 state.updateDraft("disable_server_routes", "0");
+state.updateDraft("disable_firewall", "1");
+await assert.rejects(() => exposed.validate(), /firewall do NetBird/);
+state.updateDraft("disable_firewall", "0");
+assert.equal(await exposed.validate(), true);
 
 // Polling is read-only and cannot clobber an in-progress form draft.
 state.updateDraft("advertise_cidr", "192.168.");
@@ -126,4 +135,4 @@ assert.equal(await exposed.validate(), true);
 assert.equal(requests.includes("settings_set"), false, "editing must never persist before stock dialog Save");
 
 context.unmounted();
-console.log("netbird authored final native form/routing/draft contract ok");
+console.log("netbird authored final native form/policy-safe-routing/draft contract ok");
