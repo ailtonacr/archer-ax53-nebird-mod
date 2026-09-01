@@ -144,9 +144,13 @@ export default defineComponent({
 
     function updateDraft(key, value) {
       draft.value[key] = value;
-      // A routing peer must process server routes delivered by NetBird
-      // management. Enabling local routing therefore enables server routes too.
-      if (key === "advertise_lan" && value === "1") draft.value.disable_server_routes = "0";
+      // Routing-peer mode needs server routes from management AND NetBird's own
+      // firewall so Route ACL policy remains authoritative. Enabling LAN routing
+      // therefore enables both prerequisites in the same draft transaction.
+      if (key === "advertise_lan" && value === "1") {
+        draft.value.disable_server_routes = "0";
+        draft.value.disable_firewall = "0";
+      }
       dirty.value = true;
       error.value = "";
       message.value = "";
@@ -213,6 +217,7 @@ export default defineComponent({
       if (!validManagementUrl(s.management_url)) { error.value = "Informe uma URL de gerenciamento válida (http:// ou https://)."; throw new Error(error.value); }
       if (s.advertise_lan === "1" && !validCidr(s.advertise_cidr)) { error.value = "Informe uma rede LAN válida em CIDR, por exemplo 192.168.10.0/24."; throw new Error(error.value); }
       if (s.advertise_lan === "1" && s.disable_server_routes !== "0") { error.value = "Para rotear a LAN, habilite Rotas de servidor do NetBird."; throw new Error(error.value); }
+      if (s.advertise_lan === "1" && s.disable_firewall !== "0") { error.value = "Para rotear a LAN com políticas, habilite o firewall do NetBird."; throw new Error(error.value); }
       return true;
     }
 
