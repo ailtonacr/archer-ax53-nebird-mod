@@ -67,15 +67,14 @@ start()
         return 1
     fi
 
-    logger -t devssh "Starting development SSH on ${lan_ip}:${PORT}"
+    logger -t devssh "Starting development SSH on ${lan_ip}:${PORT} (TP-Link account auth + public key)"
 
     "$PROG" \
         -P "$PIDFILE" \
         -p "${lan_ip}:${PORT}" \
         -r "$HOSTKEY" \
-        -s \
-        -g \
         -L \
+        -C \
         -j \
         -k \
         -6
