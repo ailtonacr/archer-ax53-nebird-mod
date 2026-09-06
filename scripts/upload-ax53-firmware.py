@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Safely upload an AX53 firmware image through the stock TP-Link Web UI.
+"""API-first firmware uploader for the stock TP-Link Archer AX53 UI backend.
 
-Default flow:
-  * read BUILD and select BUILD - 1
-  * validate the image and print SHA256
-  * open the stock Web UI and wait for the SPA to hydrate
-  * authenticate
-  * navigate Advanced -> System -> Firmware Upgrade
-  * select the image and advance to the stock confirmation step
-  * STOP and require the literal token CONFIRMAR in the terminal
-  * send the final UI confirmation and monitor reboot
+Safety model:
+  * reads BUILD and selects BUILD - 1 by default;
+  * validates artifact existence, minimum size and SHA256 locally;
+  * authenticates through the router's encrypted LuCI API using tplinkrouterc6u;
+  * reads firmware metadata before upload;
+  * uploads the image to the authenticated stock firmware endpoint;
+  * STOPS after upload/pre-check and requires the literal token CONFIRMAR;
+  * only then sends the stock upgrade operation and monitors reboot.
 
-The script never stores the router password. AX53_PASSWORD may be supplied in the
-environment; otherwise getpass() is used. UI diagnostics deliberately omit input
-values and redact session tokens such as LuCI's ;stok=... path component.
+No password, stok, sysauth cookie or other secret is persisted by this script.
+The stock API is undocumented, so endpoint/operation names are centralized and
+can be overridden from the CLI without editing code. The defaults match the
+modern AX53/AX-series LuCI contract discovered from the stock firmware family.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ import getpass
 import hashlib
 import json
 import os
-import re
 import socket
 import sys
 import time
@@ -31,31 +30,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROUTER_URL = "http://192.168.10.1"
-DEBUG_DIR = REPO_ROOT / "work" / "router-upload-debug"
+DEFAULT_API_PATH = "admin/firmware?form=upgrade"
+DEFAULT_UPLOAD_OPERATION = "upload"
+DEFAULT_UPLOAD_FIELD = "file"
+DEFAULT_FLASH_OPERATION = "upgrade"
 CONFIRM_TOKEN = "CONFIRMAR"
-
-ADVANCED_RE = re.compile(r"(?:^|\b)(Advanced|Avançado)(?:$|\b)", re.IGNORECASE)
-SYSTEM_RE = re.compile(
-    r"(?:^|\b)(System Tools|Ferramentas do Sistema|System|Sistema)(?:$|\b)",
-    re.IGNORECASE,
-)
-FIRMWARE_RE = re.compile(
-    r"(Firmware\s*(Upgrade|Update)|Atualiza(?:ção|cao)\s+(?:do\s+)?Firmware|Atualizar\s+Firmware)",
-    re.IGNORECASE,
-)
-LOGIN_RE = re.compile(r"^(Log\s*In|Login|Entrar|Acessar)$", re.IGNORECASE)
-UPGRADE_RE = re.compile(
-    r"^(Upgrade|Update|Atualizar|Atualizar\s+Firmware|Upgrade\s+Firmware)$",
-    re.IGNORECASE,
-)
-CONFIRM_RE = re.compile(
-    r"^(Upgrade|Update|Atualizar|Yes|Sim|OK|Confirm|Confirmar|Continue|Continuar)$",
-    re.IGNORECASE,
-)
-CANCEL_RE = re.compile(r"^(Cancel|Cancelar|No|Não|Nao|Close|Fechar)$", re.IGNORECASE)
-SENSITIVE_ATTR_RE = re.compile(r"(pass|password|senha|token|secret|key|auth|cookie)", re.I)
 
 
 @dataclass(frozen=True)
@@ -80,7 +62,7 @@ def read_build_number(build_file: Path) -> int:
         die(f"{build_file} deve conter apenas um inteiro positivo; recebido {raw!r}")
     value = int(raw)
     if value < 2:
-        die(f"BUILD={value}; não existe BUILD - 1 válido para upload.")
+        die(f"BUILD={value}; não existe BUILD - 1 válido.")
     return value
 
 
@@ -95,11 +77,12 @@ def sha256_file(path: Path) -> str:
 def resolve_firmware(build_file: Path, explicit_build: int | None) -> FirmwareInfo:
     next_build = read_build_number(build_file)
     build = explicit_build if explicit_build is not None else next_build - 1
+
     if build < 1:
         die(f"build inválido: {build}")
     if explicit_build is not None and build >= next_build:
         die(
-            f"--build {build} ainda não é concluído segundo BUILD={next_build}; "
+            f"--build {build} não é concluído segundo BUILD={next_build}; "
             f"o maior elegível é {next_build - 1}."
         )
 
@@ -109,9 +92,11 @@ def resolve_firmware(build_file: Path, explicit_build: int | None) -> FirmwareIn
             f"firmware do build {build} não encontrado: {path}\n"
             f"BUILD atual={next_build}; esperado por padrão: BUILD - 1 = {next_build - 1}"
         )
+
     size = path.stat().st_size
     if size < 1024 * 1024:
         die(f"firmware parece vazio/truncado ({size} bytes): {path}")
+
     return FirmwareInfo(build, path.resolve(), size, sha256_file(path))
 
 
@@ -135,19 +120,16 @@ def require_router_reachable(host: str, port: int) -> None:
         die(f"roteador não está acessível em {host}:{port}; ABORT antes do upload.")
 
 
-def wait_for_reboot(host: str, port: int, timeout: int, *, already_down: bool = False) -> None:
+def wait_for_reboot(host: str, port: int, timeout: int) -> None:
     deadline = time.monotonic() + timeout
-    if already_down:
-        print("[reboot] queda da Web UI já detectada.")
+    print(f"[reboot] aguardando {host}:{port} sair do ar ...")
+    while time.monotonic() < deadline:
+        if not tcp_open(host, port, timeout=1.0):
+            print("[reboot] queda da Web UI detectada.")
+            break
+        time.sleep(2)
     else:
-        print(f"[reboot] aguardando {host}:{port} sair do ar ...")
-        while time.monotonic() < deadline:
-            if not tcp_open(host, port, timeout=1.0):
-                print("[reboot] queda do serviço detectada.")
-                break
-            time.sleep(2)
-        else:
-            die("a Web UI não saiu do ar; não foi possível confirmar início do reboot.")
+        die("a Web UI não saiu do ar; não foi possível confirmar início do reboot.")
 
     print(f"[reboot] aguardando {host}:{port} voltar ...")
     while time.monotonic() < deadline:
@@ -161,425 +143,163 @@ def wait_for_reboot(host: str, port: int, timeout: int, *, already_down: bool = 
     )
 
 
-def import_playwright():
+def import_dependencies():
     try:
-        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-        from playwright.sync_api import sync_playwright
-    except ImportError:
+        import requests
+        from tplinkrouterc6u import TplinkRouterProvider
+    except ImportError as exc:
         die(
-            "Playwright não está instalado nesta virtualenv.\n"
-            "Instale com:\n"
-            "  python3 -m pip install playwright\n"
-            "  python3 -m playwright install chromium"
+            f"dependência ausente: {exc}.\n"
+            "Instale nesta virtualenv com:\n"
+            "  python3 -m pip install tplinkrouterc6u requests"
         )
-    return sync_playwright, PlaywrightTimeoutError
+    return requests, TplinkRouterProvider
 
 
-def validate_headed_environment(headed: bool) -> None:
-    if headed and not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+def get_private_auth(router) -> tuple[str, str | None]:
+    """Return stok and sysauth from tplinkrouterc6u without logging either value."""
+    stok = getattr(router, "_stok", None)
+    sysauth = getattr(router, "_sysauth", None)
+    if not stok:
         die(
-            "--headed requer DISPLAY/WAYLAND_DISPLAY, mas esta shell é TTY.\n"
-            "Rode sem --headed para usar Chromium headless."
+            "a biblioteca autenticou, mas não expôs o stok esperado; "
+            "ABORT sem tentar upload bruto."
         )
+    return str(stok), str(sysauth) if sysauth else None
 
 
-def all_frames(page):
-    return list(page.frames)
-
-
-def first_visible(locator):
+def api_read_firmware(router, api_path: str) -> dict:
+    print(f"[api] lendo {api_path} ...")
     try:
-        count = locator.count()
-    except Exception:
-        return None
-    for idx in range(count):
-        item = locator.nth(idx)
-        try:
-            if item.is_visible():
-                return item
-        except Exception:
-            continue
-    return None
+        result = router.request(api_path, "operation=read", ignore_errors=True)
+    except Exception as exc:
+        die(f"falha ao ler metadata de firmware via API: {type(exc).__name__}: {exc}")
 
-
-def visible_in_frames(page, selector: str):
-    for frame in all_frames(page):
-        item = first_visible(frame.locator(selector))
-        if item is not None:
-            return item
-    return None
-
-
-def redact_url(url: str) -> str:
-    value = re.sub(r";stok=[^/;?#]+", ";stok=<redacted>", url, flags=re.I)
-    value = re.sub(
-        r"([?&](?:token|auth|key|secret|session|sid)=)[^&#]+",
-        r"\1<redacted>",
-        value,
-        flags=re.I,
-    )
-    return value
-
-
-def safe_text(value: str | None, limit: int = 180) -> str:
-    if not value:
-        return ""
-    value = re.sub(r"\s+", " ", value).strip()
-    return value[:limit]
-
-
-def wait_for_spa(page, timeout_ms: int = 20000) -> None:
-    try:
-        page.wait_for_load_state("load", timeout=min(timeout_ms, 10000))
-    except Exception:
-        pass
-    try:
-        page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 10000))
-    except Exception:
-        pass
-
-    deadline = time.monotonic() + timeout_ms / 1000
-    while time.monotonic() < deadline:
-        for frame in all_frames(page):
-            try:
-                if frame.locator("input, button, a, [role=button], [role=tab]").count() > 0:
-                    page.wait_for_timeout(500)
-                    return
-            except Exception:
-                continue
-        page.wait_for_timeout(250)
-
-
-def wait_visible_in_frames(page, selectors: tuple[str, ...], timeout_ms: int):
-    deadline = time.monotonic() + timeout_ms / 1000
-    while time.monotonic() < deadline:
-        for selector in selectors:
-            item = visible_in_frames(page, selector)
-            if item is not None:
-                return item
-        page.wait_for_timeout(250)
-    return None
-
-
-def click_named(page, pattern: re.Pattern[str], *, timeout_ms: int = 8000):
-    deadline = time.monotonic() + timeout_ms / 1000
-    while time.monotonic() < deadline:
-        for frame in all_frames(page):
-            for role in ("button", "link", "tab", "menuitem"):
-                try:
-                    item = first_visible(frame.get_by_role(role, name=pattern))
-                except Exception:
-                    item = None
-                if item is not None:
-                    item.click()
-                    return item
-
-            # TP-Link's Vue menus are not consistently exposed with ARIA roles.
-            for selector in ("a", "button", "li", "div", "span"):
-                try:
-                    items = frame.locator(selector).filter(has_text=pattern)
-                    for idx in range(min(items.count(), 80)):
-                        item = items.nth(idx)
-                        text = safe_text(item.inner_text(timeout=300))
-                        if text and pattern.search(text) and item.is_visible():
-                            item.click()
-                            return item
-                except Exception:
-                    continue
-        page.wait_for_timeout(250)
-    return None
-
-
-def click_firmware_link(page, timeout_ms: int = 8000):
-    deadline = time.monotonic() + timeout_ms / 1000
-    route_re = re.compile(r"firmware|upgrade", re.I)
-    while time.monotonic() < deadline:
-        for frame in all_frames(page):
-            try:
-                links = frame.locator("a[href]")
-                for idx in range(min(links.count(), 200)):
-                    link = links.nth(idx)
-                    href = link.get_attribute("href") or ""
-                    text = safe_text(link.inner_text(timeout=300))
-                    if link.is_visible() and (FIRMWARE_RE.search(text) or route_re.search(href)):
-                        link.click()
-                        return link
-            except Exception:
-                continue
-        page.wait_for_timeout(250)
-    return None
-
-
-def screenshot(page, name: str) -> Path | None:
-    DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-    out = DEBUG_DIR / name
-    try:
-        page.screenshot(path=str(out), full_page=True)
-        return out
-    except Exception:
-        return None
-
-
-def dump_ui(page, label: str, build: int) -> Path:
-    DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-    stamp = int(time.time())
-    out = DEBUG_DIR / f"ui-{label}-build-{build}-{stamp}.json"
-    payload: dict[str, object] = {
-        "title": "",
-        "url": redact_url(page.url),
-        "frames": [],
-    }
-    try:
-        payload["title"] = safe_text(page.title(), 250)
-    except Exception:
-        pass
-
-    frame_dump = []
-    for frame in all_frames(page):
-        entry: dict[str, object] = {
-            "url": redact_url(frame.url),
-            "controls": [],
-            "visible_text": [],
+    if result is None:
+        die("endpoint de firmware retornou resposta vazia; ABORT antes do upload.")
+    print("[api] endpoint autenticado respondeu.")
+    if isinstance(result, dict):
+        # Print only non-secret firmware-ish metadata.
+        safe = {
+            k: v
+            for k, v in result.items()
+            if any(token in k.lower() for token in ("firmware", "hardware", "version", "upgrade", "time"))
         }
-        controls = []
-        try:
-            loc = frame.locator("input, button, a, [role=button], [role=tab], [role=menuitem]")
-            for idx in range(min(loc.count(), 250)):
-                el = loc.nth(idx)
-                try:
-                    if not el.is_visible():
-                        continue
-                    tag = el.evaluate("e => e.tagName.toLowerCase()")
-                    attrs = {}
-                    for name in ("type", "id", "name", "class", "placeholder", "role", "href", "aria-label"):
-                        if SENSITIVE_ATTR_RE.search(name) and name not in {"type", "id", "name", "class", "placeholder", "role", "href", "aria-label"}:
-                            continue
-                        value = el.get_attribute(name)
-                        if value:
-                            attrs[name] = redact_url(safe_text(value, 220)) if name == "href" else safe_text(value, 220)
-                    controls.append({
-                        "tag": tag,
-                        "text": safe_text(el.inner_text(timeout=300), 180) if tag != "input" else "",
-                        "attrs": attrs,
-                    })
-                except Exception:
-                    continue
-        except Exception:
-            pass
-        entry["controls"] = controls
-
-        try:
-            body = frame.locator("body").inner_text(timeout=1500)
-            seen = set()
-            lines = []
-            for raw in body.splitlines():
-                text = safe_text(raw, 180)
-                if not text or text in seen:
-                    continue
-                seen.add(text)
-                lines.append(text)
-                if len(lines) >= 100:
-                    break
-            entry["visible_text"] = lines
-        except Exception:
-            pass
-        frame_dump.append(entry)
-    payload["frames"] = frame_dump
-    out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    return out
+        if safe:
+            print("[api] metadata:")
+            print(json.dumps(safe, ensure_ascii=False, indent=2)[:4000])
+    return result if isinstance(result, dict) else {"value": result}
 
 
-def diagnose(page, label: str, build: int) -> tuple[Path | None, Path]:
-    shot = screenshot(page, f"ui-{label}-build-{build}-{int(time.time())}.png")
-    dump = dump_ui(page, label, build)
-    print(f"[debug] UI dump sanitizado: {dump}")
-    if shot:
-        print(f"[debug] screenshot: {shot}")
-    return shot, dump
+def build_authenticated_url(router_url: str, stok: str, api_path: str) -> str:
+    return f"{router_url.rstrip('/')}/cgi-bin/luci/;stok={stok}/{api_path.lstrip('/')}"
 
 
-def login(page, password: str, username: str | None, build: int) -> None:
-    selectors = (
-        'input[type="password"]',
-        'input[autocomplete="current-password"]',
-        'input[name*="pass" i]',
-        'input[id*="pass" i]',
-        'input[placeholder*="senha" i]',
-        'input[placeholder*="password" i]',
+def upload_firmware_raw(
+    requests,
+    router,
+    router_url: str,
+    api_path: str,
+    firmware: FirmwareInfo,
+    upload_operation: str,
+    upload_field: str,
+    timeout: int,
+) -> dict:
+    """Upload through the authenticated LuCI multipart endpoint.
+
+    Large firmware payloads are not sent through router.request(), because that
+    method encrypts URL-encoded API payloads and is unsuitable for a ~40 MiB
+    multipart body. Authentication is nevertheless the same stock session:
+    stok in the URL plus sysauth cookie from the encrypted login handshake.
+    """
+    stok, sysauth = get_private_auth(router)
+    url = build_authenticated_url(router_url, stok, api_path)
+
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Referer": f"{router_url.rstrip('/')}/webpages/index.html",
+        "User-Agent": "AX53-Firmware-Uploader/1.0",
+    }
+    cookies = {"sysauth": sysauth} if sysauth else {}
+
+    data = {"operation": upload_operation}
+    print(
+        f"[upload] enviando {firmware.path.name} ({firmware.size} bytes) "
+        f"para o endpoint stock ..."
     )
-    password_input = wait_visible_in_frames(page, selectors, timeout_ms=20000)
+    started = time.monotonic()
+    try:
+        with firmware.path.open("rb") as fh:
+            files = {
+                upload_field: (
+                    firmware.path.name,
+                    fh,
+                    "application/octet-stream",
+                )
+            }
+            response = requests.post(
+                url,
+                data=data,
+                files=files,
+                headers=headers,
+                cookies=cookies,
+                timeout=(10, timeout),
+                verify=False,
+            )
+    except Exception as exc:
+        die(f"falha durante upload HTTP: {type(exc).__name__}: {exc}")
 
-    if password_input is None:
-        # A fresh Playwright context has no persisted cookies. Treat absence of a
-        # login field as unknown state, not as proof of authentication.
-        print("[login] campo de senha não apareceu após a hidratação da SPA.")
-        diagnose(page, "login-not-found", build)
-        # Continue only if the authenticated shell is visibly present.
-        shell_visible = False
-        for pattern in (ADVANCED_RE, SYSTEM_RE):
-            for frame in all_frames(page):
-                try:
-                    if first_visible(frame.get_by_text(pattern)) is not None:
-                        shell_visible = True
-                        break
-                except Exception:
-                    continue
-            if shell_visible:
-                break
-        if shell_visible:
-            print("[login] shell autenticado detectado; continuando sem novo login.")
-            return
-        die("estado de login não pôde ser determinado; veja o UI dump sanitizado.")
+    elapsed = time.monotonic() - started
+    print(f"[upload] HTTP {response.status_code} em {elapsed:.1f}s")
+    if response.status_code < 200 or response.status_code >= 300:
+        die(f"upload rejeitado pelo roteador: HTTP {response.status_code}")
 
-    if username:
-        username_input = wait_visible_in_frames(
-            page,
-            (
-                'input[type="text"]',
-                'input[type="email"]',
-                'input[name*="user" i]',
-                'input[id*="user" i]',
-            ),
-            timeout_ms=1500,
-        )
-        if username_input is not None:
-            username_input.fill(username)
+    text = (response.text or "").strip()
+    if not text:
+        # Some stock upload handlers intentionally return an empty body. Treat a
+        # successful HTTP status as upload-complete, but never as flash approval.
+        print("[upload] corpo de resposta vazio; upload HTTP concluído, flash ainda NÃO autorizado.")
+        return {"http_status": response.status_code, "body": ""}
 
-    password_input.fill(password)
-    if click_named(page, LOGIN_RE, timeout_ms=2500) is None:
-        try:
-            password_input.press("Enter")
-        except Exception:
-            form = password_input.locator("xpath=ancestor::form[1]")
-            if form.count():
-                form.evaluate("f => f.requestSubmit()")
+    try:
+        parsed = response.json()
+    except Exception:
+        # Never echo arbitrary router HTML because it may contain session data.
+        print("[upload] resposta não-JSON recebida; conteúdo omitido por segurança.")
+        return {"http_status": response.status_code, "body_type": "non-json"}
 
-    wait_for_spa(page, 20000)
-    page.wait_for_timeout(1200)
-
-    # The password input may remain in detached/hidden login markup. Only visible
-    # login controls count as a failed login.
-    if wait_visible_in_frames(page, selectors, timeout_ms=2500) is not None:
-        diagnose(page, "login-rejected", build)
-        die("a tela de login permaneceu ativa; senha não aceita ou login não concluiu.")
-    print("[login] autenticação concluída.")
+    print("[upload] resposta JSON recebida.")
+    return parsed if isinstance(parsed, dict) else {"value": parsed}
 
 
-def navigate_to_firmware(page, build: int) -> None:
-    print("[nav] abrindo Avançado / Advanced ...")
-    advanced = click_named(page, ADVANCED_RE, timeout_ms=10000)
-    if advanced is None:
-        print("[nav] Avançado não localizado; procurando rota de firmware já exposta.")
-    else:
-        page.wait_for_timeout(800)
+def precheck_after_upload(router, api_path: str) -> dict:
+    """Ask the stock firmware controller to validate the uploaded image.
 
-    print("[nav] abrindo Sistema / System Tools ...")
-    system = click_named(page, SYSTEM_RE, timeout_ms=8000)
-    if system is None:
-        print("[nav] Sistema não localizado; procurando Firmware Upgrade diretamente.")
-    else:
-        page.wait_for_timeout(800)
+    The firmware backend itself exposes fwup_check internally. On web-facing
+    builds this may be reachable as an operation on the same form. If the current
+    firmware rejects that operation, we fail closed instead of guessing.
+    """
+    print("[check] solicitando validação stock do firmware ...")
+    try:
+        result = router.request(api_path, "operation=fwup_check", ignore_errors=True)
+    except Exception as exc:
+        die(f"pre-check stock falhou: {type(exc).__name__}: {exc}")
 
-    print("[nav] abrindo Atualização de Firmware / Firmware Upgrade ...")
-    firmware = click_named(page, FIRMWARE_RE, timeout_ms=8000)
-    if firmware is None:
-        firmware = click_firmware_link(page, timeout_ms=5000)
-    if firmware is None:
-        diagnose(page, "firmware-nav-not-found", build)
-        die("não encontrei a página de atualização; veja o UI dump sanitizado.")
-    wait_for_spa(page, 15000)
-    page.wait_for_timeout(700)
+    if result is None:
+        die("pre-check retornou resposta vazia; ABORT antes da confirmação final.")
 
-
-def find_file_input(page):
-    for selector in (
-        'input[type="file"][accept*=".bin"]',
-        'input[type="file"][accept*="octet"]',
-        'input[type="file"]',
-    ):
-        for frame in all_frames(page):
-            try:
-                loc = frame.locator(selector)
-                if loc.count():
-                    return loc.first
-            except Exception:
-                continue
-    return None
-
-
-def wait_upgrade_button(page, timeout_ms: int = 60000):
-    deadline = time.monotonic() + timeout_ms / 1000
-    while time.monotonic() < deadline:
-        for frame in all_frames(page):
-            for role in ("button", "link"):
-                try:
-                    loc = frame.get_by_role(role, name=UPGRADE_RE)
-                    for idx in range(loc.count()):
-                        item = loc.nth(idx)
-                        if item.is_visible() and item.is_enabled():
-                            return item
-                except Exception:
-                    continue
-            try:
-                candidates = frame.locator("button, a, [role=button]").filter(has_text=UPGRADE_RE)
-                for idx in range(min(candidates.count(), 50)):
-                    item = candidates.nth(idx)
-                    if item.is_visible() and item.is_enabled():
-                        return item
-            except Exception:
-                pass
-        page.wait_for_timeout(500)
-    return None
-
-
-def confirmation_button(page):
-    # Prefer buttons inside an actual modal/dialog.
-    for frame in all_frames(page):
-        for selector in ('[role="dialog"]', '.su-dialog', '.su-modal', '.modal'):
-            try:
-                dialogs = frame.locator(selector)
-                for d_idx in range(dialogs.count()):
-                    dialog = dialogs.nth(d_idx)
-                    if not dialog.is_visible():
-                        continue
-                    buttons = dialog.locator("button, [role=button], a").filter(has_text=CONFIRM_RE)
-                    for b_idx in range(buttons.count() - 1, -1, -1):
-                        button = buttons.nth(b_idx)
-                        if button.is_visible() and button.is_enabled():
-                            return button
-            except Exception:
-                continue
-    return None
-
-
-def wait_confirmation_step(page, host: str, port: int, timeout_s: int = 90):
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if not tcp_open(host, port, timeout=1.0):
-            return None, True
-        button = confirmation_button(page)
-        if button is not None:
-            return button, False
-        page.wait_for_timeout(400)
-    return None, False
-
-
-def cancel_confirmation_if_possible(page) -> None:
-    for frame in all_frames(page):
-        for selector in ('[role="dialog"]', '.su-dialog', '.su-modal', '.modal'):
-            try:
-                dialogs = frame.locator(selector)
-                for idx in range(dialogs.count()):
-                    dialog = dialogs.nth(idx)
-                    if not dialog.is_visible():
-                        continue
-                    button = first_visible(dialog.locator("button, [role=button], a").filter(has_text=CANCEL_RE))
-                    if button is not None and button.is_enabled():
-                        button.click()
-                        print("[confirm] modal cancelado na UI.")
-                        return
-            except Exception:
-                continue
+    print("[check] resposta do pre-check recebida.")
+    if isinstance(result, dict):
+        print(json.dumps(result, ensure_ascii=False, indent=2)[:4000])
+        # Explicit negative signals are always fatal. Unknown shapes are shown to
+        # the operator but do not trigger the flash automatically.
+        if result.get("success") is False:
+            die("pre-check stock reportou success=false; ABORT.")
+        for key in ("errorcode", "error_code", "code"):
+            value = result.get(key)
+            if value not in (None, 0, "0", "success", "ok"):
+                die(f"pre-check stock retornou {key}={value!r}; ABORT.")
+    return result if isinstance(result, dict) else {"value": result}
 
 
 def ask_flash_confirmation(firmware: FirmwareInfo, router_url: str) -> bool:
@@ -589,147 +309,60 @@ def ask_flash_confirmation(firmware: FirmwareInfo, router_url: str) -> bool:
     print(f"Arquivo  : {firmware.path.name}")
     print(f"Tamanho  : {firmware.size} bytes")
     print(f"SHA256   : {firmware.sha256}")
-    print("\nA UI stock está no passo final de confirmação.")
+    print("\nO arquivo já foi enviado e passou pelo pre-check stock.")
+    print("A próxima chamada é a operação destrutiva de upgrade.")
     print("Após confirmar, NÃO interrompa a alimentação do AX53.")
-    answer = input(f"\nDigite {CONFIRM_TOKEN} para iniciar o flash, ou Enter para cancelar: ").strip()
+    answer = input(
+        f"\nDigite {CONFIRM_TOKEN} para iniciar o flash, ou Enter para cancelar: "
+    ).strip()
     return answer == CONFIRM_TOKEN
 
 
-def run_browser(args, firmware: FirmwareInfo, password: str) -> None:
-    validate_headed_environment(args.headed)
-    sync_playwright, PlaywrightTimeoutError = import_playwright()
-    host, port = parse_router_target(args.router_url)
-    require_router_reachable(host, port)
-    DEBUG_DIR.mkdir(parents=True, exist_ok=True)
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=not args.headed)
-        context = browser.new_context(ignore_https_errors=True, viewport={"width": 1440, "height": 1000})
-        page = context.new_page()
-        page.set_default_timeout(args.ui_timeout * 1000)
-
-        native_confirmation: dict[str, object] = {"seen": False, "accepted": False}
-
-        def handle_native_dialog(dialog):
-            native_confirmation["seen"] = True
-            print(f"[confirm] diálogo nativo detectado: {safe_text(dialog.message, 220)}")
-            if ask_flash_confirmation(firmware, args.router_url):
-                native_confirmation["accepted"] = True
-                dialog.accept()
-            else:
-                print("[confirm] flash CANCELADO pelo usuário.")
-                dialog.dismiss()
-
-        page.on("dialog", handle_native_dialog)
-
-        try:
-            print(f"[router] abrindo {args.router_url}")
-            page.goto(args.router_url, wait_until="domcontentloaded")
-            wait_for_spa(page, 20000)
-
-            login(page, password, args.username, firmware.build)
-            navigate_to_firmware(page, firmware.build)
-
-            file_input = find_file_input(page)
-            if file_input is None:
-                diagnose(page, "file-input-not-found", firmware.build)
-                die("input de firmware não encontrado; ABORT antes de qualquer flash.")
-
-            print(f"[upload] selecionando {firmware.path.name}")
-            file_input.set_input_files(str(firmware.path))
-            page.wait_for_timeout(1200)
-
-            try:
-                value = file_input.input_value()
-            except Exception:
-                value = ""
-            if value and firmware.path.name not in value:
-                die(f"a UI associou um arquivo inesperado: {value!r}; ABORT.")
-
-            upgrade_button = wait_upgrade_button(page)
-            if upgrade_button is None:
-                diagnose(page, "upgrade-button-not-found", firmware.build)
-                die("arquivo selecionado, mas botão Upgrade/Atualizar não ficou disponível.")
-
-            ready_shot = screenshot(page, f"build-{firmware.build}-ready.png")
-            if ready_shot:
-                print(f"[debug] screenshot com firmware selecionado: {ready_shot}")
-
-            print("[upload] avançando até a confirmação stock do firmware ...")
-            upgrade_button.click()
-
-            # A native JS confirm is handled synchronously by handle_native_dialog.
-            if native_confirmation["seen"]:
-                if not native_confirmation["accepted"]:
-                    return
-                if not args.no_wait_reboot:
-                    wait_for_reboot(host, port, args.reboot_timeout)
-                return
-
-            confirm_button, reboot_started = wait_confirmation_step(page, host, port)
-            if reboot_started:
-                diagnose(page, "unexpected-reboot-before-confirm", firmware.build)
-                die(
-                    "a Web UI caiu antes de detectarmos confirmação final. "
-                    "Por segurança, não assumo que esse primeiro clique era reversível."
-                )
-            if confirm_button is None:
-                diagnose(page, "confirm-not-found", firmware.build)
-                die("nenhum passo final de confirmação foi detectado; ABORT.")
-
-            confirm_shot = screenshot(page, f"build-{firmware.build}-confirm.png")
-            if confirm_shot:
-                print(f"[debug] screenshot do passo de confirmação: {confirm_shot}")
-
-            if not ask_flash_confirmation(firmware, args.router_url):
-                print("[confirm] flash CANCELADO; confirmação final não enviada.")
-                cancel_confirmation_if_possible(page)
-                return
-
-            # Re-resolve to avoid a stale locator if Vue re-rendered while waiting.
-            confirm_button = confirmation_button(page)
-            if confirm_button is None:
-                die("a confirmação final desapareceu antes do clique; ABORT.")
-            print("[confirm] autorização recebida; enviando confirmação final ...")
-            confirm_button.click()
-            if not args.no_wait_reboot:
-                wait_for_reboot(host, port, args.reboot_timeout)
-
-        except SystemExit:
-            raise
-        except KeyboardInterrupt:
-            print("\n[abort] cancelado pelo usuário; nenhuma confirmação adicional será enviada.")
-            cancel_confirmation_if_possible(page)
-            raise SystemExit(130)
-        except PlaywrightTimeoutError as exc:
-            diagnose(page, "playwright-timeout", firmware.build)
-            die(f"timeout na UI do AX53: {exc}")
-        except Exception as exc:
-            diagnose(page, "unexpected-error", firmware.build)
-            die(f"falha na automação da UI: {type(exc).__name__}: {exc}")
-        finally:
-            try:
-                context.close()
-            finally:
-                browser.close()
+def flash(router, api_path: str, flash_operation: str) -> None:
+    print(f"[flash] enviando operation={flash_operation} ...")
+    try:
+        # The request may drop because the router begins its reboot immediately.
+        router.request(
+            api_path,
+            f"operation={flash_operation}",
+            ignore_response=True,
+            ignore_errors=True,
+        )
+    except Exception as exc:
+        print(
+            "[flash] conexão terminou durante a chamada de upgrade "
+            f"({type(exc).__name__}); validarei pelo reboot."
+        )
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Upload AX53 pelo Web UI stock. Usa BUILD - 1 por padrão, chega à "
-            "confirmação final e exige CONFIRMAR no terminal."
+            "Uploader API-first do AX53. Usa BUILD - 1, faz login/API/upload/pre-check, "
+            "e exige CONFIRMAR antes da operação final de flash."
         )
     )
     parser.add_argument("--router-url", default=DEFAULT_ROUTER_URL)
     parser.add_argument("--build-file", type=Path, default=REPO_ROOT / "BUILD")
     parser.add_argument("--build", type=int, help="reflash explícito de build já concluído")
-    parser.add_argument("--username", help="usuário da UI quando aplicável")
+    parser.add_argument("--username", default="admin")
     parser.add_argument("--password-env", default="AX53_PASSWORD")
-    parser.add_argument("--headed", action="store_true", help="requer DISPLAY/WAYLAND_DISPLAY")
-    parser.add_argument("--ui-timeout", type=int, default=15)
+    parser.add_argument("--api-path", default=DEFAULT_API_PATH)
+    parser.add_argument("--upload-operation", default=DEFAULT_UPLOAD_OPERATION)
+    parser.add_argument("--upload-field", default=DEFAULT_UPLOAD_FIELD)
+    parser.add_argument("--flash-operation", default=DEFAULT_FLASH_OPERATION)
+    parser.add_argument("--upload-timeout", type=int, default=180)
     parser.add_argument("--reboot-timeout", type=int, default=600)
-    parser.add_argument("--no-wait-reboot", action="store_true")
+    parser.add_argument(
+        "--skip-precheck",
+        action="store_true",
+        help="não recomendado: pula fwup_check; ainda exige CONFIRMAR",
+    )
+    parser.add_argument(
+        "--no-wait-reboot",
+        action="store_true",
+        help="não monitora queda/retorno da Web UI após a operação final",
+    )
     return parser.parse_args(argv)
 
 
@@ -737,24 +370,87 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     firmware = resolve_firmware(args.build_file.resolve(), args.build)
     host, port = parse_router_target(args.router_url)
+    require_router_reachable(host, port)
 
-    print("=== AX53 firmware uploader ===")
+    print("=== AX53 firmware uploader (API-first) ===")
     print(f"Target     : {args.router_url} ({host}:{port})")
     print(f"BUILD file : {args.build_file.resolve()}")
     print(f"Build      : {firmware.build}")
     print(f"Firmware   : {firmware.path}")
     print(f"Size       : {firmware.size} bytes")
     print(f"SHA256     : {firmware.sha256}")
-    print("Mode       : INTERACTIVE / STOP AT FINAL CONFIRMATION")
+    print(f"API path   : {args.api_path}")
+    print("Mode       : API / STOP BEFORE FINAL UPGRADE")
 
     password = os.environ.get(args.password_env)
     if password is None:
-        password = getpass.getpass("Senha da UI do AX53: ")
+        password = getpass.getpass("Senha LOCAL da UI do AX53: ")
     if not password:
         die("senha vazia; ABORT.")
 
-    run_browser(args, firmware, password)
-    return 0
+    requests, TplinkRouterProvider = import_dependencies()
+    # Local AX53 HTTP is expected; suppress only HTTPS warnings when verify=False.
+    try:
+        requests.packages.urllib3.disable_warnings(  # type: ignore[attr-defined]
+            requests.packages.urllib3.exceptions.InsecureRequestWarning  # type: ignore[attr-defined]
+        )
+    except Exception:
+        pass
+
+    print("[auth] autenticando na API criptografada TP-Link ...")
+    try:
+        router = TplinkRouterProvider.get_client(
+            args.router_url,
+            password,
+            args.username,
+            verify_ssl=False,
+            timeout=30,
+        )
+        router.authorize()
+    except Exception as exc:
+        die(f"autenticação API falhou: {type(exc).__name__}: {exc}")
+
+    print(f"[auth] autenticado via {type(router).__name__}; sessão obtida.")
+
+    try:
+        api_read_firmware(router, args.api_path)
+        upload_firmware_raw(
+            requests,
+            router,
+            args.router_url,
+            args.api_path,
+            firmware,
+            args.upload_operation,
+            args.upload_field,
+            args.upload_timeout,
+        )
+
+        if args.skip_precheck:
+            print("[check] AVISO: pre-check foi pulado por --skip-precheck.")
+        else:
+            precheck_after_upload(router, args.api_path)
+
+        if not ask_flash_confirmation(firmware, args.router_url):
+            print("[confirm] flash CANCELADO; operação final não enviada.")
+            return 0
+
+        flash(router, args.api_path, args.flash_operation)
+
+        if not args.no_wait_reboot:
+            wait_for_reboot(host, port, args.reboot_timeout)
+
+        print("[done] roteador voltou após a chamada de upgrade.")
+        return 0
+    except KeyboardInterrupt:
+        print("\n[abort] cancelado pelo usuário. Se a operação final ainda não foi enviada, não há flash.")
+        return 130
+    finally:
+        # Logout is intentionally best-effort: after a successful upgrade the
+        # router may already be rebooting and the session endpoint unavailable.
+        try:
+            router.logout()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
