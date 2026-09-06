@@ -1,0 +1,31 @@
+#!/bin/sh /etc/rc.common
+# Polling recovery supervisor for the native NetBird VPN Client lifecycle.
+# The worker never starts NetBird directly; it only re-triggers vpnc/netifd.
+
+START=99
+STOP=11
+
+SERVICE_DAEMONIZE=1
+SERVICE_WRITE_PID=1
+SERVICE_PID_FILE=/var/run/netbird-recovery.pid
+
+start() {
+    local sysmode
+    config_load sysmode
+    config_get sysmode sysmode mode "router"
+    [ "$sysmode" = "router" ] || return 0
+
+    mkdir -p /var/run
+    service_start /sbin/netbird-recovery run
+}
+
+stop() {
+    service_stop /sbin/netbird-recovery
+    rm -f "$SERVICE_PID_FILE"
+    rmdir /tmp/netbird-recovery-attempt.lock 2>/dev/null || true
+}
+
+restart() {
+    stop
+    start
+}
