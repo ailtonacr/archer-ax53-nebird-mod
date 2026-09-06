@@ -130,17 +130,20 @@ PROTO_SETUP="$(sed -n '/^proto_netbird_setup()/,/^proto_netbird_teardown()/p' "$
 }
 test ! -e "$R/etc/rc.d/S99netbird" || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }
 
-# Canonical firewall must preserve NetBird v0.77.1 Route ACL ordering.
-grep -q '# NetBird v4 CIDR-scoped/applied-state' "$R/lib/firewall/tpcmd.sh" || {
+# Canonical firewall must preserve NetBird v0.77.1 Route ACL ordering. Historical
+# TP-Link/WireGuard functions elsewhere in tpcmd.sh legitimately use position 1,
+# so ordering checks must be scoped to the canonical v4 NetBird section only.
+NB_FW_CANONICAL="$(sed -n '/# NetBird v4 CIDR-scoped\/applied-state/,$p' "$R/lib/firewall/tpcmd.sh")"
+[ -n "$NB_FW_CANONICAL" ] || {
   echo "Error: ACL-safe canonical NetBird firewall source missing" >&2
   exit 1
 }
-if grep -Fq 'fw_s_add 4 f FORWARD ACCEPT 1 {' "$R/lib/firewall/tpcmd.sh"; then
-  echo "Error: TP-Link NetBird FORWARD rule is inserted ahead of NetBird Route ACLs" >&2
+if printf '%s\n' "$NB_FW_CANONICAL" | grep -Fq 'fw_s_add 4 f FORWARD ACCEPT 1 {'; then
+  echo "Error: canonical TP-Link NetBird FORWARD rule is inserted ahead of NetBird Route ACLs" >&2
   exit 1
 fi
-grep -Fq 'fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }' "$R/lib/firewall/tpcmd.sh" || {
-  echo "Error: ACL-safe appended wt0 -> LAN rule missing" >&2
+printf '%s\n' "$NB_FW_CANONICAL" | grep -Fq 'fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }' || {
+  echo "Error: ACL-safe appended wt0 -> LAN rule missing from canonical NetBird firewall section" >&2
   exit 1
 }
 
