@@ -112,7 +112,10 @@ if grep -q 'nb_fw_prioritize_lan' "$R/lib/netbird/netbird-runtime.sh"; then
   exit 1
 fi
 grep -q 'nb_runtime_connect' "$R/lib/netifd/proto/netbird.sh"
-if grep -q '/sbin/netbird-ctl' "$R/lib/netifd/proto/netbird.sh"; then
+# Dependency checks must inspect executable shell code, not explanatory comments.
+# Full-line comments may intentionally mention retired paths while documenting
+# why they are forbidden from setup/teardown.
+if grep -Ev '^[[:space:]]*#' "$R/lib/netifd/proto/netbird.sh" | grep -q '/sbin/netbird-ctl'; then
   echo "Error: netifd NetBird protocol still depends on netbird-ctl" >&2
   exit 1
 fi
