@@ -459,19 +459,35 @@ def run_browser(args, firmware: FirmwareInfo, password: str) -> None:
 
             print("[apply] --apply presente: iniciando Upgrade ...")
             upgrade_button.click()
-            page.wait_for_timeout(700)
 
-            confirmed = click_confirmation(page)
-            if confirmed:
-                print("[apply] confirmação do modal enviada.")
-            else:
-                print(
-                    "[apply] nenhum modal de confirmação adicional foi detectado; "
-                    "o primeiro clique pode ter iniciado o upgrade diretamente."
+            # Keep Chromium alive while the firmware upload/validation is in flight.
+            # Closing the browser too early can abort a multipart upload before the
+            # router receives the complete image.
+            confirm_deadline = time.monotonic() + 90
+            confirmation_sent = False
+            reboot_started = False
+            while time.monotonic() < confirm_deadline:
+                if not tcp_open(host, port, timeout=1.0):
+                    reboot_started = True
+                    print("[apply] Web UI caiu; o upgrade/reboot já iniciou sem confirmação adicional.")
+                    break
+                if click_confirmation(page):
+                    confirmation_sent = True
+                    print("[apply] confirmação do modal enviada.")
+                    break
+                page.wait_for_timeout(500)
+
+            if not confirmation_sent and not reboot_started:
+                die(
+                    "após clicar Upgrade, o roteador permaneceu online e nenhum "
+                    "modal de confirmação apareceu em 90s. ABORT sem fechar a "
+                    "sessão prematuramente; use --headed para inspecionar a UI."
                 )
 
-            # Give the browser request a moment to leave the process before closing.
-            page.wait_for_timeout(1200)
+            if not args.no_wait_reboot:
+                # Deliberately wait with the browser/context still alive so any
+                # pending upload request is not cancelled by browser shutdown.
+                wait_for_reboot(host, port, args.reboot_timeout)
 
         except SystemExit:
             raise
@@ -488,10 +504,6 @@ def run_browser(args, firmware: FirmwareInfo, password: str) -> None:
                 context.close()
             finally:
                 browser.close()
-
-    if args.apply and not args.no_wait_reboot:
-        wait_for_reboot(host, port, args.reboot_timeout)
-
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
