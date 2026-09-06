@@ -114,7 +114,7 @@ def check_runtime_library() -> None:
     assert "nb_runtime_stop >/dev/null 2>&1 || true" in connect, "post-start failure must rollback runtime"
     disconnect = between(runtime, "nb_runtime_disconnect()", "nb_runtime_stop()")
     assert "nb_materialize" not in disconnect
-    clean = runtime.split("nb_clean()", 1)[1]
+    clean = shell_code(runtime.split("nb_clean()", 1)[1])
     assert "nb_ensure_settings" not in clean, "identity cleanup must not recreate state/"
 
 
