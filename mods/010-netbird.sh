@@ -5,7 +5,7 @@
 # This is the bootstrap stage consumed by 012-netbird-native-vpn.sh. The final
 # image uses NetBird as native type=netbirdvpn/proto=netbird through the stock
 # /admin/vpn endpoint; the dedicated /admin/netbird endpoint remains auxiliary
-# for enrollment/diagnostics only.
+# for enrollment/runtime diagnostics only.
 #
 # The large NetBird ELF is NOT embedded in rootfs and NOT stored on any MTD/UBI
 # partition; it is downloaded over HTTPS and materialized into /tmp at runtime.
@@ -155,9 +155,15 @@ done
 [ ! -e "$VPN_STOCK" ] || { echo "Error: retired vpn_stock.lua backup remains in image" >&2; exit 1; }
 [ ! -e "$LEGACY_VPN_STOCK" ] || { echo "Error: legacy vpn_stock.lua remains in controller tree" >&2; exit 1; }
 is_stock_vpn "$VPN_CONTROLLER" || { echo "Error: /admin/vpn controller is not original TP-Link bytecode" >&2; exit 1; }
-grep -q 'profile_delete' "$R/usr/lib/lua/luci/controller/admin/netbird.lua" || {
-  echo "Error: NetBird identity cleanup operation missing" >&2; exit 1;
+grep -q 'local function op_enroll' "$R/usr/lib/lua/luci/controller/admin/netbird.lua" || {
+  echo "Error: NetBird provider enrollment operation missing" >&2; exit 1;
 }
+for generic_op in 'settings_set' 'profile_delete' 'connected_status' 'settings_get'; do
+  if grep -Fq "op == \"$generic_op\"" "$R/usr/lib/lua/luci/controller/admin/netbird.lua"; then
+    echo "Error: /admin/netbird shadows generic TP-Link operation: $generic_op" >&2
+    exit 1
+  fi
+done
 grep -q 'description' "$R/usr/lib/lua/luci/model/netbird.lua" || {
   echo "Error: NetBird profile description persistence missing" >&2; exit 1;
 }
