@@ -29,6 +29,8 @@ local FIELDS = {
     "advertise_cidr",
     "wireguard_port",
     "server",
+    "profile_key",
+    "legacy_identity",
     "kill_switch",
 }
 
@@ -48,30 +50,36 @@ local function management_host(url)
     return authority:match("^([^:]+)") or authority
 end
 
+local function profile_key_from_config(cfg)
+    local key = cfg.profile_key or cfg.key or cfg.id or cfg[".name"]
+    key = tostring(key or "")
+    if nb_model.valid_profile_key(key) then return key end
+    return ""
+end
+
 local function value_or_current(cfg, current, key, fallback)
     if cfg[key] ~= nil then return cfg[key] end
     if current[key] ~= nil then return current[key] end
     return fallback
 end
 
-local function settings_from_config(cfg)
-    local current = nb_model.get_settings and nb_model.get_settings() or {}
+local function settings_from_config(cfg, profile_key)
+    local current = profile_key ~= "" and nb_model.get_settings(profile_key) or {}
     if type(current) ~= "table" then current = {} end
 
     local management_url = value_or_current(cfg, current, "management_url", "")
-    if management_url == "" then
-        management_url = current.management_url or ""
-    end
+    if management_url == "" then management_url = current.management_url or "" end
 
     local connect = cfg.connect
     local enable
     if connect == nil then
         enable = current.enable or "0"
     else
-        enable = (connect == "0" or connect == 0 or connect == false) and "0" or "1"
+        enable = (connect == "0" or connect == 0 or connect == false or connect == "off") and "0" or "1"
     end
 
     return {
+        description = tostring(value_or_current(cfg, current, "description", "NetBird") or "NetBird"),
         management_url = management_url,
         hostname = tostring(value_or_current(cfg, current, "hostname", "") or ""),
         disable_dns = bool01(cfg.disable_dns, current.disable_dns or "1"),
@@ -89,12 +97,19 @@ end
 
 local function netbird_config(cfg, vpn_type)
     cfg = cfg or {}
+    local profile_key = profile_key_from_config(cfg)
+    local settings = settings_from_config(cfg, profile_key)
 
-    -- Keep the already validated runtime settings file synchronized while the
-    -- stock controller remains authoritative for profile CRUD. Enrollment is
-    -- intentionally not touched here; it represents NetBird identity state.
-    local settings = settings_from_config(cfg)
-    local updated, err = nb_model.set_settings(settings)
+    -- vpn/server remains authoritative. Materialize a profile-scoped runtime
+    -- settings view only once the persisted stock profile key is known. During
+    -- the initial ADD request the stock key may not exist yet; that is valid and
+    -- must never force all NetBird rows onto a synthetic key such as "netbird".
+    local updated, err
+    if profile_key ~= "" then
+        updated, err = nb_model.set_settings(settings, profile_key)
+    else
+        updated, err = nb_model.preview_settings(settings)
+    end
     if not updated then
         io.stderr:write("netbird: native VPN config rejected: " .. tostring(err or "invalid settings") .. "\n")
         return {}
@@ -112,7 +127,7 @@ local function netbird_config(cfg, vpn_type)
         server = server,
         parent = cfg.parent or "wan",
     }
-
+    if profile_key ~= "" then vpn.profile_key = profile_key end
     if cfg.kill_switch ~= nil then vpn.kill_switch = cfg.kill_switch end
     return { vpn = vpn }
 end
