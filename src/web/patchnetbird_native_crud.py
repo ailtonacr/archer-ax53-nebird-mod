@@ -6,9 +6,10 @@ The NetBird subform owns protocol-specific fields only. A saved row is identifie
 by its persisted key/id; VPN type alone must never be used to distinguish Add
 from Edit because both modes legitimately use type=netbirdvpn.
 
-The final model bundle keeps only the auxiliary identity-cleanup helper needed
-after stock DELETE. Hybrid writable settings/control helpers are removed so
-/admin/vpn?form=server remains the sole normal profile configuration path.
+Most importantly, ADD must not synthesize a fixed key. TP-Link allocates the
+stock row identity, which is what allows multiple NetBird profiles to coexist.
+The only auxiliary model helper left in the final bundle performs profile-scoped
+identity cleanup after successful stock DELETE.
 """
 from __future__ import annotations
 
@@ -24,7 +25,7 @@ JS = os.path.join(ROOT, "www/webpages/js")
 
 LEGACY_HELPERS = 'const nb="/admin/netbird";function nbStatus(e){return a.request(nb,{operation:"status",...e},{preventSuccess:!0,preventError:!0})}function nbSettingsSet(e){return a.request(nb,{operation:"settings_set",...e},{preventSuccess:!0,preventError:!0})}function nbControl(e){return a.request(nb,{operation:e},{preventSuccess:!0,preventError:!0})}function nbDelete(){return a.request(nb,{operation:"profile_delete"},{preventSuccess:!0,preventError:!0})}'
 FACTORY_HELPERS = 'const nb="/admin/netbird";function nbEnabled(e){return!!(e&&(e.enable===!0||e.enable==="on"||e.enable==="1"||e.enabled===!0))}function nbStatus(e){return a.request(nb,{operation:"status",...e},{preventSuccess:!0,preventError:!0})}async function nbDisableStockActive(){const e=globalThis.__nbActiveStockVpn;if(!e)return;const n={...e,enable:!1,enabled:!1};await a.update(y,{key:e.key},R(n),R(e),{preventSuccess:!0});globalThis.__nbActiveStockVpn=null}async function nbStopIfEnabled(){const e=await nbStatus();e&&e.profileExists&&e.settings&&e.settings.enable==="1"&&await nbControl("stop")}async function nbSettingsSet(e){nbEnabled(e)&&await nbDisableStockActive();return a.request(nb,{operation:"settings_set",...e},{preventSuccess:!0,preventError:!0})}async function nbControl(e){e==="start"&&await nbDisableStockActive();return a.request(nb,{operation:e},{preventSuccess:!0,preventError:!0})}function nbDelete(){return a.request(nb,{operation:"profile_delete"},{preventSuccess:!0,preventError:!0})}'
-DELETE_HELPER = 'const nb="/admin/netbird";function nbDelete(){return a.request(nb,{operation:"profile_delete"},{preventSuccess:!0,preventError:!0})}'
+DELETE_HELPER = 'const nb="/admin/netbird";function nbDelete(e){return a.request(nb,{operation:"profile_delete",profile_key:e},{preventSuccess:!0,preventError:!0})}'
 
 
 def read_gz(name: str) -> str:
@@ -65,10 +66,13 @@ def patch_update_store() -> None:
 
 
 def strip_hybrid_helpers(text: str) -> str:
+    old_delete_only = 'const nb="/admin/netbird";function nbDelete(){return a.request(nb,{operation:"profile_delete"},{preventSuccess:!0,preventError:!0})}'
     if FACTORY_HELPERS in text:
         text = text.replace(FACTORY_HELPERS, DELETE_HELPER, 1)
     elif LEGACY_HELPERS in text:
         text = text.replace(LEGACY_HELPERS, DELETE_HELPER, 1)
+    elif old_delete_only in text:
+        text = text.replace(old_delete_only, DELETE_HELPER, 1)
     elif DELETE_HELPER not in text:
         raise RuntimeError("native helpers: expected hybrid or delete-only helper block")
 
@@ -99,27 +103,32 @@ def patch_model() -> None:
 
     old_delete = 'async function J(e,n){if(e==="netbird"){await nbDelete();return}await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
     key_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),e==="netbird"&&await nbDelete()}'
-    native_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete()}'
-    if old_delete in text:
-        text = text.replace(old_delete, native_delete, 1)
-    elif key_delete in text:
-        text = text.replace(key_delete, native_delete, 1)
-    elif native_delete not in text:
-        stock_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
-        if stock_delete in text:
-            text = text.replace(stock_delete, native_delete, 1)
-        else:
-            raise RuntimeError("native delete: stock/dedicated delete path not found")
+    old_native_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete()}'
+    native_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete(e)}'
+    for old in (old_delete, key_delete, old_native_delete):
+        if old in text:
+            text = text.replace(old, native_delete, 1)
+            break
+    else:
+        if native_delete not in text:
+            stock_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
+            if stock_delete in text:
+                text = text.replace(stock_delete, native_delete, 1)
+            else:
+                raise RuntimeError("native delete: stock/dedicated delete path not found")
 
-    native_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
-    old_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).host}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
+    fixed_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,type:u.Netbird,server:n,management_url:e.management_url||""};}'
+    synthetic_key_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
+    old_host_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).host}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
     marker = 'function R(e){'
-    if old_serializer in text:
-        text = text.replace(old_serializer, native_serializer, 1)
-    elif native_serializer not in text:
+    if synthetic_key_serializer in text:
+        text = text.replace(synthetic_key_serializer, fixed_serializer, 1)
+    elif old_host_serializer in text:
+        text = text.replace(old_host_serializer, fixed_serializer, 1)
+    elif fixed_serializer not in text:
         if text.count(marker) != 1:
             raise RuntimeError("native serializer: stock R(e) marker not unique")
-        text = text.replace(marker, native_serializer, 1)
+        text = text.replace(marker, fixed_serializer, 1)
 
     text = strip_hybrid_helpers(text)
     check_js(name, text)
@@ -172,8 +181,8 @@ def assert_native(root: str) -> None:
         'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}',
         'type:u.Netbird,server:n,management_url:e.management_url||""',
         'new URL(n).hostname',
-        'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete()}',
-        'function nbDelete(){return a.request(nb,{operation:"profile_delete"}',
+        'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete(e)}',
+        'function nbDelete(e){return a.request(nb,{operation:"profile_delete",profile_key:e}',
         'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}',
         'const existing = !!(value && (value.key || value.id))',
         'const creating = ref(true)',
@@ -199,16 +208,18 @@ def assert_native(root: str) -> None:
         'if(e==="netbird"){await nbDelete();return}',
         'e==="netbird"&&await nbDelete()',
         'new URL(n).host}',
+        'key:e.key||"netbird"',
         'value.type === "netbirdvpn"',
         "netbirdvpn-new",
         "NETBIRD_CSS",
         'type: "checkbox"',
         'class: "netbird-input"',
         'Anunciar rede local',
+        'Já existe um perfil NetBird',
     ]
     leaked = [x for x in forbidden if x in combined]
     if leaked:
-        raise RuntimeError("dedicated/custom NetBird path remains after native migration: " + ", ".join(leaked))
+        raise RuntimeError("dedicated/singleton NetBird path remains after native migration: " + ", ".join(leaked))
 
 
 def main() -> None:
@@ -217,7 +228,7 @@ def main() -> None:
     patch_page()
     patch_form()
     assert_native(ROOT)
-    print("Native NetBird finalization complete: stock CRUD/base form + policy-safe routing + auxiliary delete-only bridge")
+    print("Native NetBird finalization complete: stock multi-profile CRUD + profile-scoped cleanup + policy-safe routing")
 
 
 if __name__ == "__main__":
