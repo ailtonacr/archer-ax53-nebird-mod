@@ -1,8 +1,9 @@
--- NetBird model for TP-Link Archer AX53 V1.
+-- NetBird provider model for TP-Link Archer AX53 V1.
 --
 -- The stock vpn.server row is the profile authority. Runtime identity/settings
 -- are materialized per stock profile key so multiple NetBird profiles can be
--- stored without sharing credentials or state.
+-- stored without sharing credentials or state. Generic VPN CRUD/status belongs
+-- to TP-Link; this model only serves provider-specific runtime operations.
 module("luci.model.netbird", package.seeall)
 
 local nixio = require "nixio"
@@ -18,7 +19,6 @@ end
 ROOT     = "/tp_data/netbird"
 PROFILES = ROOT .. "/profiles"
 SETTINGS = ROOT .. "/settings" -- historical single-profile compatibility only
-LEGACY_ADOPTION = ROOT .. "/legacy-adoption"
 CTL      = "/sbin/netbird-ctl"
 
 KEYS = {
@@ -221,51 +221,6 @@ function identity_present(profile_key)
     return raw:match("%S") ~= nil
 end
 
-local function mark_legacy_profile_deleted(profile_key)
-    if not valid_profile_key(profile_key) then return nil, "invalid profile key" end
-    local raw = fs.readfile(LEGACY_ADOPTION) or ""
-    if raw == "" then return true end
-    local adopted = raw:match("^profile_key=([^\r\n]+)") or raw:match("\nprofile_key=([^\r\n]+)")
-    if adopted ~= profile_key then return true end
-
-    local lines, found = {}, false
-    for line in raw:gmatch("[^\r\n]+") do
-        if line:match("^deleted=") then
-            lines[#lines + 1] = "deleted=1"
-            found = true
-        else
-            lines[#lines + 1] = line
-        end
-    end
-    if not found then lines[#lines + 1] = "deleted=1" end
-
-    local tmp = LEGACY_ADOPTION .. ".new"
-    if not fs.writefile(tmp, table.concat(lines, "\n") .. "\n") then
-        return nil, "failed to write legacy deletion tombstone"
-    end
-    nixio.fs.chmod(tmp, "0600")
-    if sys.call("mv -f " .. shellquote(tmp) .. " " .. shellquote(LEGACY_ADOPTION)) ~= 0 then
-        nixio.fs.unlink(tmp)
-        return nil, "failed to commit legacy deletion tombstone"
-    end
-    return true
-end
-
-function remove_profile_state(profile_key)
-    local dir, err = profile_dir(profile_key)
-    if not dir then return nil, err end
-
-    -- The stock row has already been deleted when this provider cleanup runs.
-    -- Tombstone a migrated legacy profile before removing its scoped copy so a
-    -- reboot cannot resurrect an intentionally deleted NetBird client.
-    local marked, mark_err = mark_legacy_profile_deleted(profile_key)
-    if not marked then return nil, mark_err end
-
-    local rc = sys.call("rm -rf " .. shellquote(dir))
-    if rc ~= 0 then return nil, "failed to remove profile state" end
-    return true
-end
-
 local function run(...)
     local parts = { shellquote(CTL) }
     for i = 1, select("#", ...) do parts[#parts + 1] = shellquote(tostring(select(i, ...))) end
@@ -304,26 +259,11 @@ end
 
 function status(profile_key)
     local out = run_profile(profile_key, "status")
-    if out and out ~= "" then local ok, obj = pcall(json.decode, out); if ok and type(obj) == "table" then return obj end end
-    return nil
-end
-
-local function management_host(url)
-    local authority = tostring(url or ""):match("^https?://([^/]+)") or ""
-    if authority == "" then return "" end
-    return authority:match("^([^:]+)") or authority
-end
-
-function connected_status(profile_key)
-    local settings = get_settings(profile_key)
-    local host = management_host(settings.management_url)
-    local ping = ""
-    if host ~= "" then
-        local out = sys.exec("ping -c 1 -W 1 " .. shellquote(host) .. " 2>&1") or ""
-        local ms = out:match("time[=<]([%d%.]+)%s*ms")
-        if ms then ping = tonumber(ms) or ms end
+    if out and out ~= "" then
+        local ok, obj = pcall(json.decode, out)
+        if ok and type(obj) == "table" then return obj end
     end
-    return { ping = ping, address = host, dns = "" }
+    return nil
 end
 
 function control(op, profile_key, keyfile)
@@ -335,7 +275,13 @@ function control(op, profile_key, keyfile)
     elseif op == "clean" then return run_profile_ex(profile_key, "clean") end
     return nil, nil
 end
-function log(n) local lines=tonumber(n) or 100; if lines<1 then lines=100 end; if lines>500 then lines=500 end; return run("log",tostring(lines)) or "" end
-function payload_version() return (run("payload-version") or ""):gsub("%s+$","") end
-function payload_ok() local _,rc=run_ex("payload-status"); return rc==0 end
-function payload_state() local out=run("payload-status"); return (out or ""):match("^%s*(%S+)") or "UNKNOWN" end
+
+function log(n)
+    local lines = tonumber(n) or 100
+    if lines < 1 then lines = 100 end
+    if lines > 500 then lines = 500 end
+    return run("log", tostring(lines)) or ""
+end
+function payload_version() return (run("payload-version") or ""):gsub("%s+$", "") end
+function payload_ok() local _, rc = run_ex("payload-status"); return rc == 0 end
+function payload_state() local out = run("payload-status"); return (out or ""):match("^%s*(%S+)") or "UNKNOWN" end
