@@ -26,16 +26,17 @@ $(TARGET): $(SRCS)
 
 # Offline tests only. Deliberately no GitHub Actions: this target is run by the
 # local firmware build and can also be invoked explicitly during development.
-# It is hermetic with respect to rootfs/: generated bundles are checked after
-# unpack/apply-mods against the selected STOCK image in the firmware target.
+# Generated rootfs bundles are checked again after unpack/apply-mods.
 test-netbird:
-	sh -n src/init/netbird.sh src/init/netbird-runtime.sh src/init/netbird-ctl src/init/netbird-proto.sh src/init/netbird.init src/init/netbird_firewall.inc scripts/test-netbird-runtime.sh
-	bash -n mods/010-netbird.sh mods/012-netbird-native-vpn.sh
+	sh -n src/init/netbird.sh src/init/netbird-profiles.sh src/init/netbird-runtime.sh src/init/netbird-ctl src/init/netbird-proto.sh src/init/netbird.init src/init/netbird-profile-migrate.init src/init/netbird-recovery src/init/netbird-recovery.init src/init/netbird_firewall.inc scripts/test-netbird-runtime.sh scripts/test-netbird-profiles.sh scripts/test-netbird-recovery.sh
+	bash -n mods/010-netbird.sh mods/012-netbird-native-vpn.sh mods/013-netbird-recovery.sh
 	sh scripts/test-netbird-runtime.sh
+	sh scripts/test-netbird-profiles.sh
+	sh scripts/test-netbird-recovery.sh
 	node src/web/VpnServerNetbirdForm-NB.test.mjs
 	python3 scripts/test-netbird-contracts.py .
 	python3 scripts/test-netbird-native-frontend.py
-	python3 -m py_compile src/web/patchnetbird_native_crud.py src/web/patchnetbird_factory_semantics.py src/web/patchnetbird_form_state.py scripts/verify-tplink-vpn-bytecode.py scripts/test-netbird-contracts.py scripts/test-netbird-native-frontend.py
+	python3 -m py_compile src/web/patchnetbird_web.py src/web/patchnetbird_native_crud.py src/web/patchnetbird_factory_semantics.py src/web/patchnetbird_form_state.py src/web/patchnetbird_native_contract.py scripts/verify-tplink-vpn-bytecode.py scripts/test-netbird-contracts.py scripts/test-netbird-native-frontend.py
 
 firmware: $(TARGET) test-netbird
 	@bash -o pipefail -c 'set -e; \
@@ -68,25 +69,27 @@ firmware: $(TARGET) test-netbird
 		grep -q "vpn.VPN_TYPE_NAME_TBL\[TYPE\] = TYPE_NAME" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: VPN_TYPE_NAME_TBL NetBird registration missing" >&2; exit 1; }; \
 		grep -q "vpn.VPN_TBL\[TYPE\] = schema" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: VPN_TBL NetBird schema registration missing" >&2; exit 1; }; \
 		grep -q "native.install()" rootfs/usr/lib/lua/luci/controller/admin/netbird_native.lua || { echo "Error: native NetBird registry loader missing" >&2; exit 1; }; \
-		grep -q "settings_get" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: auxiliary read-only NetBird settings operation missing" >&2; exit 1; }; \
-		if grep -Fq "elseif op == \"settings_set\"" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua; then echo "Error: auxiliary NetBird endpoint still exposes writable settings_set" >&2; exit 1; fi; \
-		grep -q "result = \"noop\"" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: NetBird delete cleanup is not idempotent" >&2; exit 1; }; \
-		grep -q "connected_status" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: auxiliary NetBird diagnostics endpoint missing" >&2; exit 1; }; \
-		grep -Fq "/etc/init.d/vpnc restart" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: UI restart bypasses native vpnc lifecycle" >&2; exit 1; }; \
+		if grep -Fq "elseif op == \"settings_set\"" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua; then echo "Error: auxiliary NetBird endpoint duplicates stock writable settings" >&2; exit 1; fi; \
+		grep -q "local function op_enroll(body)" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: profile-specific enrollment endpoint missing" >&2; exit 1; }; \
+		grep -Fq "/etc/init.d/vpnc restart" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: NetBird restart bypasses native vpnc lifecycle" >&2; exit 1; }; \
 		grep -q "server routes must be enabled when LAN routing is enabled" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: backend does not reject routing with server routes disabled" >&2; exit 1; }; \
 		grep -q "NetBird firewall must be enabled when LAN routing is enabled" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: backend does not require NetBird firewall policy enforcement for LAN routing" >&2; exit 1; }; \
 		cmp -s src/init/netbird.sh rootfs/lib/netbird/netbird.sh || { echo "Error: packaged netbird.sh drifted from canonical source" >&2; exit 1; }; \
+		cmp -s src/init/netbird-profiles.sh rootfs/lib/netbird/netbird-profiles.sh || { echo "Error: packaged profile helper drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird-runtime.sh rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: packaged native runtime drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird-ctl rootfs/sbin/netbird-ctl || { echo "Error: packaged netbird-ctl drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird.init rootfs/etc/init.d/netbird || { echo "Error: packaged netbird init drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird-proto.sh rootfs/lib/netifd/proto/netbird.sh || { echo "Error: packaged netbird netifd handler drifted from canonical source" >&2; exit 1; }; \
+		cmp -s src/init/netbird-profile-migrate.init rootfs/etc/init.d/netbird-profile-migrate || { echo "Error: packaged NetBird profile maintenance drifted from canonical source" >&2; exit 1; }; \
 		grep -q "add_protocol netbird" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd NetBird protocol registration missing" >&2; exit 1; }; \
+		grep -q "proto_config_add_string \"profile_key\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: profile key is not carried through netifd" >&2; exit 1; }; \
 		grep -q "nb_runtime_connect" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not call shared native runtime" >&2; exit 1; }; \
 		if grep -Ev "^[[:space:]]*#" rootfs/lib/netifd/proto/netbird.sh | grep -q "/sbin/netbird-ctl"; then echo "Error: netifd still depends on netbird-ctl" >&2; exit 1; fi; \
 		if grep -q "proto_set_available" rootfs/lib/netifd/proto/netbird.sh; then echo "Error: transient NetBird failure changes protocol availability" >&2; exit 1; fi; \
 		PROTO_SETUP="$$(sed -n "/^proto_netbird_setup()/,/^proto_netbird_teardown()/p" rootfs/lib/netifd/proto/netbird.sh)"; \
 		test "$$(printf "%s\n" "$$PROTO_SETUP" | grep -c "nb_runtime_stop")" -ge 2 || { echo "Error: netifd setup rollback is incomplete" >&2; exit 1; }; \
 		test ! -e rootfs/etc/rc.d/S99netbird || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }; \
+		grep -q "nb_profile_gc_orphans" rootfs/etc/init.d/netbird-profile-migrate || { echo "Error: stock-delete orphan identity maintenance missing" >&2; exit 1; }; \
 		grep -q "NB_FW_STATE=\"/tmp/netbird-firewall.state\"" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: applied firewall state snapshot missing" >&2; exit 1; }; \
 		grep -q "nb_runtime_validate_settings" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: runtime routing settings validation missing" >&2; exit 1; }; \
 		grep -q "LAN routing requires NetBird firewall policy enforcement" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: runtime does not preserve NetBird Route ACL enforcement" >&2; exit 1; }; \
@@ -96,34 +99,36 @@ firmware: $(TARGET) test-netbird
 		NB_FW_CANONICAL="$$(sed -n "/# NetBird v4 CIDR-scoped\\/applied-state/,\$$p" rootfs/lib/firewall/tpcmd.sh)"; \
 		test -n "$$NB_FW_CANONICAL" || { echo "Error: ACL-safe canonical NetBird firewall source missing" >&2; exit 1; }; \
 		if printf "%s\n" "$$NB_FW_CANONICAL" | grep -Fq "fw_s_add 4 f FORWARD ACCEPT 1 {"; then echo "Error: canonical TP-Link NetBird FORWARD rules bypass Route ACL ordering" >&2; exit 1; fi; \
-		zcat rootfs/www/webpages/js/update-store-DQkZxaRI.js.gz | grep -Fq "e.Netbird=\"netbirdvpn\"" || { echo "Error: frontend NetBird enum is not netbirdvpn" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "function f(e){return a.request(y,{operation:\"connected_status\",key:e},{preventSuccess:!0})}" || { echo "Error: NetBird connected-status is not using stock VPN endpoint" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "new URL(n).hostname" || { echo "Error: NetBird stock server field is not normalized to a pingable hostname" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "function nbDelete(){return a.request(nb,{operation:\"profile_delete\"}" || { echo "Error: final delete-only auxiliary bridge missing" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -Fq "i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}" || { echo "Error: VPN list is not sourced exclusively from stock endpoint" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "const existing = !!(value && (value.key || value.id))" || { echo "Error: NetBird Add/Edit is not keyed by persisted stock identity" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "const creating = ref(true)" || { echo "Error: NetBird Add form does not default to CREATE" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "stockComponent(this, \"su-form\")" || { echo "Error: NetBird form is not using stock TP-Link controls" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "s.advertise_lan === \"1\" && s.disable_server_routes !== \"0\"" || { echo "Error: frontend server-route invariant missing" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "s.advertise_lan === \"1\" && s.disable_firewall !== \"0\"" || { echo "Error: frontend NetBird firewall invariant missing" >&2; exit 1; }; \
-		zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "Permitir roteamento da LAN" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; exit 1; }; \
-		if zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "value.type === \"netbirdvpn\""; then echo "Error: NetBird Add/Edit still inferred from VPN type" >&2; exit 1; fi; \
-		if zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz | grep -Fq "Anunciar rede local"; then echo "Error: misleading LAN announcement label remains" >&2; exit 1; fi; \
-		if zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz | grep -Fq "a.value=_nb.concat(e)"; then echo "Error: synthetic NetBird list bridge remains" >&2; exit 1; fi; \
-		if zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "e===\"netbird\"?a.request(\"/admin/netbird\",{operation:\"connected_status\"}"; then echo "Error: dedicated NetBird connected-status bridge remains" >&2; exit 1; fi; \
-		if zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "operation:\"settings_set\""; then echo "Error: writable hybrid NetBird helper remains in final bundle" >&2; exit 1; fi; \
-		if zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | grep -Fq "function nbSettingsSet("; then echo "Error: nbSettingsSet remains in final bundle" >&2; exit 1; fi; \
+		UPDATE_JS="$$(zcat rootfs/www/webpages/js/update-store-DQkZxaRI.js.gz)"; \
+		MODEL_JS="$$(zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz)"; \
+		PAGE_JS="$$(zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz)"; \
+		FORM_JS="$$(zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz)"; \
+		printf "%s" "$$UPDATE_JS" | grep -Fq "e.Netbird=\"netbirdvpn\"" || { echo "Error: frontend NetBird enum is not netbirdvpn" >&2; exit 1; }; \
+		printf "%s" "$$MODEL_JS" | grep -Fq "function f(e){return a.request(y,{operation:\"connected_status\",key:e},{preventSuccess:!0})}" || { echo "Error: connected-status is not stock" >&2; exit 1; }; \
+		printf "%s" "$$MODEL_JS" | grep -Fq "async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}" || { echo "Error: generic VPN toggle/update is not stock" >&2; exit 1; }; \
+		printf "%s" "$$MODEL_JS" | grep -Fq "async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}" || { echo "Error: generic VPN DELETE is not stock" >&2; exit 1; }; \
+		printf "%s" "$$MODEL_JS" | grep -Fq "new URL(n).hostname" || { echo "Error: NetBird provider serializer missing" >&2; exit 1; }; \
+		printf "%s" "$$PAGE_JS" | grep -Fq "i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}" || { echo "Error: VPN list is not stock" >&2; exit 1; }; \
+		printf "%s" "$$PAGE_JS" | grep -Fq "\"add\"===n.type?await Ce(i):await ne(i,n.tableItem)" || { echo "Error: VPN ADD/EDIT Save path is not stock" >&2; exit 1; }; \
+		printf "%s" "$$PAGE_JS" | grep -Fq "case it.Netbird:return VpnServerNetbirdForm" || { echo "Error: NetBird provider form mapping missing" >&2; exit 1; }; \
+		printf "%s" "$$PAGE_JS" | grep -Fq "VpnServerNetbirdForm-NB.js?v=" || { echo "Error: NetBird custom module cache-busting missing" >&2; exit 1; }; \
+		printf "%s" "$$FORM_JS" | grep -Fq "const existing = !!(value && (value.key || value.id))" || { echo "Error: NetBird Add/Edit is not keyed by persisted stock identity" >&2; exit 1; }; \
+		printf "%s" "$$FORM_JS" | grep -Fq "const profileKey = ref(\"\")" || { echo "Error: provider profile key state missing" >&2; exit 1; }; \
+		printf "%s" "$$FORM_JS" | grep -Fq "Return protocol-specific fields only" || { echo "Error: NetBird subform still owns generic profile fields" >&2; exit 1; }; \
+		printf "%s" "$$FORM_JS" | grep -Fq "stockComponent(this, \"su-form\")" || { echo "Error: NetBird form is not using stock TP-Link controls" >&2; exit 1; }; \
+		printf "%s" "$$FORM_JS" | grep -Fq "Permitir roteamento da LAN" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; exit 1; }; \
+		for FORBIDDEN in "key:e.key||\"netbird\"" "a.value=_nb.concat(e)" "operation:\"settings_set\"" "function nbSettingsSet(" "function nbControl(" "function nbDelete(" "__nbActiveStockVpn" "window.__netbirdSaveDraft" "__netbirdSaveListener"; do \
+			if printf "%s\n%s\n%s\n" "$$MODEL_JS" "$$PAGE_JS" "$$FORM_JS" | grep -Fq "$$FORBIDDEN"; then echo "Error: custom generic VPN interception remains: $$FORBIDDEN" >&2; exit 1; fi; \
+		done; \
 		if grep -q "NetBird adapter for TP-Link\|patch_dispatch_upvalues\|request_context" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua 2>/dev/null; then echo "Error: retired adapter leaked into stock VPN controller" >&2; exit 1; fi; \
 		grep -Fxq "build=$$BUILD_NO" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong build number" >&2; exit 1; }; \
 		grep -Fxq "display_version=$$STAMPED_VERSION" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong display version" >&2; exit 1; }; \
-		echo "    ok TP-Link VPN bytecode registry export contract"; \
-		echo "    ok untouched TP-Link VPN controller bytecode + native registry extension"; \
-		echo "    ok NetBird native type netbirdvpn=5 / proto=netbird"; \
-		echo "    ok stock list/add/modify/toggle/delete/connected-status path"; \
-		echo "    ok auxiliary endpoint read-only for profile settings"; \
+		echo "    ok untouched TP-Link vpn.lua + native NetBird registry extension"; \
+		echo "    ok stock list/add/edit/save/toggle/delete/connected-status"; \
+		echo "    ok provider-only NetBird form + content cache-busting"; \
+		echo "    ok independent profile identities + legacy adoption + orphan GC"; \
 		echo "    ok vpnc/netifd sole normal lifecycle owner + rollback"; \
-		echo "    ok key-based Add/Edit + stock TP-Link protocol subform"; \
-		echo "    ok routing-peer invariants + NetBird Route ACL ordering + applied firewall state"; \
+		echo "    ok routing-peer invariants + NetBird Route ACL ordering"; \
 		echo "    ok build identity: $$STAMPED_VERSION"; \
 		echo "=== [5/6] Repacking firmware ==="; \
 		rm -f "$(FIRMWARE_OUTPUT)"; \
