@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Finalize NetBird as a native TP-Link VPN Client provider.
 
-TP-Link remains the owner of generic list, ADD, EDIT, Save/Cancel, toggle and
-connected-status. DELETE also executes TP-Link's stock remove first; only after
-that succeeds we run the one provider-specific post-hook the stock firmware
-cannot know about: removal of the corresponding NetBird identity/credentials.
+TP-Link remains the owner of every generic VPN Client operation it already
+implements: list, ADD, EDIT, Save/Cancel, toggle, DELETE and connected-status.
+This stage adds only the provider-specific serialization needed to map NetBird's
+Management URL onto the stock ``server`` field while preserving
+``management_url`` for the NetBird registry/model.
 
-No synthetic row, fixed key, custom Save bridge or alternate CRUD path is
-permitted here.
+No synthetic row, fixed key, custom Save bridge, alternate CRUD path or generic
+/admin/netbird hook is permitted here.
 """
 from __future__ import annotations
 
@@ -23,11 +24,13 @@ JS = os.path.join(ROOT, "www/webpages/js")
 STOCK_CONNECTED_STATUS = 'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
 STOCK_UPDATE = 'async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}'
 STOCK_DELETE = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
-PROVIDER_DELETE = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete(e)}'
 STOCK_LIST = 'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}'
 STOCK_SAVE = '"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
-DELETE_HELPER = 'const nb="/admin/netbird";function nbDelete(e){return a.request(nb,{operation:"profile_delete",profile_key:e},{preventSuccess:!0,preventError:!0})}'
 
+# TP-Link's connected-status path consumes the generic ``server`` field. For a
+# NetBird profile the user edits a full management URL, so serialize ``server``
+# as its hostname while retaining all protocol-specific fields for the native
+# VPN registry. TP-Link still owns the row key, request and CRUD lifecycle.
 NATIVE_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,type:u.Netbird,server:n,management_url:e.management_url||""};}'
 SYNTHETIC_KEY_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
 OLD_HOST_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).host}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
@@ -71,15 +74,13 @@ def patch_model() -> None:
     name = "model-CI6Gt3Hz.js.gz"
     text = read_gz(name)
 
-    # Before the provider post-hook is installed, every generic function must
-    # still be exactly the stock implementation.
-    for token in (STOCK_CONNECTED_STATUS, STOCK_UPDATE):
+    # Generic operations must be stock before and after provider finalization.
+    for token in (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE):
         if token not in text:
             raise RuntimeError("TP-Link generic VPN model flow changed before NetBird finalization: " + token)
-    if STOCK_DELETE not in text and PROVIDER_DELETE not in text:
-        raise RuntimeError("TP-Link stock DELETE body is not present")
 
-    # Provider-specific serialization only; TP-Link still allocates/owns keys.
+    # Provider-specific serialization only; TP-Link still allocates/owns keys and
+    # performs the request through its original /admin/vpn endpoint.
     if SYNTHETIC_KEY_SERIALIZER in text:
         text = text.replace(SYNTHETIC_KEY_SERIALIZER, NATIVE_SERIALIZER, 1)
     elif OLD_HOST_SERIALIZER in text:
@@ -90,35 +91,26 @@ def patch_model() -> None:
             raise RuntimeError("native serializer: stock R(e) marker not unique")
         text = text.replace(marker, NATIVE_SERIALIZER, 1)
 
-    # Keep the stock remove call byte-for-byte and append only provider identity
-    # cleanup after it succeeds. This is not an alternate delete implementation.
-    if PROVIDER_DELETE not in text:
-        text = text.replace(STOCK_DELETE, PROVIDER_DELETE, 1)
-    if DELETE_HELPER not in text:
-        marker = 'export{_ as A'
-        if text.count(marker) != 1:
-            raise RuntimeError("model export marker not unique for provider cleanup helper")
-        text = text.replace(marker, DELETE_HELPER + marker, 1)
-
-    required = (STOCK_CONNECTED_STATUS, STOCK_UPDATE, PROVIDER_DELETE, DELETE_HELPER)
+    required = (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE, NATIVE_SERIALIZER)
     missing = [token for token in required if token not in text]
     if missing:
         raise RuntimeError("final native provider model incomplete: " + ", ".join(missing))
 
-    # No custom list/save/toggle/status path and no fixed profile identity.
+    # No custom list/save/toggle/status/delete path and no fixed profile identity.
     forbidden = (
+        'const nb="/admin/netbird"',
         'function nbStatus(',
         'function nbSettingsSet(',
         'function nbControl(',
+        'function nbDelete(',
         'operation:"settings_set"',
+        'operation:"profile_delete"',
         'e==="netbird"?a.request("/admin/netbird"',
         'key:e.key||"netbird"',
     )
     leaked = [token for token in forbidden if token in text]
     if leaked:
         raise RuntimeError("custom NetBird bridge leaked into generic TP-Link model: " + ", ".join(leaked))
-    if text.count('const nb="/admin/netbird"') != 1 or text.count('operation:"profile_delete"') != 1:
-        raise RuntimeError("provider cleanup must be the only /admin/netbird helper in the generic model")
 
     check_js(name, text)
     write_gz(name, text)
@@ -180,7 +172,7 @@ def main() -> None:
     patch_update_store()
     patch_model()
     assert_page_and_form()
-    print("Native NetBird finalized: TP-Link CRUD retained; provider adds serializer + post-delete identity cleanup only")
+    print("Native NetBird finalized: TP-Link generic CRUD/status untouched; provider serializer only")
 
 
 if __name__ == "__main__":
