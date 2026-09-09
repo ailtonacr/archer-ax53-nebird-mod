@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Hermetic source checks for the stock-owned NetBird frontend integration.
 
-The firmware may add a NetBird provider and protocol subform, but generic
-TP-Link VPN Client behavior must not be replaced. Generated rootfs bundles are
-validated again during `make firmware` after mods are applied.
+The firmware adds one provider. TP-Link keeps generic list/ADD/EDIT/Save/toggle
+and connected-status. DELETE keeps its exact stock remove call and may append
+only the provider credential cleanup required after that stock remove succeeds.
 """
 from __future__ import annotations
 
@@ -43,77 +43,53 @@ def main() -> int:
         'Return protocol-specific fields only',
     )
     for token in (
-        'value.type === "netbirdvpn"',
-        'value.type === "netbird"',
-        'const creating = ref(false)',
-        'NETBIRD_CSS',
-        'type: "checkbox"',
-        'class: "netbird-input"',
-        'Anunciar rede local',
-        'Já existe um perfil NetBird',
-        'enable: s.enable === "1" ? "on" : "off"',
+        'value.type === "netbirdvpn"', 'value.type === "netbird"', 'const creating = ref(false)',
+        'NETBIRD_CSS', 'type: "checkbox"', 'class: "netbird-input"', 'Anunciar rede local',
+        'Já existe um perfil NetBird', 'enable: s.enable === "1" ? "on" : "off"',
     ):
         assert token not in form, f"generic/singleton field leaked into provider form: {token!r}"
 
-    # Initial provider injection is intentionally minimal and verifies the model
-    # is stock before doing anything to the page.
+    # Initial injection touches provider discovery/rendering only and requires the
+    # generic model to still be stock at that stage.
     require(
         web,
-        'e.Netbird="netbirdvpn"',
-        'assert_stock_model_untouched',
-        'STOCK_CONNECTED_STATUS',
-        'STOCK_UPDATE',
-        'STOCK_DELETE',
-        'STOCK_LIST',
-        'STOCK_SAVE',
-        'case it.Netbird:return VpnServerNetbirdForm',
-        'VpnServerNetbirdForm-NB.js?v=',
-        'hashlib.sha256',
-        'generic TP-Link VPN CRUD remains stock',
+        'e.Netbird="netbirdvpn"', 'assert_stock_model_untouched',
+        'STOCK_CONNECTED_STATUS', 'STOCK_UPDATE', 'STOCK_DELETE', 'STOCK_LIST', 'STOCK_SAVE',
+        'case it.Netbird:return VpnServerNetbirdForm', 'VpnServerNetbirdForm-NB.js?v=',
+        'hashlib.sha256', 'generic TP-Link VPN CRUD remains stock',
     )
 
-    # Finalizer may extend only the serializer; it must retain exact stock
-    # list/update/delete/status functions and reject the historical bridges.
+    # Finalizer adds provider serialization plus exactly one post-stock-delete
+    # credential cleanup hook. The stock remove expression must remain intact and
+    # occur before nbDelete().
     require(
         finalizer,
-        'NATIVE_SERIALIZER =',
-        'type:u.Netbird,server:n,management_url:e.management_url||""',
-        'new URL(n).hostname',
-        'STOCK_CONNECTED_STATUS',
-        'STOCK_UPDATE',
-        'STOCK_DELETE',
-        'STOCK_LIST',
-        'STOCK_SAVE',
-        'VpnServerNetbirdForm-NB.js?v=',
-        'key:e.key||"netbird"',
-        'function nbSettingsSet(',
-        'function nbControl(',
-        'function nbDelete(',
+        'NATIVE_SERIALIZER =', 'type:u.Netbird,server:n,management_url:e.management_url||""',
+        'new URL(n).hostname', 'STOCK_CONNECTED_STATUS', 'STOCK_UPDATE', 'STOCK_DELETE',
+        'PROVIDER_DELETE =', 'DELETE_HELPER =', 'STOCK_LIST', 'STOCK_SAVE',
+        'VpnServerNetbirdForm-NB.js?v=', 'key:e.key||"netbird"',
+        'function nbSettingsSet(', 'function nbControl(',
+        'a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete(e)',
+        'operation:"profile_delete",profile_key:e',
     )
-    assert 'DELETE_HELPER =' not in finalizer
+    assert finalizer.index('a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete(e)') \
+        < finalizer.index('required = (STOCK_CONNECTED_STATUS'), "post-delete contract must be installed before validation"
     assert 'native_delete =' not in finalizer
-    assert 'await nbDelete(' not in finalizer
+    assert 'a.value=_nb.concat(e)' not in finalizer
 
-    # The historical factory-semantics mutator is now a pure guard.
+    # The historical factory-semantics stage is now a pure pre-finalizer guard,
+    # not a mutator of generic TP-Link behavior.
     require(
         factory,
         'TP-Link generic VPN list/add/edit/save/toggle/delete/status semantics remain stock',
-        'STOCK_CONNECTED_STATUS',
-        'STOCK_UPDATE',
-        'STOCK_DELETE',
-        'STOCK_LIST',
-        'STOCK_SAVE',
+        'STOCK_CONNECTED_STATUS', 'STOCK_UPDATE', 'STOCK_DELETE', 'STOCK_LIST', 'STOCK_SAVE',
     )
     assert 'def patch_model()' not in factory
     assert 'def patch_page()' not in factory
 
-    subprocess.run(
-        ["node", "--input-type=module", "--check"],
-        input=form.encode(),
-        check=True,
-    )
+    subprocess.run(["node", "--input-type=module", "--check"], input=form.encode(), check=True)
 
-    print("netbird provider-only frontend/stock-flow source contract ok")
+    print("netbird provider-only frontend + post-stock-delete cleanup contract ok")
     return 0
 
 
