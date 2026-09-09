@@ -18,6 +18,7 @@ end
 ROOT     = "/tp_data/netbird"
 PROFILES = ROOT .. "/profiles"
 SETTINGS = ROOT .. "/settings" -- historical single-profile compatibility only
+LEGACY_ADOPTION = ROOT .. "/legacy-adoption"
 CTL      = "/sbin/netbird-ctl"
 
 KEYS = {
@@ -34,7 +35,7 @@ KEYS = {
     network_monitor       = { kind = "bool", default = "0" },
     advertise_lan         = { kind = "bool", default = "0" },
     advertise_cidr        = { kind = "cidr", default = "" },
-    wireguard_port        = { kind = "int",  default = "51820" },
+    wireguard_port        = { kind = "int", default = "51820" },
 }
 
 function valid_profile_key(profile_key)
@@ -220,9 +221,46 @@ function identity_present(profile_key)
     return raw:match("%S") ~= nil
 end
 
+local function mark_legacy_profile_deleted(profile_key)
+    if not valid_profile_key(profile_key) then return nil, "invalid profile key" end
+    local raw = fs.readfile(LEGACY_ADOPTION) or ""
+    if raw == "" then return true end
+    local adopted = raw:match("^profile_key=([^\r\n]+)") or raw:match("\nprofile_key=([^\r\n]+)")
+    if adopted ~= profile_key then return true end
+
+    local lines, found = {}, false
+    for line in raw:gmatch("[^\r\n]+") do
+        if line:match("^deleted=") then
+            lines[#lines + 1] = "deleted=1"
+            found = true
+        else
+            lines[#lines + 1] = line
+        end
+    end
+    if not found then lines[#lines + 1] = "deleted=1" end
+
+    local tmp = LEGACY_ADOPTION .. ".new"
+    if not fs.writefile(tmp, table.concat(lines, "\n") .. "\n") then
+        return nil, "failed to write legacy deletion tombstone"
+    end
+    nixio.fs.chmod(tmp, "0600")
+    if sys.call("mv -f " .. shellquote(tmp) .. " " .. shellquote(LEGACY_ADOPTION)) ~= 0 then
+        nixio.fs.unlink(tmp)
+        return nil, "failed to commit legacy deletion tombstone"
+    end
+    return true
+end
+
 function remove_profile_state(profile_key)
     local dir, err = profile_dir(profile_key)
     if not dir then return nil, err end
+
+    -- The stock row has already been deleted when this provider cleanup runs.
+    -- Tombstone a migrated legacy profile before removing its scoped copy so a
+    -- reboot cannot resurrect an intentionally deleted NetBird client.
+    local marked, mark_err = mark_legacy_profile_deleted(profile_key)
+    if not marked then return nil, mark_err end
+
     local rc = sys.call("rm -rf " .. shellquote(dir))
     if rc ~= 0 then return nil, "failed to remove profile state" end
     return true
