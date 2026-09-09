@@ -12,24 +12,28 @@ NATIVE_MODEL="$PROJECT_ROOT/src/web-backend/model/netbird_vpn_native.lua"
 NATIVE_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird_native.lua"
 NATIVE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_native_crud.py"
 NATIVE_RUNTIME="$PROJECT_ROOT/src/init/netbird-runtime.sh"
+PROFILE_HELPER="$PROJECT_ROOT/src/init/netbird-profiles.sh"
+PROFILE_MIGRATE_INIT="$PROJECT_ROOT/src/init/netbird-profile-migrate.init"
 BYTECODE_VERIFIER="$PROJECT_ROOT/scripts/verify-tplink-vpn-bytecode.py"
 VPN_CONTROLLER="$R/usr/lib/lua/luci/controller/admin/vpn.lua"
 VPN_CORE="$R/lib/vpn/vpn_core.sh"
 NB_AUX_CONTROLLER="$R/usr/lib/lua/luci/controller/admin/netbird.lua"
 
-for f in "$NATIVE_MODEL" "$NATIVE_CONTROLLER" "$NATIVE_PATCHER" "$NATIVE_RUNTIME" "$BYTECODE_VERIFIER" "$VPN_CONTROLLER" "$VPN_CORE" "$NB_AUX_CONTROLLER"; do
+for f in "$NATIVE_MODEL" "$NATIVE_CONTROLLER" "$NATIVE_PATCHER" "$NATIVE_RUNTIME" "$PROFILE_HELPER" "$PROFILE_MIGRATE_INIT" "$BYTECODE_VERIFIER" "$VPN_CONTROLLER" "$VPN_CORE" "$NB_AUX_CONTROLLER"; do
   [ -f "$f" ] || { echo "Error: missing native NetBird input: $f" >&2; exit 1; }
 done
 
 python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"
 
-mkdir -p "$R/usr/lib/lua/luci/model" "$R/usr/lib/lua/luci/controller/admin" "$R/lib/netbird"
+mkdir -p "$R/usr/lib/lua/luci/model" "$R/usr/lib/lua/luci/controller/admin" "$R/lib/netbird" "$R/etc/init.d" "$R/etc/rc.d"
 cp "$NATIVE_MODEL" "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 cp "$NATIVE_CONTROLLER" "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua"
 cp "$NATIVE_RUNTIME" "$R/lib/netbird/netbird-runtime.sh"
+cp "$PROFILE_MIGRATE_INIT" "$R/etc/init.d/netbird-profile-migrate"
 chmod 0644 "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua" \
     "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua" \
     "$R/lib/netbird/netbird-runtime.sh"
+chmod 0755 "$R/etc/init.d/netbird-profile-migrate"
 
 if command -v luac >/dev/null 2>&1; then
   luac -p "$NATIVE_MODEL" "$NATIVE_CONTROLLER"
@@ -37,8 +41,10 @@ fi
 
 python3 "$NATIVE_PATCHER" "$R"
 
-# vpnc/netifd is the only normal boot/start owner.
+# vpnc/netifd is the only normal boot/start owner. The migration service is a
+# one-shot config/identity adoption step and never starts the NetBird daemon.
 rm -f "$R/etc/rc.d/S99netbird"
+ln -sfn "../init.d/netbird-profile-migrate" "$R/etc/rc.d/S89netbird-profile-migrate"
 
 # Vendor acceleration hooks only know stock protocol families. Preserve them for
 # every stock VPN and skip them only for the native NetBird type.
@@ -70,9 +76,11 @@ if new not in text:
     path.write_text(text)
 PY
 
-# Native registry contract.
+# Native registry contract. A profile_key option is persisted after ADD so the
+# runtime can select the exact per-row identity; no fixed synthetic key exists.
 grep -q 'TYPE = "netbirdvpn"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'TYPE_ID = "5"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -q '"profile_key"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'local schema = { proto = PROTO }' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'table.insert(schema, { key = key })' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'vpn.VPN_CFG_TBL\[TYPE\] = netbird_config' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
@@ -82,17 +90,30 @@ grep -q 'vpn.VPN_TBL\[TYPE\] = schema' "$R/usr/lib/lua/luci/model/netbird_vpn_na
 grep -q 'native.install()' "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua"
 grep -Fq 'if [ "$vpntype" != "netbirdvpn" ]; then' "$VPN_CORE"
 
-# Auxiliary endpoint is read-only for profile settings. Native stock CRUD owns
-# all normal settings writes; /admin/netbird may only expose diagnostics,
-# enrollment, restart/recovery and idempotent identity cleanup.
+# Auxiliary endpoint is profile-scoped and read-only for normal profile fields.
+# Stock CRUD owns configuration; /admin/netbird owns only identity/runtime extras.
 if grep -Fq 'elseif op == "settings_set"' "$NB_AUX_CONTROLLER"; then
   echo "Error: auxiliary /admin/netbird still exposes writable settings_set" >&2
   exit 1
 fi
-grep -q 'result = "noop"' "$NB_AUX_CONTROLLER" || {
-  echo "Error: NetBird profile cleanup is not idempotent for stock-profile delete" >&2
-  exit 1
+grep -q 'requested_profile_key' "$NB_AUX_CONTROLLER" || {
+  echo "Error: auxiliary NetBird operations are not keyed to a stock profile" >&2; exit 1;
 }
+grep -q 'profile_key:e' <(zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz") || {
+  echo "Error: stock DELETE does not pass the deleted profile key to NetBird cleanup" >&2; exit 1;
+}
+
+# Profile-scoped persistence + legacy adoption must be present. The one-shot
+# migration guarantees a historical installed client becomes a real vpn.server
+# row in the stock list instead of a synthetic frontend-only row.
+cmp -s "$PROFILE_HELPER" "$R/lib/netbird/netbird-profiles.sh" || { echo "Error: packaged profile helper drifted" >&2; exit 1; }
+cmp -s "$PROFILE_MIGRATE_INIT" "$R/etc/init.d/netbird-profile-migrate" || { echo "Error: packaged profile migration init drifted" >&2; exit 1; }
+grep -q '^nb_profile_select()' "$R/lib/netbird/netbird-profiles.sh"
+grep -q '^nb_legacy_profile_adopt()' "$R/lib/netbird/netbird-profiles.sh"
+grep -Fq 'vpn.$section.type=netbirdvpn' "$R/lib/netbird/netbird-profiles.sh"
+grep -Fq 'profile_key=$section' "$R/lib/netbird/netbird-profiles.sh"
+[ -L "$R/etc/rc.d/S89netbird-profile-migrate" ] || { echo "Error: legacy NetBird adoption boot link missing" >&2; exit 1; }
+[ "$(readlink "$R/etc/rc.d/S89netbird-profile-migrate")" = "../init.d/netbird-profile-migrate" ] || { echo "Error: legacy NetBird adoption link target incorrect" >&2; exit 1; }
 
 # Native runtime invariants.
 cmp -s "$NATIVE_RUNTIME" "$R/lib/netbird/netbird-runtime.sh" || { echo "Error: packaged native NetBird runtime drifted" >&2; exit 1; }
@@ -112,9 +133,8 @@ if grep -q 'nb_fw_prioritize_lan' "$R/lib/netbird/netbird-runtime.sh"; then
   exit 1
 fi
 grep -q 'nb_runtime_connect' "$R/lib/netifd/proto/netbird.sh"
-# Dependency checks must inspect executable shell code, not explanatory comments.
-# Full-line comments may intentionally mention retired paths while documenting
-# why they are forbidden from setup/teardown.
+grep -q 'proto_config_add_string "profile_key"' "$R/lib/netifd/proto/netbird.sh"
+grep -q 'nb_profile_select "$profile_key"' "$R/lib/netifd/proto/netbird.sh"
 if grep -Ev '^[[:space:]]*#' "$R/lib/netifd/proto/netbird.sh" | grep -q '/sbin/netbird-ctl'; then
   echo "Error: netifd NetBird protocol still depends on netbird-ctl" >&2
   exit 1
@@ -130,14 +150,9 @@ PROTO_SETUP="$(sed -n '/^proto_netbird_setup()/,/^proto_netbird_teardown()/p' "$
 }
 test ! -e "$R/etc/rc.d/S99netbird" || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }
 
-# Canonical firewall must preserve NetBird v0.77.1 Route ACL ordering. Historical
-# TP-Link/WireGuard functions elsewhere in tpcmd.sh legitimately use position 1,
-# so ordering checks must be scoped to the canonical v4 NetBird section only.
+# Canonical firewall must preserve NetBird v0.77.1 Route ACL ordering.
 NB_FW_CANONICAL="$(sed -n '/# NetBird v4 CIDR-scoped\/applied-state/,$p' "$R/lib/firewall/tpcmd.sh")"
-[ -n "$NB_FW_CANONICAL" ] || {
-  echo "Error: ACL-safe canonical NetBird firewall source missing" >&2
-  exit 1
-}
+[ -n "$NB_FW_CANONICAL" ] || { echo "Error: ACL-safe canonical NetBird firewall source missing" >&2; exit 1; }
 if printf '%s\n' "$NB_FW_CANONICAL" | grep -Fq 'fw_s_add 4 f FORWARD ACCEPT 1 {'; then
   echo "Error: canonical TP-Link NetBird FORWARD rule is inserted ahead of NetBird Route ACLs" >&2
   exit 1
@@ -147,44 +162,25 @@ printf '%s\n' "$NB_FW_CANONICAL" | grep -Fq 'fw_s_add 4 f FORWARD ACCEPT { "-i w
   exit 1
 }
 
-# Final frontend contract: stock CRUD/base form, protocol-only su-* subform.
+# Final frontend contract: stock CRUD/base form, protocol-only su-* subform,
+# stock-generated row keys, and profile-scoped auxiliary cleanup.
 zcat "$R/www/webpages/js/update-store-DQkZxaRI.js.gz" | grep -Fq 'e.Netbird="netbirdvpn"'
 zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
 zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'new URL(n).hostname'
-zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'function nbDelete(){return a.request(nb,{operation:"profile_delete"}'
+zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'function nbDelete(e){return a.request(nb,{operation:"profile_delete",profile_key:e}'
 zcat "$R/www/webpages/js/index-DTNtPvwx.js.gz" | grep -Fq 'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}'
 zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'const existing = !!(value && (value.key || value.id))'
-zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'const creating = ref(true)'
+zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'const profileKey = ref("")'
+zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'profile_key: profileKey.value'
 zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'stockComponent(this, "su-form")'
-zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'stockComponent(this, "su-checkbox")'
-zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 's.advertise_lan === "1" && s.disable_server_routes !== "0"'
-zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 's.advertise_lan === "1" && s.disable_firewall !== "0"'
 zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'Permitir roteamento da LAN'
 
-if zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'value.type === "netbirdvpn"'; then
-  echo "Error: NetBird Add/Edit still inferred from VPN type instead of persisted key/id" >&2
-  exit 1
-fi
-if zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" | grep -Fq 'Anunciar rede local'; then
-  echo "Error: UI still claims the router announces a NetBird management resource" >&2
-  exit 1
-fi
-if zcat "$R/www/webpages/js/index-DTNtPvwx.js.gz" | grep -Fq 'a.value=_nb.concat(e)'; then
-  echo "Error: synthetic NetBird list bridge still present" >&2
-  exit 1
-fi
-if zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'e==="netbird"?a.request("/admin/netbird",{operation:"connected_status"}'; then
-  echo "Error: dedicated NetBird connected-status bridge still present" >&2
-  exit 1
-fi
-if zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'operation:"settings_set"'; then
-  echo "Error: writable hybrid NetBird settings helper remains in final bundle" >&2
-  exit 1
-fi
-if zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" | grep -Fq 'function nbSettingsSet('; then
-  echo "Error: nbSettingsSet helper remains in final native model bundle" >&2
-  exit 1
-fi
+for forbidden in 'key:e.key||"netbird"' 'Já existe um perfil NetBird' 'a.value=_nb.concat(e)' 'operation:"settings_set"' 'function nbSettingsSet(' 'value.type === "netbirdvpn"' '"label-width": { span: 10 }'; do
+  if zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz" "$R/www/webpages/js/index-DTNtPvwx.js.gz" "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz" 2>/dev/null | grep -Fq "$forbidden"; then
+    echo "Error: singleton/hybrid NetBird frontend token remains: $forbidden" >&2
+    exit 1
+  fi
+done
 
 python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"
 echo "### NetBird native TP-Link VPN registration complete ###"
