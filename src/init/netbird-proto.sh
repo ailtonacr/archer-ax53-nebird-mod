@@ -12,12 +12,14 @@
 }
 
 . /lib/netbird/netbird.sh
+. /lib/netbird/netbird-profiles.sh
 . /lib/netbird/netbird-runtime.sh
 
 NB_IFNAME="wt0"
 NB_CONNECT_TIMEOUT=30
 
 proto_netbird_init_config() {
+    proto_config_add_string "profile_key"
     proto_config_add_string "management_url"
     proto_config_add_string "hostname"
     proto_config_add_int "wireguard_port"
@@ -44,6 +46,16 @@ netbird_publish_down() {
     local config="$1"
     proto_init_update "$NB_IFNAME" 0
     proto_send_update "$config"
+}
+
+netbird_select_config_profile() {
+    local config="$1" profile_key=""
+    json_get_vars profile_key
+    if ! nb_profile_select "$profile_key"; then
+        echo "netbird: missing/invalid native profile key for $config" >/dev/console
+        return 1
+    fi
+    return 0
 }
 
 proto_netbird_setup() {
@@ -74,6 +86,12 @@ proto_netbird_setup() {
             return 1
             ;;
     esac
+
+    if ! netbird_select_config_profile "$config"; then
+        proto_notify_error "$config" PROFILE_REQUIRED
+        proto_setup_failed "$config"
+        return 1
+    fi
 
     if ! nb_runtime_connect >/dev/null 2>&1; then
         # nb_runtime_connect may fail after the daemon or wt0 already exists
@@ -106,6 +124,9 @@ proto_netbird_setup() {
 proto_netbird_teardown() {
     local config="$1"
     echo "netbird: netifd teardown start ($config)" >/dev/console
+    # Teardown may run in a fresh shell, so re-select the exact profile from the
+    # interface JSON before removing identity-scoped runtime/firewall state.
+    netbird_select_config_profile "$config" >/dev/null 2>&1 || nb_profile_select_active >/dev/null 2>&1 || true
     nb_runtime_stop >/dev/null 2>&1 || true
     netbird_publish_down "$config"
     echo "netbird: netifd teardown complete" >/dev/console
