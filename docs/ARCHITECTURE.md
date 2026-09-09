@@ -6,19 +6,48 @@ synthetic frontend rows and dedicated `/admin/netbird` CRUD are retired. Their
 history remains in Git and the project Notion ADR/Timeline; they are not part of
 the current firmware design.
 
-## End-to-end flow
+## Architectural rule
 
-NetBird is a genuine fifth TP-Link VPN Client type:
+NetBird is a **fifth TP-Link VPN Client provider**, not a parallel VPN manager.
+The firmware must reuse the vendor flow whenever TP-Link already provides the
+operation.
+
+Generic operations remain stock:
+
+```text
+list
+ADD
+EDIT
+Save / Cancel
+enable / disable
+DELETE
+connected_status
+```
+
+Custom code is allowed only where a new protocol/provider necessarily needs it:
+
+```text
+provider registration: netbirdvpn = type 5
+provider-specific form fields and serialization
+proto=netbird for netifd
+NetBird runtime / payload materialization
+profile-scoped NetBird identity
+Setup Key enrollment
+runtime / payload / log diagnostics
+legacy identity adoption and orphan-state maintenance
+```
+
+## End-to-end flow
 
 ```text
 TP-Link VPN Client UI
         |
         v
-/admin/vpn?form=server
+/admin/vpn?form=server                    <- generic flow remains stock
         |
-        +-- type=netbirdvpn / type id=5 / display=NetBird
-        +-- vpn/server                 authoritative profile
-        +-- vpn.client                 authoritative active type
+        +-- type=netbirdvpn / id=5 / display=NetBird
+        +-- vpn.server                    <- authoritative saved profiles
+        +-- vpn.client                    <- authoritative active provider
         +-- network.vpn.proto=netbird
                     |
                     v
@@ -49,8 +78,8 @@ R2 HTTPS -> xzmini       /tmp/netbird.sock
 ```
 
 The vendor `usr/lib/lua/luci/controller/admin/vpn.lua` remains byte-for-byte
-TP-Link bytecode. `luci.model.netbird_vpn_native` extends its module-global
-registries at LuCI load time:
+TP-Link bytecode. `luci.model.netbird_vpn_native` extends the module-global
+registries used by that controller:
 
 ```text
 VPN_TYPE_TBL[netbirdvpn]      = 5
@@ -60,60 +89,180 @@ VPN_CFG_TBL[netbirdvpn]       = NetBird config normalizer
 ```
 
 `scripts/verify-tplink-vpn-bytecode.py` fails the build if the stock bytecode no
-longer exports those registries.
+longer exports the required registries.
 
-## Configuration authority
+The loader requires `luci.model.netbird_vpn_native` **inside** its `index()`
+function. This is deliberate: the LuCI dispatcher on this firmware serializes
+controller `index()` functions into an index cache and does not preserve local
+upvalues when reconstructing the tree. Capturing the module in a top-level local
+previously caused global LuCI HTTP 500 responses during `createtree()`.
 
-Normal profile CRUD/list/toggle/status is owned by the stock endpoint:
+## Configuration and profile authority
 
-```text
-/admin/vpn?form=server
-```
+`vpn.server` is the authoritative saved-profile store. The stock row key is the
+namespace for provider identity and runtime materialization.
 
-`vpn/server` is the authoritative profile configuration store. `vpn.client`
-controls which VPN Client type is active. `/tp_data/netbird/settings` is a
-runtime materialized view consumed by the existing shell/runtime; it is updated
-from the native profile handler and is not a second browser-writable profile
-store.
-
-The auxiliary endpoint:
+For every saved NetBird row:
 
 ```text
-/admin/netbird
+vpn.<stock-profile-key>=server
+vpn.<stock-profile-key>.type=netbirdvpn
+
+/tp_data/netbird/profiles/<stock-profile-key>/
+    settings
+    default.json
+    state/
 ```
 
-is restricted to concerns the generic TP-Link VPN contract does not own:
+Multiple NetBird profiles may coexist. There is no synthetic `key=netbird` and
+no singleton restriction. Only the profile selected by TP-Link's normal VPN
+Client state is active at a time.
 
-- status/diagnostics and read-only settings inspection;
-- setup-key enrollment/re-enrollment;
-- logs and payload state;
-- manual restart delegated back to `/etc/init.d/vpnc`;
-- recovery/identity cleanup after stock profile deletion.
+The provider's `settings` file is a materialized runtime view of the stock row;
+it is not a second browser-writable CRUD store.
 
-It does not expose normal writable `settings_set` CRUD.
+## Auxiliary `/admin/netbird` boundary
+
+`/admin/netbird` is not a second VPN profile API. It is restricted to behavior
+for which the generic TP-Link contract has no equivalent:
+
+```text
+status          profile-scoped NetBird runtime/payload/traffic diagnostics
+enroll          Setup Key enrollment for an already-saved stock row
+restart         explicit restart delegated to /etc/init.d/vpnc
+log             runtime diagnostics
+payload_status  payload diagnostics
+```
+
+It must not expose generic `settings_set`, `settings_get`, `connected_status`,
+`profile_delete` or `clean` HTTP operations. Generic list/CRUD/toggle/delete and
+connected-status remain in `/admin/vpn?form=server`.
+
+## Frontend boundary
+
+The outer TP-Link dialog owns:
+
+```text
+Description
+VPN Type
+row key / identity
+Save / Cancel
+enable / disable
+DELETE
+```
+
+`VpnServerNetbirdForm-NB.js` is only the protocol subform. It uses registered
+TP-Link `su-*` controls and exposes the same dynamic-form contract expected by
+the stock dialog:
+
+```text
+isChanged
+validate()
+setForm()
+getForm()
+resetForm()
+clearValidate()
+```
+
+`getForm()` returns only NetBird protocol fields. It does not own `key`, `id`,
+`type`, `description`, `enable`, `enabled` or `enrolled` as generic profile
+fields.
+
+CREATE versus EDIT is determined only by a persisted stock `key`/`id`.
+`type=netbirdvpn` exists in both modes and therefore cannot be an Edit signal.
+
+The shared frontend model receives only one provider-specific serializer rule:
+for NetBird, the full Management URL is normalized to a hostname in TP-Link's
+common `server` field while `management_url` remains available to the NetBird
+handler. The original stock request/update/delete/status functions are not
+replaced.
+
+## Setup Key and enrollment
+
+Enrollment is deliberately a second step:
+
+```text
+Add NetBird
+  -> TP-Link Save
+  -> stock row/key now exists
+  -> Edit that row
+  -> enter Setup Key
+  -> Enrollment
+  -> enable with the stock toggle
+```
+
+The provider identity directory is keyed by the saved stock row, so initial ADD
+has no safe profile identity yet. Performing enrollment inside the first Save
+would require intercepting TP-Link's generic Save lifecycle, which is explicitly
+rejected by the current architecture.
+
+The Setup Key is staged only in a restrictive temporary file for the explicit
+enrollment call and is not persisted in the profile settings or documentation.
+
+## Historical singleton adoption
+
+Older firmware stored a single NetBird identity directly under:
+
+```text
+/tp_data/netbird/default.json
+/tp_data/netbird/settings
+/tp_data/netbird/state/
+```
+
+Those paths are now **migration input only**. `netbird-profile-migrate` performs
+a one-time adoption:
+
+1. detect historical artifacts;
+2. create a real `vpn.server` row of type `netbirdvpn`;
+3. copy identity/settings/state into the row-keyed profile directory;
+4. mark the adopted profile disabled initially;
+5. write a permanent `completed=1` adoption marker.
+
+The completion marker is intentionally permanent. If the adopted stock profile
+is later deleted, the historical source must not recreate it on the next boot.
+
+`nb_profile_gc_orphans()` removes profile-scoped NetBird directories whose
+authoritative stock NetBird row no longer exists, except for a currently active
+profile during a transient lifecycle/config inconsistency. This maintenance is
+independent from generic TP-Link DELETE; the DELETE function itself stays stock.
+
+At present the maintenance service runs during boot. Therefore provider-state
+cleanup after DELETE is not claimed to be synchronous; the stock row disappears
+immediately, while an orphan provider directory may remain until maintenance
+runs. This is a cleanup-latency issue, not an alternate CRUD path.
 
 ## Runtime storage
 
-Persistent:
+Persistent native profile state:
 
 ```text
-/tp_data/netbird/default.json   NetBird identity/profile data
-/tp_data/netbird/settings       runtime materialized settings
-/tp_data/netbird/state/         NetBird runtime state
+/tp_data/netbird/profiles/<stock-profile-key>/settings
+/tp_data/netbird/profiles/<stock-profile-key>/default.json
+/tp_data/netbird/profiles/<stock-profile-key>/state/
+```
+
+Persistent migration metadata/input:
+
+```text
+/tp_data/netbird/default.json       historical singleton source
+/tp_data/netbird/settings           historical singleton source
+/tp_data/netbird/state/             historical singleton source
+/tp_data/netbird/legacy-adoption    one-shot adoption marker
 ```
 
 Ephemeral:
 
 ```text
-/tmp/netbird                    validated executable
-/tmp/netbird.new                decode staging
-/tmp/netbird.sock               daemon control socket
-/tmp/netbird.log                runtime log
-/tmp/netbird-firewall.state     exact applied TP-Link firewall bookkeeping
+/tmp/netbird
+/tmp/netbird.new
+/tmp/netbird.sock
+/tmp/netbird.log
+/tmp/netbird-active-profile
+/tmp/netbird-firewall.state
 ```
 
-The large NetBird executable is not stored in rootfs or a new NAND partition.
-MIBIB remains stock.
+The large executable is not stored in rootfs or a new NAND partition. MIBIB
+remains stock.
 
 ## R2 materialization
 
@@ -140,17 +289,22 @@ fallback VPN path.
 
 ## Lifecycle ownership
 
-Normal lifecycle has exactly one owner:
+Normal lifecycle has one owner:
 
 ```text
 vpnc -> netifd -> proto_netbird -> shared runtime
 ```
 
-`netbird-ctl` is a CLI facade over the same shared runtime; netifd does not call
-it. `/etc/init.d/netbird` is a compatibility/recovery wrapper and is **not**
-linked as `/etc/rc.d/S99netbird` in the final native image.
+`netbird-ctl` is a CLI facade over that runtime; netifd does not call it.
+`/etc/init.d/netbird` is a compatibility/recovery wrapper and is **not** linked
+as `/etc/rc.d/S99netbird` in the final image.
 
-The netifd interface publishes UP only if all are true:
+The recovery supervisor also is not a direct lifecycle owner. It observes the
+stock active intent and, if recovery is needed, re-triggers
+`network.interface.vpn` or `/etc/init.d/vpnc` instead of calling
+`nb_runtime_connect` itself.
+
+The netifd interface publishes UP only when the runtime verifies:
 
 ```text
 wt0 exists
@@ -158,8 +312,24 @@ daemonStatus == Connected
 management.connected == true
 ```
 
-`signal.connected` cannot substitute for management connectivity. Immediate
-setup failure and timeout both rollback the runtime before `proto_setup_failed`.
+Immediate setup failure and connection timeout both roll back the runtime before
+`proto_setup_failed`.
+
+## Vendor acceleration exception
+
+`/lib/vpn/vpn_core.sh` remains the stock lifecycle path. One provider-specific
+compatibility guard is inserted around the vendor acceleration hooks because
+those hooks know only the original PPTP/L2TP/OpenVPN/WireGuard families:
+
+```sh
+if [ "$vpntype" != "netbirdvpn" ]; then
+    fw vpnc_access_accel_handle "$vpntype"
+    fw vpnc_accelskip_add "$vpntype"
+fi
+```
+
+For all original TP-Link providers, the original calls still execute. NetBird
+continues through the generic `vpnc -> network.interface.vpn -> netifd` path.
 
 ## Routing-peer mode
 
@@ -176,34 +346,10 @@ disable_server_routes=0
 disable_firewall=0
 ```
 
-Why both prerequisites are mandatory:
-
-- NetBird v0.77.1 defines `--disable-server-routes=true` as preventing the peer
-  from acting as router for server routes delivered by Management.
-- NetBird v0.77.1 enforces routed authorization through
-  `NETBIRD-RT-FWD-IN`/`NETBIRD-RT-FWD-OUT` Route ACL chains. Disabling its
-  firewall or inserting a local ACCEPT ahead of those chains would bypass
-  management policy.
-
-The frontend automatically enables server routes and NetBird firewall when LAN
-routing is selected. The Lua model and shell runtime independently reject an
-invalid combination.
-
-## Firewall integration
-
-`src/init/netbird_firewall.inc` is the single canonical TP-Link firewall source
-and is appended to `/lib/firewall/tpcmd.sh` by `mods/010-netbird.sh`.
-
-Its purpose is scoped platform integration, not policy replacement:
-
-- UDP `wireguard_port` INPUT transport rule;
-- established/related return handling;
-- optional CIDR-scoped `wt0 <-> LAN` forwarding integration;
-- optional CIDR-scoped overlay -> LAN MASQUERADE.
-
-Crucially, scoped TP-Link FORWARD rules are **appended**, not inserted at
-position 1. NetBird's `NETBIRD-RT-FWD-*` chains must see inbound routed traffic
-first. A direct `iptables -I FORWARD ... ACCEPT` workaround is prohibited.
+NetBird v0.77.1 owns routed authorization through its
+`NETBIRD-RT-FWD-IN`/`NETBIRD-RT-FWD-OUT` chains. The TP-Link integration rules
+are scoped platform/NAT plumbing and must never be inserted ahead of NetBird's
+Route ACL decision.
 
 The exact applied port/access/CIDR/home interface is snapshotted in RAM at:
 
@@ -211,51 +357,39 @@ The exact applied port/access/CIDR/home interface is snapshotted in RAM at:
 /tmp/netbird-firewall.state
 ```
 
-When configuration changes A -> B, A is removed using that snapshot before B
-is installed. This prevents stale CIDR/port rules after profile edits.
+When configuration changes A -> B, A is removed from that snapshot before B is
+installed, preventing stale CIDR/port rules.
 
-## Frontend
+## Build invariants
 
-The NetBird protocol subform uses registered TP-Link `su-*` components and the
-same dynamic-form contract as stock protocols:
+The offline/build gates fail if the final artifact no longer preserves the
+exact stock functions for:
 
 ```text
-isChanged
-validate()
-setForm()
-getForm()
-resetForm()
-clearValidate()
+connected_status
+update / toggle
+DELETE
+list
+ADD / EDIT Save
 ```
 
-The outer TP-Link dialog owns Description, Type, key/id, Save/Cancel and row
-identity. NetBird's subform owns protocol-specific fields only. Add starts in
-CREATE mode; only a persisted stock `key`/`id` proves EDIT. `type=netbirdvpn`
-is present in both modes and is not used as an Edit signal.
-
-## Identity / single profile
-
-The runtime uses one NetBird identity, one daemon and one `wt0`. The supported
-product model is one NetBird profile on the router. The UI prevents creating a
-second profile and the auxiliary status/enrollment code resolves the native
-`vpn/server` profile by `type=netbirdvpn`.
-
-Server-side hard enforcement against deliberately crafted duplicate admin API
-requests remains a defense-in-depth item until the stock insert/update context
-is proven sufficiently to implement it without breaking native CRUD.
+They also reject synthetic NetBird rows, a fixed `netbird` profile key,
+`settings_set`, generic `/admin/netbird` CRUD helpers, DOM Save interception,
+parallel lifecycle ownership and priority FORWARD ACL bypasses.
 
 ## Historical architectures
 
-The following are preserved only as history and must not be reintroduced into
-the current build:
+The following are preserved only as history and must not be reintroduced:
 
 - MIBIB modification and a `netbird_data` UBI partition;
 - payload stored in NAND instead of R2;
 - standalone `/etc/rc.d/S99netbird` lifecycle;
-- synthetic NetBird row merged into the stock VPN list;
-- writable profile CRUD through `/admin/netbird`;
+- synthetic NetBird row merged into the stock list;
+- singleton `key=netbird` identity;
+- writable generic profile CRUD through `/admin/netbird`;
+- custom Save/toggle/DELETE/connected-status bridges;
 - monkey-patching stock dispatcher closures/upvalues;
 - priority `FORWARD ACCEPT` rules ahead of NetBird Route ACLs.
 
 See `docs/R2-RUNTIME.md`, `docs/VALIDATION.md`, `docs/INSTALL.md` and the project
-Notion ADR/Timeline for rationale, evidence and migration history.
+Notion ADR/Timeline for evidence, migration history and validation state.
