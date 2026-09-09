@@ -7,9 +7,10 @@
 #
 #   /tp_data/netbird/profiles/<stock-profile-key>/
 #
-# Historical single-profile files directly under /tp_data/netbird are retained
-# as migration input only. They are adopted once into a real stock vpn.server
-# row; they are never used as the normal multi-profile runtime after adoption.
+# Historical single-profile files directly under /tp_data/netbird are migration
+# input. The adoption marker distinguishes an intentional provider deletion from
+# a stock-config loss/firmware migration so an installed legacy client can be
+# restored to the native list without resurrecting a profile the user deleted.
 
 NB_LEGACY_ROOT="${NB_LEGACY_ROOT:-/tp_data/netbird}"
 NB_PROFILES_ROOT="${NB_PROFILES_ROOT:-$NB_LEGACY_ROOT/profiles}"
@@ -103,11 +104,41 @@ nb_profile_stock_exists() {
     [ "$section_type" = "server" ] && [ "$profile_type" = "netbirdvpn" ]
 }
 
-# Generic DELETE remains 100% stock. Runtime identity cleanup is therefore a
-# provider maintenance concern, not a frontend CRUD interception. Remove only
-# profile-scoped directories whose stock NetBird row no longer exists. Never
-# delete the currently selected runtime profile, even if config is temporarily
-# inconsistent; that fail-safe defers cleanup to a later boot/maintenance pass.
+nb_legacy_adoption_key() {
+    local key
+    [ -f "$NB_LEGACY_ADOPTION_FILE" ] || return 1
+    key="$(nb_get "$NB_LEGACY_ADOPTION_FILE" profile_key "")"
+    nb_profile_key_valid "$key" || return 1
+    printf '%s\n' "$key"
+}
+
+nb_legacy_mark_profile_deleted() {
+    local key="${1:-}" adopted
+    nb_profile_key_valid "$key" || return 0
+    adopted="$(nb_legacy_adoption_key 2>/dev/null || true)"
+    [ -n "$adopted" ] && [ "$adopted" = "$key" ] || return 0
+    nb_set "$NB_LEGACY_ADOPTION_FILE" deleted 1
+}
+
+# Completion is authoritative only while the adopted stock row still exists, or
+# after an explicit provider cleanup marked it intentionally deleted. If the
+# stock configuration disappears without that tombstone (for example across a
+# firmware/config migration), the persistent identity is eligible for adoption
+# again so the installed client becomes visible in the stock list.
+nb_legacy_adoption_done() {
+    local key
+    [ -f "$NB_LEGACY_ADOPTION_FILE" ] || return 1
+    [ "$(nb_get "$NB_LEGACY_ADOPTION_FILE" completed "0")" = "1" ] || return 1
+    [ "$(nb_get "$NB_LEGACY_ADOPTION_FILE" deleted "0")" = "1" ] && return 0
+    key="$(nb_legacy_adoption_key 2>/dev/null || true)"
+    [ -n "$key" ] && nb_profile_stock_exists "$key" && return 0
+    return 1
+}
+
+# Fallback cleanup for profiles removed outside the normal web flow or when the
+# immediate provider post-DELETE cleanup failed. Never delete the currently
+# selected runtime profile. The normal UI path cleans provider identity
+# immediately after TP-Link's stock DELETE succeeds.
 nb_profile_gc_orphans() {
     [ -d "$NB_PROFILES_ROOT" ] || return 0
     local active="" dir key
@@ -120,6 +151,7 @@ nb_profile_gc_orphans() {
         nb_profile_stock_exists "$key" && continue
         [ -n "$active" ] && [ "$active" = "$key" ] && continue
         rm -rf "$dir" || return 1
+        nb_legacy_mark_profile_deleted "$key"
     done
     return 0
 }
@@ -128,12 +160,6 @@ nb_legacy_artifacts_present() {
     [ -s "$NB_LEGACY_ROOT/default.json" ] || \
     [ -f "$NB_LEGACY_ROOT/settings" ] || \
     [ -d "$NB_LEGACY_ROOT/state" ]
-}
-
-nb_legacy_adoption_done() {
-    [ -f "$NB_LEGACY_ADOPTION_FILE" ] || return 1
-    [ "$(nb_get "$NB_LEGACY_ADOPTION_FILE" completed "0")" = "1" ] || return 1
-    return 0
 }
 
 nb_url_host() {
@@ -146,7 +172,13 @@ nb_legacy_profile_find_section() {
 }
 
 nb_legacy_profile_allocate_section() {
-    local base="netbird_legacy" section="$base" n=0
+    local preferred="" base="netbird_legacy" section n=0
+    preferred="$(nb_legacy_adoption_key 2>/dev/null || true)"
+    if [ -n "$preferred" ] && ! uci -q get "vpn.$preferred" >/dev/null 2>&1; then
+        printf '%s\n' "$preferred"
+        return 0
+    fi
+    section="$base"
     while uci -q get "vpn.$section" >/dev/null 2>&1; do
         n=$((n + 1))
         section="${base}${n}"
@@ -154,9 +186,9 @@ nb_legacy_profile_allocate_section() {
     printf '%s\n' "$section"
 }
 
-# Adopt the historical single NetBird identity into the native stock list once.
-# This is intentionally idempotent. A persistent completion marker prevents an
-# intentionally deleted adopted profile from being recreated on every reboot.
+# Adopt the historical single NetBird identity into the native stock list. The
+# operation is idempotent while its row exists. If stock config is lost without
+# a provider-deletion tombstone it reuses the recorded key when available.
 nb_legacy_profile_adopt() {
     nb_legacy_adoption_done && return 0
     nb_legacy_artifacts_present || return 0
@@ -220,6 +252,7 @@ nb_legacy_profile_adopt() {
     umask 077
     {
         printf 'completed=1\n'
+        printf 'deleted=0\n'
         printf 'profile_key=%s\n' "$section"
         printf 'copied=%s\n' "$copied"
     } > "$NB_LEGACY_ADOPTION_FILE.new" || return 1
