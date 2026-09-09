@@ -1,6 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -pedantic
 LDFLAGS = -lcrypto
+PYTHON ?= python3
 
 TARGET = bin/md5-fix
 SRCS = src/md5-fix.c
@@ -12,9 +13,12 @@ STOCK ?= stock_decrypted.bin
 BUILD_NO := $(shell test -f BUILD && tr -d '[:space:]' < BUILD || echo 1)
 FIRMWARE_OUTPUT ?= work/Archer-AX53-NetBird-build-$(BUILD_NO).bin
 
-.PHONY: all tools clean firmware test-netbird
+.PHONY: all tools clean firmware test-netbird setup
 
 all: $(TARGET)
+
+setup:
+	$(PYTHON) -m pip install -r requirements.txt
 
 $(TARGET): $(SRCS)
 	mkdir -p bin
