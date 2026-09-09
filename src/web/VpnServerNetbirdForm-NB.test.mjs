@@ -4,7 +4,6 @@ import vm from "node:vm";
 
 const original = fs.readFileSync(new URL("./VpnServerNetbirdForm-NB.js", import.meta.url), "utf8");
 
-// Authored source contract: real TP-Link controls and final native semantics.
 for (const token of [
   'stockComponent(this, "su-form")',
   'stockComponent(this, "su-form-item")',
@@ -16,15 +15,20 @@ for (const token of [
   'stockComponent(this, "su-spin")',
   'const creating = ref(true)',
   'const existing = !!(value && (value.key || value.id))',
+  'const profileKey = ref("")',
+  'profile_key: profileKey.value',
+  'Return protocol-specific fields only',
   's.advertise_lan === "1" && s.disable_server_routes !== "0"',
   's.advertise_lan === "1" && s.disable_firewall !== "0"',
   'Permitir roteamento da LAN',
 ]) assert.ok(original.includes(token), `missing authored token ${token}`);
+
 for (const token of [
   "NETBIRD_CSS", 'type: "checkbox"', 'class: "netbird-input"', "syncNativeSaveButton", "unknown error",
   'value.type === "netbirdvpn"', 'value.type === "netbird"', "const creating = ref(false)",
-  'Anunciar rede local',
-]) assert.equal(original.includes(token), false, `legacy/custom UI token leaked: ${token}`);
+  'Anunciar rede local', 'Já existe um perfil NetBird',
+  'enable: s.enable === "1" ? "on" : "off"',
+]) assert.equal(original.includes(token), false, `generic/legacy UI token leaked: ${token}`);
 
 const source = original
   .replace(/^import .*?;\nimport .*?;\n/s, "")
@@ -56,8 +60,8 @@ const context = {
   setInterval: fn => { timers.push(fn); return timers.length; },
   clearInterval: () => {},
   URL,
-  api: { request: async (_path, body) => {
-    requests.push(body.operation);
+  api: { request: async (path, body) => {
+    requests.push({ path, ...body });
     if (body.operation === "enroll") return { settings: { ...response.settings, enrolled: "1", enable: "0" } };
     return response;
   } },
@@ -74,17 +78,25 @@ for (const key of ["validate", "setForm", "getForm", "resetForm", "clearValidate
   assert.equal(typeof exposed[key], "function", `${key} must be exposed`);
 assert.equal(typeof context.component.render, "function");
 
-// Type exists in both Add and Edit. Without persisted key/id this is CREATE.
-state.profileExists.value = false;
+// Add mode is entirely stock-owned: no persisted key means the provider subform
+// must not call /admin/netbird or infer Edit from type=netbirdvpn.
 assert.equal(exposed.setForm({
   type: "netbirdvpn", management_url: "https://netbird.example",
   advertise_lan: "0", disable_server_routes: "1", disable_firewall: "1", wireguard_port: "51820",
 }), true);
 assert.equal(state.creating.value, true);
+assert.equal(state.profileKey.value, "");
 assert.equal(await exposed.validate(), true);
+await timers[0]();
+assert.equal(requests.length, 0, "Add mode must not use auxiliary backend before stock Save");
 
-// A persisted stock key proves EDIT and the protocol form must not own key/type.
-state.profileExists.value = true;
+const addForm = exposed.getForm();
+for (const field of ["key", "id", "type", "description", "enable", "enabled", "enrolled"])
+  assert.equal(field in addForm, false, `provider subform must not own generic field ${field}`);
+assert.equal(addForm.management_url, "https://netbird.example");
+
+// A persisted stock key alone proves Edit. Status/enrollment diagnostics are
+// then profile-scoped to that exact stock identity.
 assert.equal(exposed.setForm({
   key: "arbitrary-stock-key", type: "netbirdvpn", server: "https://netbird.example",
   management_url: "https://netbird.example", enable: "on", enrolled: "1",
@@ -92,17 +104,18 @@ assert.equal(exposed.setForm({
   disable_firewall: "0", wireguard_port: "51820",
 }), true);
 assert.equal(state.creating.value, false);
+assert.equal(state.profileKey.value, "arbitrary-stock-key");
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.ok(requests.some(r => r.operation === "status" && r.profile_key === "arbitrary-stock-key"));
 assert.equal(await exposed.validate(), true);
 
-const form = exposed.getForm();
-assert.equal(form.management_url, "https://netbird.example");
-assert.equal(form.server, "https://netbird.example");
-assert.equal(form.enable, "on");
-assert.equal("key" in form, false, "protocol subform must not own TP-Link profile key");
-assert.equal("type" in form, false, "protocol subform must not own TP-Link profile type");
+const editForm = exposed.getForm();
+assert.equal(editForm.management_url, "https://netbird.example");
+assert.equal(editForm.server, "https://netbird.example");
+for (const field of ["key", "id", "type", "description", "enable", "enabled", "enrolled"])
+  assert.equal(field in editForm, false, `protocol subform must not own TP-Link field ${field}`);
 
-// Enabling LAN routing enables both prerequisites: server routes from management
-// and NetBird firewall policy enforcement. Neither may be disabled while routing.
+// Routing peer invariants remain provider-specific validation.
 state.updateDraft("advertise_lan", "0");
 state.updateDraft("disable_server_routes", "1");
 state.updateDraft("disable_firewall", "1");
@@ -119,20 +132,20 @@ await assert.rejects(() => exposed.validate(), /firewall do NetBird/);
 state.updateDraft("disable_firewall", "0");
 assert.equal(await exposed.validate(), true);
 
-// Polling is read-only and cannot clobber an in-progress form draft.
+// Polling is read-only and cannot clobber an in-progress stock-dialog draft.
 state.updateDraft("advertise_cidr", "192.168.");
 assert.equal(state.dirty.value, true);
 response = { ...response, settings: { ...response.settings, advertise_cidr: "10.0.0.0/24" } };
 for (let i = 0; i < 3; i++) await timers[0]();
 assert.equal(state.draft.value.advertise_cidr, "192.168.");
-assert.equal(requests.includes("settings_set"), false);
+assert.equal(requests.some(r => r.operation === "settings_set"), false);
 await assert.rejects(() => exposed.validate(), /CIDR/);
 
 state.updateDraft("advertise_lan", "0");
 state.updateDraft("management_url", "https://netbird.example");
 state.updateDraft("wireguard_port", "51820");
 assert.equal(await exposed.validate(), true);
-assert.equal(requests.includes("settings_set"), false, "editing must never persist before stock dialog Save");
+assert.equal(requests.some(r => r.operation === "settings_set"), false, "editing must never persist before stock dialog Save");
 
 context.unmounted();
-console.log("netbird authored final native form/policy-safe-routing/draft contract ok");
+console.log("netbird protocol-only stock-form/multi-profile/draft contract ok");
