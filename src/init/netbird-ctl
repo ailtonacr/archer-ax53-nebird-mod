@@ -3,12 +3,27 @@
 #
 # Lifecycle implementation lives in /lib/netbird/netbird-runtime.sh so netifd,
 # recovery commands and LuCI all share one implementation without circular
-# netbird.sh -> netbird-ctl -> netbird.sh dependencies.
+# dependencies. Native profile operations must select the stock profile key so
+# each stored NetBird row uses its own persistent identity/settings directory.
 
 . /lib/netbird/netbird.sh
+. /lib/netbird/netbird-profiles.sh
 . /lib/netbird/netbird-runtime.sh
 
-case "$1" in
+profile_key=""
+if [ "${1:-}" = "--profile-key" ]; then
+    [ $# -ge 3 ] || { echo "netbird: --profile-key requires a value and command" >&2; exit 2; }
+    profile_key="$2"
+    nb_profile_select "$profile_key" || exit 2
+    shift 2
+elif [ "${1:-}" != "payload-version" ] && [ "${1:-}" != "payload-status" ] && [ "${1:-}" != "payload-verify" ]; then
+    # Compatibility/manual diagnostics may omit the key. Prefer the currently
+    # active native profile when one can be resolved; otherwise retain the
+    # historical root context without ever treating it as a new native profile.
+    nb_profile_select_active >/dev/null 2>&1 || true
+fi
+
+case "${1:-}" in
 daemon-ping)
     nb_daemon_ping
     exit $?
@@ -76,6 +91,12 @@ settings)
         "$NB_SETTINGS_FILE" 2>/dev/null
     ;;
 
+migrate-profile)
+    nb_profile_use_legacy
+    nb_legacy_profile_adopt
+    exit $?
+    ;;
+
 payload-version)
     echo "$NB_VERSION"
     ;;
@@ -95,7 +116,7 @@ payload-verify)
     ;;
 
 *)
-    echo "usage: $0 {up [--setup-key-file PATH]|down|stop|restart|clean|status|log|settings|payload-version|payload-status|payload-verify|daemon-ping}" >&2
+    echo "usage: $0 [--profile-key KEY] {up [--setup-key-file PATH]|down|stop|restart|clean|status|log|settings|daemon-ping} | {migrate-profile|payload-version|payload-status|payload-verify}" >&2
     exit 1
     ;;
 esac
