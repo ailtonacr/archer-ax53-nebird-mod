@@ -41,11 +41,12 @@ echo "### NetBird VPN Client integration ###"
 echo "    rootfs: $R"
 
 echo "[1/8] copying NetBird runtime files into rootfs ..."
-for f in netbird.sh netbird-ctl netbird.init netbird-proto.sh netbird_firewall.inc; do
+for f in netbird.sh netbird-profiles.sh netbird-ctl netbird.init netbird-proto.sh netbird_firewall.inc; do
   [ -f "$RUNTIME_SRC/$f" ] || { echo "Error: missing canonical runtime source $RUNTIME_SRC/$f" >&2; exit 1; }
 done
 mkdir -p "$R/lib/netbird" "$R/lib/netifd/proto" "$R/sbin" "$R/etc/init.d"
 cp "$RUNTIME_SRC/netbird.sh" "$R/lib/netbird/netbird.sh"
+cp "$RUNTIME_SRC/netbird-profiles.sh" "$R/lib/netbird/netbird-profiles.sh"
 cp "$RUNTIME_SRC/netbird-ctl" "$R/sbin/netbird-ctl"
 cp "$RUNTIME_SRC/netbird.init" "$R/etc/init.d/netbird"
 cp "$RUNTIME_SRC/netbird-proto.sh" "$R/lib/netifd/proto/netbird.sh"
@@ -58,9 +59,10 @@ cp "$NB_CONTROLLER" "$R/usr/lib/lua/luci/controller/admin/netbird.lua"
 cp "$NB_MODEL" "$R/usr/lib/lua/luci/model/netbird.lua"
 
 chmod 0755 "$R/sbin/netbird-ctl" "$R/sbin/xzmini" "$R/usr/bin/netbird" "$R/etc/init.d/netbird" "$R/lib/netifd/proto/netbird.sh" 2>/dev/null || true
-chmod 0644 "$R/lib/netbird/netbird.sh" "$R/usr/lib/lua/luci/controller/admin/netbird.lua" "$R/usr/lib/lua/luci/model/netbird.lua" 2>/dev/null || true
+chmod 0644 "$R/lib/netbird/netbird.sh" "$R/lib/netbird/netbird-profiles.sh" "$R/usr/lib/lua/luci/controller/admin/netbird.lua" "$R/usr/lib/lua/luci/model/netbird.lua" 2>/dev/null || true
 
 cmp -s "$RUNTIME_SRC/netbird.sh" "$R/lib/netbird/netbird.sh" || { echo "Error: packaged netbird.sh differs from canonical source" >&2; exit 1; }
+cmp -s "$RUNTIME_SRC/netbird-profiles.sh" "$R/lib/netbird/netbird-profiles.sh" || { echo "Error: packaged netbird-profiles.sh differs from canonical source" >&2; exit 1; }
 cmp -s "$RUNTIME_SRC/netbird-ctl" "$R/sbin/netbird-ctl" || { echo "Error: packaged netbird-ctl differs from canonical source" >&2; exit 1; }
 cmp -s "$RUNTIME_SRC/netbird.init" "$R/etc/init.d/netbird" || { echo "Error: packaged netbird init differs from canonical source" >&2; exit 1; }
 cmp -s "$RUNTIME_SRC/netbird-proto.sh" "$R/lib/netifd/proto/netbird.sh" || { echo "Error: packaged netbird protocol differs from canonical source" >&2; exit 1; }
@@ -113,8 +115,6 @@ python3 "$NATIVE_SAVE_PATCHER" "$R"
 
 echo "[4/8] adding canonical CIDR-scoped NetBird firewall integration ..."
 if ! grep -q "# NetBird v4 CIDR-scoped/applied-state" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
-  # Fresh firmware builds start from stock. This guard also makes repeated local
-  # packaging idempotent when the exact canonical v4 definition is present.
   cat >> "$R/lib/firewall/tpcmd.sh" <<'FIREWALL_SEPARATOR'
 
 # NetBird canonical firewall definition follows.
@@ -146,7 +146,7 @@ mkdir -p "$R/etc/rc.d"
 ln -sfn "../init.d/netbird" "$R/etc/rc.d/S99netbird" 2>/dev/null || true
 
 echo "[8/8] verifying installed files ..."
-for f in lib/netbird/netbird.sh lib/netifd/proto/netbird.sh sbin/netbird-ctl sbin/xzmini usr/bin/netbird etc/init.d/netbird \
+for f in lib/netbird/netbird.sh lib/netbird/netbird-profiles.sh lib/netifd/proto/netbird.sh sbin/netbird-ctl sbin/xzmini usr/bin/netbird etc/init.d/netbird \
          usr/lib/lua/luci/controller/admin/netbird.lua usr/lib/lua/luci/model/netbird.lua \
          usr/lib/lua/luci/controller/admin/vpn.lua www/webpages/js/VpnServerNetbirdForm-NB.js.gz; do
   [ -f "$R/$f" ] && echo "    ok  $f" || { echo "    MISSING $f" >&2; exit 1; }
@@ -171,9 +171,9 @@ printf '%s' "$NB_FORM_JS" | grep -Fq 'context.expose({ isChanged: dirty, validat
 printf '%s' "$NB_FORM_JS" | grep -Fq 'throw new Error(error.value)' || {
   echo "Error: NetBird validate() does not reject invalid state like stock forms" >&2; exit 1;
 }
-for legacy in 'syncNativeSaveButton' 'data-netbird-dirty' '__netbirdSaveListener' 'stopImmediatePropagation' 'netbirdSaveSyncTimer'; do
+for legacy in 'syncNativeSaveButton' 'data-netbird-dirty' '__netbirdSaveListener' 'stopImmediatePropagation' 'netbirdSaveSyncTimer' 'Já existe um perfil NetBird'; do
   if printf '%s' "$NB_FORM_JS" | grep -Fq "$legacy"; then
-    echo "Error: legacy NetBird Save interception leaked into final form: $legacy" >&2
+    echo "Error: legacy/singleton NetBird form logic leaked into final form: $legacy" >&2
     exit 1
   fi
 done
