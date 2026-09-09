@@ -150,14 +150,16 @@ export default defineComponent({
     }
 
     async function load(clearStaleError = true) {
-      if (statusRequestPending) return;
+      // Add mode has no stock profile identity yet. Do not involve the auxiliary
+      // NetBird backend in generic creation; defaults are authored locally and
+      // the stock Save path creates the row first.
+      if (!profileKey.value || creating.value || statusRequestPending) return;
       statusRequestPending = true;
       try {
-        const extra = profileKey.value ? { profile_key: profileKey.value } : {};
-        const r = await nbReq("status", extra);
+        const r = await nbReq("status", { profile_key: profileKey.value });
         settings.value = r.settings || settings.value || {};
         profileExists.value = !!r.profileExists;
-        if (!dirty.value && !creating.value) {
+        if (!dirty.value) {
           draft.value = normalizeForm(draft.value, settings.value);
           draft.value.enrolled = settings.value.enrolled || draft.value.enrolled || "0";
           draft.value.enable = settings.value.enable || draft.value.enable || "0";
@@ -200,9 +202,10 @@ export default defineComponent({
     }
 
     async function fetchLog() {
+      if (!profileKey.value) return;
       showLog.value = !showLog.value;
       if (!showLog.value) return;
-      try { const r = await nbReq("log", { lines: 100, profile_key: profileKey.value || undefined }); log.value = r.lines || ""; }
+      try { const r = await nbReq("log", { lines: 100, profile_key: profileKey.value }); log.value = r.lines || ""; }
       catch (e) { error.value = errMsg(e); log.value = ""; }
     }
 
@@ -234,8 +237,9 @@ export default defineComponent({
 
     function getForm() {
       const s = draft.value || {};
+      // Return protocol-specific fields only. Generic profile identity, enabled
+      // state and list semantics remain owned by TP-Link's outer stock form.
       return {
-        enable: s.enable === "1" ? "on" : "off", enabled: s.enable === "1", enrolled: s.enrolled || "0",
         management_url: s.management_url || "", server: s.management_url || "", hostname: s.hostname || "",
         disable_dns: s.disable_dns || "1", disable_firewall: s.disable_firewall || "1",
         disable_client_routes: s.disable_client_routes || "1", disable_server_routes: s.disable_server_routes || "1",
@@ -251,7 +255,10 @@ export default defineComponent({
     context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate });
 
     let timer = null;
-    onMounted(function () { load(); timer = setInterval(function () { if (!busy.value) load(false); }, 5000); });
+    onMounted(function () {
+      if (profileKey.value && !creating.value) load(false);
+      timer = setInterval(function () { if (!busy.value && profileKey.value && !creating.value) load(false); }, 5000);
+    });
     onUnmounted(function () { if (timer) clearInterval(timer); });
 
     return { props, settings, draft, status, netbird, payload, traffic, profileExists, profileKey, setupKey, log, busy, message, error, showLog, dirty, creating, updateDraft, enroll, restart, fetchLog };
