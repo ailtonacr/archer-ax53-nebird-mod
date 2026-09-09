@@ -186,9 +186,21 @@ after="$(wc -l < "$UCI_LOG" | tr -d ' ')"
 [ "$before" = "$after" ] || fail "completed migration recreated/mutated the stock row"
 [ -s "$NB_LEGACY_ROOT/default.json" ] || fail "legacy identity source was destructively moved"
 
+# Generic DELETE is TP-Link-owned. Simulate deletion of the adopted stock row:
+# permanent migration completion must prevent its historical source from
+# resurrecting the row, and provider GC may remove only the orphan scoped copy.
+UCI_LEGACY=0
+before="$(wc -l < "$UCI_LOG" | tr -d ' ')"
+nb_legacy_profile_adopt || fail "one-shot adoption check failed after stock delete"
+after="$(wc -l < "$UCI_LOG" | tr -d ' ')"
+[ "$before" = "$after" ] || fail "stock-deleted legacy profile was resurrected"
+nb_profile_gc_orphans || fail "GC failed for stock-deleted adopted profile"
+[ ! -d "$NB_PROFILES_ROOT/netbird_legacy" ] || fail "stock-deleted adopted identity was not collected"
+[ -s "$NB_LEGACY_ROOT/default.json" ] || fail "legacy migration evidence/input was destructively removed"
+
 # Setup keys are intentionally absent from persistent provider helpers.
 if grep -R -E 'setup[_-]?key=' "$NB_LEGACY_ROOT" >/dev/null 2>&1; then
     fail "setup key leaked into persistent profile storage"
 fi
 
-echo "netbird stock-authority/profile-isolation/adoption/GC behavior ok"
+echo "netbird stock-authority/profile-isolation/one-shot-adoption/GC behavior ok"
