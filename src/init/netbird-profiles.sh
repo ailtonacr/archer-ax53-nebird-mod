@@ -94,6 +94,36 @@ nb_profile_identity_present() {
     return 0
 }
 
+# The stock vpn.server row is the authority for whether a profile exists.
+nb_profile_stock_exists() {
+    local key="${1:-}" section_type profile_type
+    nb_profile_key_valid "$key" || return 1
+    section_type="$(uci -q get "vpn.$key" 2>/dev/null || true)"
+    profile_type="$(uci -q get "vpn.$key.type" 2>/dev/null || true)"
+    [ "$section_type" = "server" ] && [ "$profile_type" = "netbirdvpn" ]
+}
+
+# Generic DELETE remains 100% stock. Runtime identity cleanup is therefore a
+# provider maintenance concern, not a frontend CRUD interception. Remove only
+# profile-scoped directories whose stock NetBird row no longer exists. Never
+# delete the currently selected runtime profile, even if config is temporarily
+# inconsistent; that fail-safe defers cleanup to a later boot/maintenance pass.
+nb_profile_gc_orphans() {
+    [ -d "$NB_PROFILES_ROOT" ] || return 0
+    local active="" dir key
+    active="$(nb_profile_active_key 2>/dev/null || true)"
+
+    for dir in "$NB_PROFILES_ROOT"/*; do
+        [ -d "$dir" ] || continue
+        key="${dir##*/}"
+        nb_profile_key_valid "$key" || continue
+        nb_profile_stock_exists "$key" && continue
+        [ -n "$active" ] && [ "$active" = "$key" ] && continue
+        rm -rf "$dir" || return 1
+    done
+    return 0
+}
+
 nb_legacy_artifacts_present() {
     [ -s "$NB_LEGACY_ROOT/default.json" ] || \
     [ -f "$NB_LEGACY_ROOT/settings" ] || \
