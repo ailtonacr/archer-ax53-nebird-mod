@@ -4,7 +4,7 @@
 # This process is intentionally NOT a NetBird lifecycle owner. It never starts
 # the NetBird daemon or calls nb_runtime_connect directly. It only observes the
 # persisted TP-Link VPN Client intent and re-triggers the stock netifd lifecycle
-# when NetBird should be active but is not connected.
+# when the selected NetBird profile should be active but is not connected.
 
 NB_RECOVERY_LOCK="${NB_RECOVERY_LOCK:-/tmp/netbird-recovery-attempt.lock}"
 NB_RECOVERY_INITIAL_DELAY="${NB_RECOVERY_INITIAL_DELAY:-5}"
@@ -22,11 +22,7 @@ NB_RECOVERY_STEP_STATE="init"
 nb_recovery_log() {
     printf '%s\n' "netbird-recovery: $*" >/dev/console 2>/dev/null || true
 }
-
-nb_recovery_sleep() {
-    sleep "$1"
-}
-
+nb_recovery_sleep() { sleep "$1"; }
 nb_recovery_delay_for_failure() {
     case "${1:-1}" in
         1) printf '%s\n' 5 ;;
@@ -44,19 +40,13 @@ nb_recovery_native_active() {
     enabled="$(uci -q get vpn.client.enabled 2>/dev/null || true)"
     vpntype="$(uci -q get vpn.client.vpntype 2>/dev/null || true)"
     [ "$enabled" = "on" ] || return 1
-    case "$vpntype" in
-        netbirdvpn|netbird) return 0 ;;
-        *) return 1 ;;
-    esac
+    case "$vpntype" in netbirdvpn|netbird) return 0 ;; *) return 1 ;; esac
 }
 
 nb_recovery_identity_ready() {
     local enrolled
     enrolled="$(nb_get "$NB_SETTINGS_FILE" enrolled "0" 2>/dev/null || true)"
     [ "$enrolled" = "1" ] && return 0
-    # Legacy/manual installs may have a valid persistent NetBird identity but
-    # predate the enrolled metadata flag. A non-empty config is sufficient
-    # evidence to let the canonical `netbird up` path decide its validity.
     [ -s "$NB_CONFIG_FILE" ]
 }
 
@@ -66,30 +56,19 @@ nb_recovery_netifd_pending() {
     compact="$(printf '%s' "$status" | tr -d '\r\n\t ')"
     printf '%s' "$compact" | grep -q '"pending":true'
 }
-
-nb_recovery_interface_exists() {
-    ubus call network.interface.vpn status >/dev/null 2>&1
-}
+nb_recovery_interface_exists() { ubus call network.interface.vpn status >/dev/null 2>&1; }
 
 nb_recovery_trigger() (
-    if ! mkdir "$NB_RECOVERY_LOCK" 2>/dev/null; then
-        return 2
-    fi
+    if ! mkdir "$NB_RECOVERY_LOCK" 2>/dev/null; then return 2; fi
     trap 'rc=$?; rmdir "$NB_RECOVERY_LOCK" 2>/dev/null || true; exit "$rc"' EXIT
     trap 'rmdir "$NB_RECOVERY_LOCK" 2>/dev/null || true; exit 1' HUP INT TERM
-
-    # Re-check after acquiring the lock so an OFF/type change that happened
-    # between the polling decision and the trigger cannot be undone here.
     nb_recovery_native_active || return 3
+    nb_profile_select_active >/dev/null 2>&1 || return 4
 
     if nb_recovery_interface_exists; then
-        # Re-enter the stock netifd protocol handler without reimplementing any
-        # NetBird runtime operation in this supervisor.
         ubus call network.interface.vpn disconnect >/dev/null 2>&1 || true
         ubus call network.interface.vpn connect >/dev/null 2>&1
     else
-        # Recovery fallback for a missing/unmaterialized network.interface.vpn:
-        # let TP-Link's vpnc regenerate/reload the native interface definition.
         /etc/init.d/vpnc restart >/dev/null 2>&1
     fi
 )
@@ -98,6 +77,7 @@ nb_recovery_wait_connected() {
     local tries="${1:-$NB_RECOVERY_CONNECT_GRACE}"
     while [ "$tries" -gt 0 ]; do
         nb_recovery_native_active || return 2
+        nb_profile_select_active >/dev/null 2>&1 || return 3
         nb_runtime_is_connected && return 0
         tries=$((tries - 1))
         nb_recovery_sleep 1
@@ -121,6 +101,13 @@ nb_recovery_step() {
         return 0
     fi
 
+    if ! nb_profile_select_active >/dev/null 2>&1; then
+        NB_RECOVERY_FAILURES=0
+        NB_RECOVERY_DELAY="$NB_RECOVERY_IDENTITY_POLL"
+        NB_RECOVERY_STEP_STATE="profile-key-missing"
+        return 0
+    fi
+
     if nb_runtime_is_connected; then
         NB_RECOVERY_FAILURES=0
         NB_RECOVERY_DELAY="$NB_RECOVERY_CONNECTED_POLL"
@@ -135,8 +122,6 @@ nb_recovery_step() {
         return 0
     fi
 
-    # Do not collide with the original boot/setup attempt or a UI-triggered
-    # reconnect that netifd is already processing.
     if nb_recovery_netifd_pending; then
         NB_RECOVERY_DELAY="$NB_RECOVERY_PENDING_POLL"
         NB_RECOVERY_STEP_STATE="netifd-pending"
@@ -150,20 +135,22 @@ nb_recovery_step() {
         2)
             NB_RECOVERY_DELAY="$NB_RECOVERY_PENDING_POLL"
             NB_RECOVERY_STEP_STATE="attempt-locked"
-            return 0
-            ;;
+            return 0 ;;
         3)
             NB_RECOVERY_FAILURES=0
             NB_RECOVERY_DELAY="$NB_RECOVERY_INACTIVE_POLL"
             NB_RECOVERY_STEP_STATE="inactive"
-            return 0
-            ;;
+            return 0 ;;
+        4)
+            NB_RECOVERY_FAILURES=0
+            NB_RECOVERY_DELAY="$NB_RECOVERY_IDENTITY_POLL"
+            NB_RECOVERY_STEP_STATE="profile-key-missing"
+            return 0 ;;
         *)
             nb_recovery_record_failure
             NB_RECOVERY_STEP_STATE="trigger-failed"
             nb_recovery_log "native reconnect trigger failed; retry in ${NB_RECOVERY_DELAY}s"
-            return 0
-            ;;
+            return 0 ;;
     esac
 
     wait_rc=0
@@ -173,18 +160,19 @@ nb_recovery_step() {
             NB_RECOVERY_FAILURES=0
             NB_RECOVERY_DELAY="$NB_RECOVERY_CONNECTED_POLL"
             NB_RECOVERY_STEP_STATE="connected"
-            nb_recovery_log "NetBird recovered through native vpnc/netifd lifecycle"
-            ;;
+            nb_recovery_log "NetBird recovered through native vpnc/netifd lifecycle" ;;
         2)
             NB_RECOVERY_FAILURES=0
             NB_RECOVERY_DELAY="$NB_RECOVERY_INACTIVE_POLL"
-            NB_RECOVERY_STEP_STATE="inactive"
-            ;;
+            NB_RECOVERY_STEP_STATE="inactive" ;;
+        3)
+            NB_RECOVERY_FAILURES=0
+            NB_RECOVERY_DELAY="$NB_RECOVERY_IDENTITY_POLL"
+            NB_RECOVERY_STEP_STATE="profile-key-missing" ;;
         *)
             nb_recovery_record_failure
             NB_RECOVERY_STEP_STATE="connect-failed"
-            nb_recovery_log "NetBird still disconnected; retry in ${NB_RECOVERY_DELAY}s"
-            ;;
+            nb_recovery_log "NetBird still disconnected; retry in ${NB_RECOVERY_DELAY}s" ;;
     esac
     return 0
 }
@@ -198,18 +186,14 @@ nb_recovery_run() {
 
 if [ "${NB_RECOVERY_INCLUDE_ONLY:-0}" != "1" ]; then
     . /lib/netbird/netbird.sh
+    . /lib/netbird/netbird-profiles.sh
     . /lib/netbird/netbird-runtime.sh
 
     case "${1:-run}" in
         run) nb_recovery_run ;;
         once)
             nb_recovery_step
-            printf 'state=%s failures=%s next_delay=%s\n' \
-                "$NB_RECOVERY_STEP_STATE" "$NB_RECOVERY_FAILURES" "$NB_RECOVERY_DELAY"
-            ;;
-        *)
-            echo "Usage: $0 [run|once]" >&2
-            exit 2
-            ;;
+            printf 'state=%s failures=%s next_delay=%s\n' "$NB_RECOVERY_STEP_STATE" "$NB_RECOVERY_FAILURES" "$NB_RECOVERY_DELAY" ;;
+        *) echo "Usage: $0 [run|once]" >&2; exit 2 ;;
     esac
 fi
