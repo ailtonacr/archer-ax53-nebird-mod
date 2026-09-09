@@ -1,0 +1,27 @@
+#!/bin/sh /etc/rc.common
+# One-shot migration of the historical single NetBird identity into a native
+# TP-Link vpn.server row. This service never starts/stops NetBird; it only makes
+# an already-installed legacy client visible in the stock VPN Client list.
+
+START=89
+STOP=12
+
+start() {
+    local sysmode
+    config_load sysmode
+    config_get sysmode sysmode mode "router"
+    [ "$sysmode" = "router" ] || return 0
+
+    . /lib/netbird/netbird.sh
+    . /lib/netbird/netbird-profiles.sh
+
+    if ! nb_legacy_profile_adopt; then
+        echo "netbird: legacy profile adoption failed" >/dev/console 2>&1
+        return 1
+    fi
+    return 0
+}
+
+stop() {
+    return 0
+}
