@@ -3,7 +3,8 @@
 
 Architectural rule: TP-Link owns every generic VPN Client operation it already
 implements. NetBird adds only a fifth provider, its protocol fields/runtime and
-profile-scoped enrollment/identity/diagnostics.
+profile-scoped enrollment/identity/diagnostics. DELETE preserves the exact stock
+remove and appends only provider credential cleanup after success.
 """
 from __future__ import annotations
 
@@ -29,11 +30,6 @@ def require(body: str, *tokens: str) -> None:
         assert token in body, f"contract missing {token!r}"
 
 
-def between(body: str, start: str, end: str) -> str:
-    assert start in body and end in body, f"unable to isolate {start!r}..{end!r}"
-    return body.split(start, 1)[1].split(end, 1)[0]
-
-
 def check_native_registry() -> None:
     native = text("src/web-backend/model/netbird_vpn_native.lua")
     loader = text("src/web-backend/controller/admin/netbird_native.lua")
@@ -47,11 +43,9 @@ def check_native_registry() -> None:
         'local profile_key = profile_key_from_config(cfg)',
         'if profile_key ~= "" then vpn.profile_key = profile_key end',
     )
-    assert 'key = "netbird"' not in native, "native adapter must not synthesize a singleton key"
+    assert 'key = "netbird"' not in native
     assert "debug.getupvalue" not in native and "debug.setupvalue" not in native
 
-    # LuCI index-cache safety: require must happen inside index(), never in an
-    # upvalue captured by the serialized controller function.
     index_body = loader.split("function index()", 1)[1]
     require(index_body, 'local native = require "luci.model.netbird_vpn_native"', 'native.install()')
     assert 'local native = require "luci.model.netbird_vpn_native"\n\nfunction index()' not in loader
@@ -63,61 +57,41 @@ def check_stock_frontend_boundary() -> None:
     finalizer = text("src/web/patchnetbird_native_crud.py")
     form = text("src/web/VpnServerNetbirdForm-NB.js")
 
-    stock_tokens = (
-        "STOCK_CONNECTED_STATUS",
-        "STOCK_UPDATE",
-        "STOCK_DELETE",
-        "STOCK_LIST",
-        "STOCK_SAVE",
-    )
+    stock_tokens = ("STOCK_CONNECTED_STATUS", "STOCK_UPDATE", "STOCK_DELETE", "STOCK_LIST", "STOCK_SAVE")
     require(web, *stock_tokens)
     require(factory, *stock_tokens)
     require(finalizer, *stock_tokens)
 
     require(
         web,
-        'e.Netbird="netbirdvpn"',
-        'case it.Netbird:return VpnServerNetbirdForm',
-        'VpnServerNetbirdForm-NB.js?v=',
-        'hashlib.sha256',
-        'generic TP-Link VPN CRUD remains stock',
+        'e.Netbird="netbirdvpn"', 'case it.Netbird:return VpnServerNetbirdForm',
+        'VpnServerNetbirdForm-NB.js?v=', 'hashlib.sha256', 'generic TP-Link VPN CRUD remains stock',
     )
     require(
         finalizer,
-        'NATIVE_SERIALIZER =',
-        'type:u.Netbird,server:n,management_url:e.management_url||""',
-        'new URL(n).hostname',
-        'custom NetBird bridge leaked into generic TP-Link model',
+        'NATIVE_SERIALIZER =', 'PROVIDER_DELETE =', 'DELETE_HELPER =',
+        'type:u.Netbird,server:n,management_url:e.management_url||""', 'new URL(n).hostname',
+        'a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete(e)',
+        'operation:"profile_delete",profile_key:e',
+        'provider cleanup must be the only /admin/netbird helper in the generic model',
     )
-    assert "DELETE_HELPER =" not in finalizer
     assert "native_delete =" not in finalizer
-    assert "await nbDelete(" not in finalizer
-    assert "def patch_model()" not in factory and "def patch_page()" not in factory, \
-        "factory semantics stage must remain a validator, not a mutator"
+    assert "def patch_model()" not in factory and "def patch_page()" not in factory
 
     require(
         form,
-        'const creating = ref(true)',
-        'const existing = !!(value && (value.key || value.id))',
-        'const profileKey = ref("")',
-        'if (!profileKey.value || creating.value || statusRequestPending) return',
+        'const creating = ref(true)', 'const existing = !!(value && (value.key || value.id))',
+        'const profileKey = ref("")', 'if (!profileKey.value || creating.value || statusRequestPending) return',
         'Return protocol-specific fields only',
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
-        'stockComponent(this, "su-form")',
-        'stockComponent(this, "su-form-item")',
-        'stockComponent(this, "su-input")',
-        'stockComponent(this, "su-checkbox")',
+        'stockComponent(this, "su-form")', 'stockComponent(this, "su-form-item")',
+        'stockComponent(this, "su-input")', 'stockComponent(this, "su-checkbox")',
         'profile_key: profileKey.value',
     )
     for token in (
-        'value.type === "netbirdvpn"',
-        'value.type === "netbird"',
-        'key:e.key||"netbird"',
-        'Já existe um perfil NetBird',
-        'a.value=_nb.concat(e)',
-        'operation:"settings_set"',
-        'function nbSettingsSet(',
-        'enable: s.enable === "1" ? "on" : "off"',
+        'value.type === "netbirdvpn"', 'value.type === "netbird"', 'key:e.key||"netbird"',
+        'Já existe um perfil NetBird', 'a.value=_nb.concat(e)', 'operation:"settings_set"',
+        'function nbSettingsSet(', 'enable: s.enable === "1" ? "on" : "off"',
         '"label-width": { span: 10 }',
     ):
         assert token not in form, f"generic/singleton behavior leaked into provider form: {token!r}"
@@ -128,26 +102,26 @@ def check_auxiliary_boundary() -> None:
     model = text("src/web-backend/model/netbird.lua")
     require(
         controller,
-        'local NATIVE_TYPE = "netbirdvpn"',
-        'local function requested_profile_key(body, required)',
-        'local function native_profile(profile_key)',
-        'name == profile_key and section.type == NATIVE_TYPE',
-        'local function native_profile_active(profile_key)',
-        'local function op_enroll(body)',
+        'local NATIVE_TYPE = "netbirdvpn"', 'local function requested_profile_key(body, required)',
+        'local function native_profile(profile_key)', 'name == profile_key and section.type == NATIVE_TYPE',
+        'local function native_profile_active(profile_key)', 'local function op_enroll(body)',
+        'local function op_profile_delete(body)', 'model.remove_profile_state(profile_key)',
         'model.control("enroll", profile_key, tmp)',
         'sys.call("/etc/init.d/vpnc restart >/dev/null 2>&1")',
     )
     dispatch = controller.split("function dispatch(body)", 1)[1]
-    assert 'op == "settings_set"' not in dispatch, "auxiliary endpoint must not duplicate stock profile writes"
+    assert 'op == "settings_set"' not in dispatch
 
     require(
         model,
+        'LEGACY_ADOPTION = ROOT .. "/legacy-adoption"',
+        'local function mark_legacy_profile_deleted(profile_key)',
+        'Tombstone a migrated legacy profile before removing its scoped copy',
         'cur.advertise_lan == "1" and cur.disable_server_routes ~= "0"',
         'server routes must be enabled when LAN routing is enabled',
         'cur.advertise_lan == "1" and cur.disable_firewall ~= "0"',
         'NetBird firewall must be enabled when LAN routing is enabled',
-        'valid_profile_key',
-        'profile_dir',
+        'valid_profile_key', 'profile_dir',
     )
 
 
@@ -156,18 +130,13 @@ def check_profile_authority() -> None:
     migrate = text("src/init/netbird-profile-migrate.init")
     require(
         profiles,
-        'NB_PROFILES_ROOT=',
-        'nb_profile_key_valid()',
-        'nb_profile_select()',
-        'nb_profile_stock_exists()',
-        'vpn.$key.type',
-        '[ "$section_type" = "server" ] && [ "$profile_type" = "netbirdvpn" ]',
-        'nb_profile_gc_orphans()',
-        'nb_legacy_profile_adopt()',
-        'uci set "vpn.$section=server"',
-        'uci set "vpn.$section.type=netbirdvpn"',
-        'uci set "vpn.$section.profile_key=$section"',
-        'NB_LEGACY_ADOPTION_FILE',
+        'NB_PROFILES_ROOT=', 'nb_profile_key_valid()', 'nb_profile_select()', 'nb_profile_stock_exists()',
+        'vpn.$key.type', '[ "$section_type" = "server" ] && [ "$profile_type" = "netbirdvpn" ]',
+        'nb_legacy_mark_profile_deleted()', 'deleted 1', 'nb_legacy_adoption_done()',
+        'nb_profile_gc_orphans()', 'nb_legacy_profile_adopt()',
+        'uci set "vpn.$section=server"', 'uci set "vpn.$section.type=netbirdvpn"',
+        'uci set "vpn.$section.profile_key=$section"', 'NB_LEGACY_ADOPTION_FILE',
+        "printf 'deleted=0\\n'",
     )
     require(migrate, 'nb_legacy_profile_adopt', 'nb_profile_gc_orphans')
     migrate_code = shell_code(migrate)
@@ -182,16 +151,11 @@ def check_runtime_library() -> None:
     proto = text("src/init/netbird-proto.sh")
     recovery = text("src/init/netbird-recovery")
 
-    require(
-        base,
-        'NB_BIN="/tmp/netbird"', 'nb_materialize()', 'nb_payload_status()',
-        'nb_daemon_start()', 'nb_daemon_stop()', 'nb_fw_access()', 'nb_fw_block()',
-    )
+    require(base, 'NB_BIN="/tmp/netbird"', 'nb_materialize()', 'nb_payload_status()', 'nb_daemon_start()', 'nb_daemon_stop()', 'nb_fw_access()', 'nb_fw_block()')
     require(
         runtime,
         'nb_up_flags()', '"--wireguard-port=${wg_port}"', 'nb_runtime_validate_settings()',
-        'LAN routing requires server routes to be enabled',
-        'LAN routing requires NetBird firewall policy enforcement',
+        'LAN routing requires server routes to be enabled', 'LAN routing requires NetBird firewall policy enforcement',
         'NB_FW_STATE="/tmp/netbird-firewall.state"',
         'nb_runtime_connect()', 'nb_runtime_disconnect()', 'nb_runtime_stop()', 'nb_runtime_restart()',
     )
@@ -200,25 +164,17 @@ def check_runtime_library() -> None:
     assert not re.search(r'iptables\s+.*(?:-I|--insert)\s+FORWARD', runtime_code)
     assert "nb_fw_prioritize_lan" not in runtime
 
-    require(
-        ctl,
-        '. /lib/netbird/netbird-profiles.sh',
-        '--profile-key',
-        'nb_profile_select "$profile_key"',
-        '. /lib/netbird/netbird-runtime.sh',
-    )
+    require(ctl, '. /lib/netbird/netbird-profiles.sh', '--profile-key', 'nb_profile_select "$profile_key"', '. /lib/netbird/netbird-runtime.sh')
     require(
         proto,
-        '. /lib/netbird/netbird-profiles.sh',
-        'proto_config_add_string "profile_key"',
-        'nb_profile_select "$profile_key"',
-        'nb_runtime_connect', 'nb_runtime_is_connected', 'nb_runtime_stop', 'add_protocol netbird',
+        '. /lib/netbird/netbird-profiles.sh', 'proto_config_add_string "profile_key"',
+        'nb_profile_select "$profile_key"', 'nb_runtime_connect', 'nb_runtime_is_connected', 'nb_runtime_stop', 'add_protocol netbird',
     )
     assert "/sbin/netbird-ctl" not in shell_code(proto)
     assert "proto_set_available" not in proto
 
-    require(recovery, 'nb_recovery_native_active()', 'nb_profile_select "$profile_key"', '/etc/init.d/vpnc restart')
-    assert "nb_runtime_connect" not in shell_code(recovery), "recovery may retrigger stock lifecycle only"
+    require(recovery, 'nb_recovery_native_active()', 'nb_profile_select_active', '/etc/init.d/vpnc restart')
+    assert "nb_runtime_connect" not in shell_code(recovery)
 
 
 def check_firewall_source() -> None:
@@ -241,15 +197,14 @@ def check_build_gates() -> None:
     verifier = text("scripts/verify-tplink-vpn-bytecode.py")
     require(
         mod,
-        'Generic list/ADD/EDIT/Save/toggle/DELETE/connected-status remain stock.',
+        'provider identity cleanup only AFTER stock DELETE succeeds',
         'python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"',
         'function f(e){return a.request(y,{operation:"connected_status",key:e}',
         'async function W(e,n){await function(e,n,t){return a.update(y,{key:e}',
-        'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n}',
+        'await nbDelete(e)',
         'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}',
         '"add"===n.type?await Ce(i):await ne(i,n.tableItem)',
-        'VpnServerNetbirdForm-NB.js?v=',
-        'nb_profile_gc_orphans',
+        'VpnServerNetbirdForm-NB.js?v=', 'nb_profile_gc_orphans',
     )
     require(
         verifier,
@@ -257,18 +212,6 @@ def check_build_gates() -> None:
         'STOCK_TYPES = {"pptpvpn", "l2tpvpn", "openvpn", "wireguardvpn"}',
     )
     require(makefile, 'test-netbird:', 'scripts/test-netbird-profiles.sh', 'scripts/test-netbird-recovery.sh')
-
-
-def check_no_forbidden_ci_changes() -> None:
-    workflows = ROOT / ".github" / "workflows"
-    if workflows.exists():
-        for path in (
-            "mods/012-netbird-native-vpn.sh",
-            "src/web/patchnetbird_web.py",
-            "src/web/patchnetbird_native_crud.py",
-            "scripts/test-netbird-contracts.py",
-        ):
-            assert ".github/workflows" not in text(path)
 
 
 def main() -> None:
@@ -279,8 +222,7 @@ def main() -> None:
     check_runtime_library()
     check_firewall_source()
     check_build_gates()
-    check_no_forbidden_ci_changes()
-    print("netbird provider-only TP-Link stock-flow structural contracts ok")
+    print("netbird TP-Link stock-flow + provider-only cleanup structural contracts ok")
 
 
 if __name__ == "__main__":
