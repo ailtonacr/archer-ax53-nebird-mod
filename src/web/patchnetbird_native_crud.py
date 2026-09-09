@@ -1,31 +1,35 @@
 #!/usr/bin/env python3
-"""Finalize NetBird as a native TP-Link VPN Client CRUD type.
+"""Finalize NetBird as a native TP-Link VPN Client provider.
 
-The stock base form owns profile identity fields (description/type/vendor/key).
-The NetBird subform owns protocol-specific fields only. A saved row is identified
-by its persisted key/id; VPN type alone must never be used to distinguish Add
-from Edit because both modes legitimately use type=netbirdvpn.
+The generic TP-Link VPN Client flow must remain vendor-owned:
+list, ADD, EDIT, Save/Cancel, toggle, DELETE and connected-status all keep their
+stock implementations. This finalizer is allowed to add only the provider
+serialization needed to carry NetBird-specific fields through the existing
+stock CRUD request.
 
-Most importantly, ADD must not synthesize a fixed key. TP-Link allocates the
-stock row identity, which is what allows multiple NetBird profiles to coexist.
-The only auxiliary model helper left in the final bundle performs profile-scoped
-identity cleanup after successful stock DELETE.
+No synthetic row, fixed key, custom Save bridge or generic CRUD special-case is
+permitted here.
 """
 from __future__ import annotations
 
 import gzip
 import io
 import os
-import re
 import subprocess
 import sys
 
 ROOT = sys.argv[1] if len(sys.argv) > 1 else "rootfs"
 JS = os.path.join(ROOT, "www/webpages/js")
 
-LEGACY_HELPERS = 'const nb="/admin/netbird";function nbStatus(e){return a.request(nb,{operation:"status",...e},{preventSuccess:!0,preventError:!0})}function nbSettingsSet(e){return a.request(nb,{operation:"settings_set",...e},{preventSuccess:!0,preventError:!0})}function nbControl(e){return a.request(nb,{operation:e},{preventSuccess:!0,preventError:!0})}function nbDelete(){return a.request(nb,{operation:"profile_delete"},{preventSuccess:!0,preventError:!0})}'
-FACTORY_HELPERS = 'const nb="/admin/netbird";function nbEnabled(e){return!!(e&&(e.enable===!0||e.enable==="on"||e.enable==="1"||e.enabled===!0))}function nbStatus(e){return a.request(nb,{operation:"status",...e},{preventSuccess:!0,preventError:!0})}async function nbDisableStockActive(){const e=globalThis.__nbActiveStockVpn;if(!e)return;const n={...e,enable:!1,enabled:!1};await a.update(y,{key:e.key},R(n),R(e),{preventSuccess:!0});globalThis.__nbActiveStockVpn=null}async function nbStopIfEnabled(){const e=await nbStatus();e&&e.profileExists&&e.settings&&e.settings.enable==="1"&&await nbControl("stop")}async function nbSettingsSet(e){nbEnabled(e)&&await nbDisableStockActive();return a.request(nb,{operation:"settings_set",...e},{preventSuccess:!0,preventError:!0})}async function nbControl(e){e==="start"&&await nbDisableStockActive();return a.request(nb,{operation:e},{preventSuccess:!0,preventError:!0})}function nbDelete(){return a.request(nb,{operation:"profile_delete"},{preventSuccess:!0,preventError:!0})}'
-DELETE_HELPER = 'const nb="/admin/netbird";function nbDelete(e){return a.request(nb,{operation:"profile_delete",profile_key:e},{preventSuccess:!0,preventError:!0})}'
+STOCK_CONNECTED_STATUS = 'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
+STOCK_UPDATE = 'async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}'
+STOCK_DELETE = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
+STOCK_LIST = 'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}'
+STOCK_SAVE = '"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
+
+NATIVE_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,type:u.Netbird,server:n,management_url:e.management_url||""};}'
+SYNTHETIC_KEY_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
+OLD_HOST_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).host}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
 
 
 def read_gz(name: str) -> str:
@@ -43,192 +47,125 @@ def write_gz(name: str, text: str) -> None:
 
 
 def check_js(name: str, text: str) -> None:
-    p = subprocess.run(["node", "--input-type=module", "--check"], input=text.encode(), capture_output=True)
-    if p.returncode:
-        raise RuntimeError(f"node --check failed for {name}:\n{p.stderr.decode()[:2000]}")
-
-
-def replace_once(text: str, old: str, new: str, label: str) -> str:
-    if new in text:
-        return text
-    count = text.count(old)
-    if count != 1:
-        raise RuntimeError(f"{label}: expected one occurrence, found {count}")
-    return text.replace(old, new, 1)
+    result = subprocess.run(
+        ["node", "--input-type=module", "--check"],
+        input=text.encode(),
+        capture_output=True,
+    )
+    if result.returncode:
+        raise RuntimeError(f"node --check failed for {name}:\n{result.stderr.decode()[:2000]}")
 
 
 def patch_update_store() -> None:
     name = "update-store-DQkZxaRI.js.gz"
     text = read_gz(name)
-    text = replace_once(text, 'e.Netbird="netbird"', 'e.Netbird="netbirdvpn"', "native NetBird enum")
+    text = text.replace('e.Netbird="netbird"', 'e.Netbird="netbirdvpn"')
+    if 'e.Netbird="netbirdvpn"' not in text:
+        raise RuntimeError("native NetBird enum netbirdvpn is missing")
     check_js(name, text)
     write_gz(name, text)
-
-
-def strip_hybrid_helpers(text: str) -> str:
-    old_delete_only = 'const nb="/admin/netbird";function nbDelete(){return a.request(nb,{operation:"profile_delete"},{preventSuccess:!0,preventError:!0})}'
-    if FACTORY_HELPERS in text:
-        text = text.replace(FACTORY_HELPERS, DELETE_HELPER, 1)
-    elif LEGACY_HELPERS in text:
-        text = text.replace(LEGACY_HELPERS, DELETE_HELPER, 1)
-    elif old_delete_only in text:
-        text = text.replace(old_delete_only, DELETE_HELPER, 1)
-    elif DELETE_HELPER not in text:
-        raise RuntimeError("native helpers: expected hybrid or delete-only helper block")
-
-    export_variants = (
-        ('j as z,nbStatus as nbA,nbSettingsSet as nbB,nbControl as nbD,nbDelete as nbF,nbStopIfEnabled as nbG};', 'j as z,nbDelete as nbF};'),
-        ('j as z,nbStatus as nbA,nbSettingsSet as nbB,nbControl as nbD,nbDelete as nbF};', 'j as z,nbDelete as nbF};'),
-    )
-    for old, new in export_variants:
-        text = text.replace(old, new)
-    return text
 
 
 def patch_model() -> None:
     name = "model-CI6Gt3Hz.js.gz"
     text = read_gz(name)
-    dedicated_status = 'function f(e){return e==="netbird"?a.request("/admin/netbird",{operation:"connected_status"},{preventSuccess:!0}):a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
-    stock_status = 'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
-    text = text.replace(dedicated_status, stock_status)
 
-    text, n = re.subn(
-        r'async function W\(e,n\)\{if\(e\.type===u\.Netbird\|\|n\.type===u\.Netbird\).*?await function\(e,n,t\)\{return a\.update\(y,\{key:e\},n,t,\{preventSuccess:!0\}\)\}\(e\.key,R\(e\),R\(n\)\)\}',
-        'async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}',
-        text,
-        count=1,
-    )
-    if n != 1 and 'async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}' not in text:
-        raise RuntimeError("native update: dedicated NetBird toggle path not found")
+    # Generic stock behavior is a hard architectural invariant.
+    for token in (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE):
+        if token not in text:
+            raise RuntimeError("TP-Link generic VPN model flow changed before NetBird finalization: " + token)
 
-    old_delete = 'async function J(e,n){if(e==="netbird"){await nbDelete();return}await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
-    key_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),e==="netbird"&&await nbDelete()}'
-    old_native_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete()}'
-    native_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete(e)}'
-    for old in (old_delete, key_delete, old_native_delete):
-        if old in text:
-            text = text.replace(old, native_delete, 1)
-            break
-    else:
-        if native_delete not in text:
-            stock_delete = 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
-            if stock_delete in text:
-                text = text.replace(stock_delete, native_delete, 1)
-            else:
-                raise RuntimeError("native delete: stock/dedicated delete path not found")
-
-    fixed_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,type:u.Netbird,server:n,management_url:e.management_url||""};}'
-    synthetic_key_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
-    old_host_serializer = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).host}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
-    marker = 'function R(e){'
-    if synthetic_key_serializer in text:
-        text = text.replace(synthetic_key_serializer, fixed_serializer, 1)
-    elif old_host_serializer in text:
-        text = text.replace(old_host_serializer, fixed_serializer, 1)
-    elif fixed_serializer not in text:
+    # Normalize historical native serializers, but never synthesize a profile
+    # key. The stock ADD path owns row identity and must be able to create more
+    # than one NetBird profile.
+    if SYNTHETIC_KEY_SERIALIZER in text:
+        text = text.replace(SYNTHETIC_KEY_SERIALIZER, NATIVE_SERIALIZER, 1)
+    elif OLD_HOST_SERIALIZER in text:
+        text = text.replace(OLD_HOST_SERIALIZER, NATIVE_SERIALIZER, 1)
+    elif NATIVE_SERIALIZER not in text:
+        marker = 'function R(e){'
         if text.count(marker) != 1:
             raise RuntimeError("native serializer: stock R(e) marker not unique")
-        text = text.replace(marker, fixed_serializer, 1)
+        text = text.replace(marker, NATIVE_SERIALIZER, 1)
 
-    text = strip_hybrid_helpers(text)
-    check_js(name, text)
-    write_gz(name, text)
-
-
-def patch_page() -> None:
-    name = "index-DTNtPvwx.js.gz"
-    text = read_gz(name)
-    stock_list = 'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}'
-    if stock_list not in text:
-        pattern = re.compile(r'i=async\(\)=>\{const\{data:e,maxRules:t\}=await J\(\);(?:globalThis\.__nbActiveStockVpn=.*?;)?let _nb=\[\];try\{.*?\}catch\(e\)\{\}a\.value=_nb\.concat\(e\),l\.value=t\}')
-        text, n = pattern.subn(stock_list, text, count=1)
-        if n != 1:
-            raise RuntimeError("native list: synthetic NetBird row path not found")
-
-    text = text.replace('it.Netbird===i.type?await Nbs(i):(i&&(i.enable===!0||i.enable==="on"||i.enable==="1"||i.enabled===!0)&&await NbStop(),"add"===n.type?await Ce(i):await ne(i,n.tableItem))', '"add"===n.type?await Ce(i):await ne(i,n.tableItem)')
-    text = text.replace('it.Netbird===i.type?await Nbs(i):"add"===n.type?await Ce(i):await ne(i,n.tableItem)', '"add"===n.type?await Ce(i):await ne(i,n.tableItem)')
-    text = text.replace('X as ze,nbA as Nbt,nbB as Nbs,nbG as NbStop}from"./model-CI6Gt3Hz.js"', 'X as ze}from"./model-CI6Gt3Hz.js"')
-    text = text.replace('X as ze,nbA as Nbt,nbB as Nbs}from"./model-CI6Gt3Hz.js"', 'X as ze}from"./model-CI6Gt3Hz.js"')
-    check_js(name, text)
-    write_gz(name, text)
-
-
-def patch_form() -> None:
-    name = "VpnServerNetbirdForm-NB.js.gz"
-    text = read_gz(name)
-    target = 'const existing = !!(value && (value.key || value.id));'
-    historical = (
-        'const existing = !!(value && (value.type === "netbirdvpn" || value.type === "netbird" || value.key === "netbird" || value.id === "netbird"));',
-        'const existing = !!(value && (value.key === "netbird" || value.id === "netbird"));',
+    # No auxiliary helper is allowed in the generic model bundle. Enrollment,
+    # diagnostics and identity maintenance live in the NetBird subform/backend,
+    # never in stock list/save/toggle/delete functions.
+    forbidden = (
+        'const nb="/admin/netbird"',
+        'function nbStatus(',
+        'function nbSettingsSet(',
+        'function nbControl(',
+        'function nbDelete(',
+        'operation:"settings_set"',
+        'e==="netbird"?a.request("/admin/netbird"',
+        'key:e.key||"netbird"',
     )
-    for old in historical:
-        text = text.replace(old, target)
-    text = text.replace('const creating = ref(false);', 'const creating = ref(true);')
-    if target not in text or 'const creating = ref(true);' not in text:
-        raise RuntimeError("native form: CREATE/EDIT persisted-key contract not installed")
+    leaked = [token for token in forbidden if token in text]
+    if leaked:
+        raise RuntimeError("custom NetBird bridge leaked into generic TP-Link model: " + ", ".join(leaked))
+
     check_js(name, text)
     write_gz(name, text)
 
 
-def assert_native(root: str) -> None:
-    update = read_gz("update-store-DQkZxaRI.js.gz")
-    model = read_gz("model-CI6Gt3Hz.js.gz")
+def assert_page_and_form() -> None:
     page = read_gz("index-DTNtPvwx.js.gz")
     form = read_gz("VpnServerNetbirdForm-NB.js.gz")
-    combined = update + "\n" + model + "\n" + page + "\n" + form
-    required = [
-        'e.Netbird="netbirdvpn"',
-        'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}',
-        'type:u.Netbird,server:n,management_url:e.management_url||""',
-        'new URL(n).hostname',
-        'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete(e)}',
-        'function nbDelete(e){return a.request(nb,{operation:"profile_delete",profile_key:e}',
-        'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}',
+
+    for token in (STOCK_LIST, STOCK_SAVE):
+        if token not in page:
+            raise RuntimeError("TP-Link generic VPN page flow changed: " + token)
+
+    required_page = (
+        'e===it.Netbird||ut.supportVpnClientType(e)',
+        'case it.Netbird:return VpnServerNetbirdForm',
+        'VpnServerNetbirdForm-NB.js?v=',
+    )
+    missing_page = [token for token in required_page if token not in page]
+    if missing_page:
+        raise RuntimeError("NetBird provider injection incomplete: " + ", ".join(missing_page))
+
+    required_form = (
         'const existing = !!(value && (value.key || value.id))',
         'const creating = ref(true)',
+        'const profileKey = ref("")',
+        'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
         'stockComponent(this, "su-form")',
         'stockComponent(this, "su-form-item")',
         'stockComponent(this, "su-input")',
         'stockComponent(this, "su-checkbox")',
-        's.advertise_lan === "1" && s.disable_server_routes !== "0"',
-        's.advertise_lan === "1" && s.disable_firewall !== "0"',
-        'draft.value.disable_firewall = "0"',
+        'profile_key: profileKey.value',
         'Permitir roteamento da LAN',
-    ]
-    missing = [x for x in required if x not in combined]
-    if missing:
-        raise RuntimeError("native NetBird CRUD/form contract incomplete: " + ", ".join(missing))
-    forbidden = [
-        'e==="netbird"?a.request("/admin/netbird",{operation:"connected_status"}',
-        'operation:"settings_set"',
-        'function nbSettingsSet(',
-        'function nbControl(',
+    )
+    missing_form = [token for token in required_form if token not in form]
+    if missing_form:
+        raise RuntimeError("native NetBird form contract incomplete: " + ", ".join(missing_form))
+
+    combined = page + "\n" + form
+    forbidden = (
         'a.value=_nb.concat(e)',
         'it.Netbird===i.type?await Nbs(i)',
-        'if(e==="netbird"){await nbDelete();return}',
-        'e==="netbird"&&await nbDelete()',
-        'new URL(n).host}',
-        'key:e.key||"netbird"',
-        'value.type === "netbirdvpn"',
-        "netbirdvpn-new",
-        "NETBIRD_CSS",
-        'type: "checkbox"',
-        'class: "netbird-input"',
-        'Anunciar rede local',
+        'window.__netbirdSaveDraft',
+        '__netbirdSaveListener',
+        'stopImmediatePropagation',
         'Já existe um perfil NetBird',
-    ]
-    leaked = [x for x in forbidden if x in combined]
+        'value.type === "netbirdvpn"',
+        '"label-width": { span: 10 }',
+    )
+    leaked = [token for token in forbidden if token in combined]
     if leaked:
-        raise RuntimeError("dedicated/singleton NetBird path remains after native migration: " + ", ".join(leaked))
+        raise RuntimeError("singleton/hybrid NetBird frontend path remains: " + ", ".join(leaked))
+
+    check_js("index-DTNtPvwx.js.gz", page)
+    check_js("VpnServerNetbirdForm-NB.js.gz", form)
 
 
 def main() -> None:
     patch_update_store()
     patch_model()
-    patch_page()
-    patch_form()
-    assert_native(ROOT)
-    print("Native NetBird finalization complete: stock multi-profile CRUD + profile-scoped cleanup + policy-safe routing")
+    assert_page_and_form()
+    print("Native NetBird finalized: only provider-specific serialization added; TP-Link generic CRUD remains stock")
 
 
 if __name__ == "__main__":
