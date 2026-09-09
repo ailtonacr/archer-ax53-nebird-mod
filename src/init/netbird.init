@@ -11,6 +11,7 @@ STOP=10
 
 . /lib/functions.sh
 . /lib/netbird/netbird.sh
+. /lib/netbird/netbird-profiles.sh
 . /lib/netbird/netbird-runtime.sh
 
 netbird_native_active() {
@@ -33,7 +34,9 @@ stop() {
     if netbird_native_active; then
         /etc/init.d/vpnc stop
     else
-        # Recovery-only orphan cleanup. No payload is downloaded by stop.
+        # Recovery-only orphan cleanup. Resolve the last/native interface
+        # profile before touching its profile-scoped identity/runtime state.
+        nb_profile_select_active >/dev/null 2>&1 || true
         nb_runtime_stop >/dev/null 2>&1 || true
     fi
 }
@@ -46,6 +49,4 @@ restart() {
     /etc/init.d/vpnc restart
 }
 
-reload() {
-    restart
-}
+reload() { restart; }
