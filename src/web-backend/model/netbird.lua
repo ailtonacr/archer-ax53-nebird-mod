@@ -1,4 +1,8 @@
 -- NetBird model for TP-Link Archer AX53 V1.
+--
+-- The stock vpn.server row is the profile authority. Runtime identity/settings
+-- are materialized per stock profile key so multiple NetBird profiles can be
+-- stored without sharing credentials or state.
 module("luci.model.netbird", package.seeall)
 
 local nixio = require "nixio"
@@ -11,7 +15,9 @@ local function shellquote(value)
     return "'" .. s:gsub("'", "'\\''") .. "'"
 end
 
-SETTINGS = "/tp_data/netbird/settings"
+ROOT     = "/tp_data/netbird"
+PROFILES = ROOT .. "/profiles"
+SETTINGS = ROOT .. "/settings" -- historical single-profile compatibility only
 CTL      = "/sbin/netbird-ctl"
 
 KEYS = {
@@ -31,9 +37,52 @@ KEYS = {
     wireguard_port        = { kind = "int",  default = "51820" },
 }
 
-local function read_settings()
+function valid_profile_key(profile_key)
+    local key = tostring(profile_key or "")
+    return key ~= "" and #key <= 96 and key:match("^[%w_.%-]+$") ~= nil
+end
+
+function profile_dir(profile_key)
+    if not valid_profile_key(profile_key) then return nil, "invalid profile key" end
+    return PROFILES .. "/" .. tostring(profile_key)
+end
+
+local function settings_path(profile_key)
+    if profile_key == nil or profile_key == "" then return SETTINGS end
+    local dir, err = profile_dir(profile_key)
+    if not dir then return nil, err end
+    return dir .. "/settings"
+end
+
+function profile_config_path(profile_key)
+    local dir, err = profile_dir(profile_key)
+    if not dir then return nil, err end
+    return dir .. "/default.json"
+end
+
+function profile_state_path(profile_key)
+    local dir, err = profile_dir(profile_key)
+    if not dir then return nil, err end
+    return dir .. "/state"
+end
+
+local function ensure_profile_dir(profile_key)
+    fs.mkdir(ROOT)
+    nixio.fs.chmod(ROOT, "0700")
+    if profile_key == nil or profile_key == "" then return ROOT end
+    local dir, err = profile_dir(profile_key)
+    if not dir then return nil, err end
+    fs.mkdir(PROFILES)
+    nixio.fs.chmod(PROFILES, "0700")
+    fs.mkdir(dir)
+    nixio.fs.chmod(dir, "0700")
+    return dir
+end
+
+local function read_settings(profile_key)
+    local path = settings_path(profile_key)
     local t = {}
-    local raw = fs.readfile(SETTINGS) or ""
+    local raw = path and fs.readfile(path) or ""
     for line in raw:gmatch("[^\r\n]+") do
         local k, v = line:match("^([%w_]+)=(.*)$")
         if k then t[k] = (v or ""):gsub("%s+$", "") end
@@ -41,8 +90,8 @@ local function read_settings()
     return t
 end
 
-function get_settings()
-    local cur, out = read_settings(), {}
+function get_settings(profile_key)
+    local cur, out = read_settings(profile_key), {}
     for k, spec in pairs(KEYS) do out[k] = cur[k] or spec.default end
     return out
 end
@@ -106,10 +155,10 @@ local function sanitize(cand, allow_readonly)
     return out
 end
 
-local function merged_settings(cand)
+local function merged_settings(cand, profile_key)
     local upd, err = sanitize(cand or {}, false)
     if not upd then return nil, err end
-    local cur = read_settings()
+    local cur = read_settings(profile_key)
     for k, v in pairs(upd) do cur[k] = v end
     for k, spec in pairs(KEYS) do if cur[k] == nil then cur[k] = spec.default end end
     if cur.advertise_lan == "1" and cur.advertise_cidr == "" then
@@ -124,35 +173,59 @@ local function merged_settings(cand)
     return cur
 end
 
-function preview_settings(cand)
-    return merged_settings(cand)
+function preview_settings(cand, profile_key)
+    return merged_settings(cand, profile_key)
 end
 
-local function write_settings(cur)
+local function write_settings(cur, profile_key)
+    local dir, err = ensure_profile_dir(profile_key)
+    if not dir then return nil, err end
+    local path, path_err = settings_path(profile_key)
+    if not path then return nil, path_err end
     local lines = {}
     for k, spec in pairs(KEYS) do lines[#lines + 1] = k .. "=" .. (cur[k] or spec.default) end
-    fs.mkdir("/tp_data/netbird")
-    nixio.fs.chmod("/tp_data/netbird", "0700")
-    if not fs.writefile(SETTINGS, table.concat(lines, "\n") .. "\n") then return nil, "failed to write settings" end
-    nixio.fs.chmod(SETTINGS, "0600")
-    return get_settings()
+    if not fs.writefile(path, table.concat(lines, "\n") .. "\n") then return nil, "failed to write settings" end
+    nixio.fs.chmod(path, "0600")
+    return get_settings(profile_key)
 end
 
-function set_settings(cand)
-    local cur, err = merged_settings(cand)
+function set_settings(cand, profile_key)
+    if profile_key ~= nil and profile_key ~= "" and not valid_profile_key(profile_key) then
+        return nil, "invalid profile key"
+    end
+    local cur, err = merged_settings(cand, profile_key)
     if not cur then return nil, err end
-    return write_settings(cur)
+    return write_settings(cur, profile_key)
 end
 
-function set_internal_settings(cand)
+function set_internal_settings(cand, profile_key)
+    if profile_key ~= nil and profile_key ~= "" and not valid_profile_key(profile_key) then
+        return nil, "invalid profile key"
+    end
     local allowed = {}
     if cand and cand.enrolled ~= nil then allowed.enrolled = cand.enrolled end
     if cand and cand.enable ~= nil then allowed.enable = cand.enable end
     local upd, err = sanitize(allowed, true)
     if not upd then return nil, err end
-    local cur = read_settings()
+    local cur = read_settings(profile_key)
     for k, v in pairs(upd) do cur[k] = v end
-    return write_settings(cur)
+    for k, spec in pairs(KEYS) do if cur[k] == nil then cur[k] = spec.default end end
+    return write_settings(cur, profile_key)
+end
+
+function identity_present(profile_key)
+    local path = profile_config_path(profile_key)
+    if not path then return false end
+    local raw = fs.readfile(path) or ""
+    return raw:match("%S") ~= nil
+end
+
+function remove_profile_state(profile_key)
+    local dir, err = profile_dir(profile_key)
+    if not dir then return nil, err end
+    local rc = sys.call("rm -rf " .. shellquote(dir))
+    if rc ~= 0 then return nil, "failed to remove profile state" end
+    return true
 end
 
 local function run(...)
@@ -168,8 +241,31 @@ local function run_ex(...)
     return out:gsub("%s*RC=%d+%s*$", ""), rc
 end
 
-function status()
-    local out = run("status")
+local function profile_args(profile_key, ...)
+    local args = {}
+    if profile_key and profile_key ~= "" then
+        if not valid_profile_key(profile_key) then return nil end
+        args[#args + 1] = "--profile-key"
+        args[#args + 1] = profile_key
+    end
+    for i = 1, select("#", ...) do args[#args + 1] = select(i, ...) end
+    return args
+end
+
+local function run_profile(profile_key, ...)
+    local args = profile_args(profile_key, ...)
+    if not args then return "" end
+    return run(unpack(args))
+end
+
+local function run_profile_ex(profile_key, ...)
+    local args = profile_args(profile_key, ...)
+    if not args then return "invalid profile key", 2 end
+    return run_ex(unpack(args))
+end
+
+function status(profile_key)
+    local out = run_profile(profile_key, "status")
     if out and out ~= "" then local ok, obj = pcall(json.decode, out); if ok and type(obj) == "table" then return obj end end
     return nil
 end
@@ -180,8 +276,8 @@ local function management_host(url)
     return authority:match("^([^:]+)") or authority
 end
 
-function connected_status()
-    local settings = get_settings()
+function connected_status(profile_key)
+    local settings = get_settings(profile_key)
     local host = management_host(settings.management_url)
     local ping = ""
     if host ~= "" then
@@ -189,20 +285,16 @@ function connected_status()
         local ms = out:match("time[=<]([%d%.]+)%s*ms")
         if ms then ping = tonumber(ms) or ms end
     end
-    return {
-        ping = ping,
-        address = host,
-        dns = "",
-    }
+    return { ping = ping, address = host, dns = "" }
 end
 
-function control(op, keyfile)
-    if op == "enroll" then return run_ex("up", "--setup-key-file", keyfile)
-    elseif op == "start" or op == "up" then return run_ex("up")
-    elseif op == "stop" then return run_ex("stop")
-    elseif op == "down" then return run_ex("down")
-    elseif op == "restart" then return run_ex("restart")
-    elseif op == "clean" then return run_ex("clean") end
+function control(op, profile_key, keyfile)
+    if op == "enroll" then return run_profile_ex(profile_key, "up", "--setup-key-file", keyfile)
+    elseif op == "start" or op == "up" then return run_profile_ex(profile_key, "up")
+    elseif op == "stop" then return run_profile_ex(profile_key, "stop")
+    elseif op == "down" then return run_profile_ex(profile_key, "down")
+    elseif op == "restart" then return run_profile_ex(profile_key, "restart")
+    elseif op == "clean" then return run_profile_ex(profile_key, "clean") end
     return nil, nil
 end
 function log(n) local lines=tonumber(n) or 100; if lines<1 then lines=100 end; if lines>500 then lines=500 end; return run("log",tostring(lines)) or "" end
