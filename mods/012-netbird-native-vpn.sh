@@ -11,7 +11,7 @@
 #
 # Generic list/ADD/EDIT/Save/toggle/DELETE/connected-status remain stock.
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 R="${ROOTFS_DIR:-$PROJECT_ROOT/rootfs}"
 case "$R" in /*) ;; *) R="$PROJECT_ROOT/$R" ;; esac
