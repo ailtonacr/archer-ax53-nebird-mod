@@ -149,7 +149,13 @@ nb_legacy_profile_find_section() {
 }
 
 nb_legacy_profile_allocate_section() {
-    local base="netbird_legacy" section="$base" n=0
+    # Keep declaration and dependent assignments separate. With `set -u`, dash
+    # expands all arguments to `local` before applying its assignments, so
+    # `local base=... section="$base"` dereferences an unset variable.
+    local base section n
+    base="netbird_legacy"
+    section="$base"
+    n=0
     while uci -q get "vpn.$section" >/dev/null 2>&1; do
         n=$((n + 1))
         section="${base}${n}"
