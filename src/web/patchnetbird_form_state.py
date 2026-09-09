@@ -2,8 +2,8 @@
 """Validate CREATE/EDIT semantics authored directly in the NetBird subform.
 
 A NetBird type value exists in both Add and Edit. Only a persisted stock key/id
-may switch the protocol subform to Edit mode. This stage intentionally performs
-no rewrite: source and shipped semantics must stay identical.
+may switch the protocol subform to Edit mode. Generic profile identity/enabled
+state remains owned by the TP-Link outer dialog; this stage performs no rewrite.
 """
 from __future__ import annotations
 
@@ -22,9 +22,12 @@ required = [
     "const creating = ref(true)",
     "const existing = !!(value && (value.key || value.id))",
     "creating.value = !existing",
+    'profileKey.value = existing ? String(value.key || value.id) : ""',
     'draft.value.enable = "0"',
     'draft.value.enrolled = "0"',
-    'creating.value && profileExists.value',
+    'if (!profileKey.value || creating.value || statusRequestPending) return',
+    'creating.value || !profileKey.value || !profileExists.value',
+    'Return protocol-specific fields only',
     's.advertise_lan === "1" && s.disable_server_routes !== "0"',
     's.advertise_lan === "1" && s.disable_firewall !== "0"',
     'draft.value.disable_firewall = "0"',
@@ -32,20 +35,22 @@ required = [
 ]
 missing = [token for token in required if token not in text]
 if missing:
-    raise RuntimeError("native CREATE/EDIT/routing contract incomplete: " + ", ".join(missing))
+    raise RuntimeError("native CREATE/EDIT/provider boundary incomplete: " + ", ".join(missing))
 
 forbidden = [
     'value.type === "netbirdvpn"',
     'value.type === "netbird"',
     "const creating = ref(false)",
     'Anunciar rede local',
+    'Já existe um perfil NetBird',
+    'enable: s.enable === "1" ? "on" : "off"',
 ]
 leaked = [token for token in forbidden if token in text]
 if leaked:
-    raise RuntimeError("type-derived/misleading NetBird form semantics leaked: " + ", ".join(leaked))
+    raise RuntimeError("generic/type-derived NetBird form semantics leaked: " + ", ".join(leaked))
 
 check = subprocess.run(["node", "--input-type=module", "--check"], input=text.encode(), capture_output=True)
 if check.returncode:
     raise RuntimeError("node --check failed for NetBird form:\n" + check.stderr.decode()[:2000])
 
-print("NetBird CREATE/EDIT and ACL-safe routing source contract verified")
+print("NetBird stock-owned CREATE/EDIT + protocol-only form contract verified")
