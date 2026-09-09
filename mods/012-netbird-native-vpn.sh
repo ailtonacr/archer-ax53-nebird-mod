@@ -7,12 +7,9 @@
 #   - provider-specific frontend subform/serialization
 #   - netifd proto=netbird + runtime
 #   - profile-scoped enrollment/identity/diagnostics
-#   - one-shot migration/maintenance for legacy identity
-#   - provider identity cleanup only AFTER stock DELETE succeeds
+#   - one-shot provider migration/maintenance for legacy identity
 #
-# Generic list/ADD/EDIT/Save/toggle/connected-status remain stock. DELETE keeps
-# the exact stock remove call and appends only the unavoidable NetBird identity
-# cleanup post-hook.
+# Generic list/ADD/EDIT/Save/toggle/DELETE/connected-status remain stock.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -103,7 +100,7 @@ grep -q 'native.install()' "$R/usr/lib/lua/luci/controller/admin/netbird_native.
 grep -Fq 'if [ "$vpntype" != "netbirdvpn" ]; then' "$VPN_CORE"
 
 # /admin/netbird may expose only provider-specific operations. Generic writable
-# profile configuration must never be duplicated there.
+# profile configuration and generic CRUD/status must never be duplicated there.
 if grep -Fq 'elseif op == "settings_set"' "$NB_AUX_CONTROLLER"; then
   echo "Error: auxiliary /admin/netbird still exposes writable settings_set" >&2
   exit 1
@@ -114,19 +111,15 @@ grep -q 'requested_profile_key' "$NB_AUX_CONTROLLER" || {
 grep -q 'local function op_enroll' "$NB_AUX_CONTROLLER" || {
   echo "Error: profile-scoped NetBird enrollment endpoint missing" >&2; exit 1;
 }
-grep -q 'local function op_profile_delete' "$NB_AUX_CONTROLLER" || {
-  echo "Error: provider identity cleanup endpoint missing" >&2; exit 1;
-}
 
 # Profile-scoped persistence + legacy adoption/maintenance. A historical client
-# is converted into a real vpn.server row. Normal UI deletion removes the stock
-# row first and then provider identity; GC remains only a recovery fallback.
+# is converted into a real vpn.server row. TP-Link owns deletion; orphaned
+# provider identity is garbage-collected independently from generic CRUD.
 cmp -s "$PROFILE_HELPER" "$R/lib/netbird/netbird-profiles.sh" || { echo "Error: packaged profile helper drifted" >&2; exit 1; }
 cmp -s "$PROFILE_MIGRATE_INIT" "$R/etc/init.d/netbird-profile-migrate" || { echo "Error: packaged profile migration init drifted" >&2; exit 1; }
 grep -q '^nb_profile_select()' "$R/lib/netbird/netbird-profiles.sh"
 grep -q '^nb_profile_stock_exists()' "$R/lib/netbird/netbird-profiles.sh"
 grep -q '^nb_profile_gc_orphans()' "$R/lib/netbird/netbird-profiles.sh"
-grep -q '^nb_legacy_mark_profile_deleted()' "$R/lib/netbird/netbird-profiles.sh"
 grep -q '^nb_legacy_profile_adopt()' "$R/lib/netbird/netbird-profiles.sh"
 grep -Fq 'vpn.$section.type=netbirdvpn' "$R/lib/netbird/netbird-profiles.sh"
 grep -Fq 'profile_key=$section' "$R/lib/netbird/netbird-profiles.sh"
@@ -159,7 +152,7 @@ if grep -Ev '^[[:space:]]*#' "$R/lib/netifd/proto/netbird.sh" | grep -q '/sbin/n
   exit 1
 fi
 if grep -q 'proto_set_available' "$R/lib/netifd/proto/netbird.sh"; then
-  echo "Error: transient NetBird connection failure changes protocol availability" >&2
+  echo "Error: transient NetBird failure changes protocol availability" >&2
   exit 1
 fi
 PROTO_SETUP="$(sed -n '/^proto_netbird_setup()/,/^proto_netbird_teardown()/p' "$R/lib/netifd/proto/netbird.sh")"
@@ -181,8 +174,8 @@ printf '%s\n' "$NB_FW_CANONICAL" | grep -Fq 'fw_s_add 4 f FORWARD ACCEPT { "-i w
   exit 1
 }
 
-# Final frontend contract. Generic functions remain stock except that DELETE
-# appends one provider cleanup call after the exact stock remove succeeds.
+# Final frontend contract: provider injection/serialization only. Every generic
+# TP-Link function remains unchanged.
 UPDATE_JS="$(zcat "$R/www/webpages/js/update-store-DQkZxaRI.js.gz")"
 MODEL_JS="$(zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz")"
 PAGE_JS="$(zcat "$R/www/webpages/js/index-DTNtPvwx.js.gz")"
@@ -191,8 +184,7 @@ FORM_JS="$(zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz")"
 printf '%s' "$UPDATE_JS" | grep -Fq 'e.Netbird="netbirdvpn"'
 printf '%s' "$MODEL_JS" | grep -Fq 'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
 printf '%s' "$MODEL_JS" | grep -Fq 'async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}'
-printf '%s' "$MODEL_JS" | grep -Fq 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n),await nbDelete(e)}'
-printf '%s' "$MODEL_JS" | grep -Fq 'function nbDelete(e){return a.request(nb,{operation:"profile_delete",profile_key:e}'
+printf '%s' "$MODEL_JS" | grep -Fq 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
 printf '%s' "$MODEL_JS" | grep -Fq 'new URL(n).hostname'
 printf '%s' "$PAGE_JS" | grep -Fq 'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}'
 printf '%s' "$PAGE_JS" | grep -Fq '"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
@@ -208,9 +200,12 @@ for forbidden in \
   'key:e.key||"netbird"' \
   'Já existe um perfil NetBird' \
   'a.value=_nb.concat(e)' \
+  'const nb="/admin/netbird"' \
   'operation:"settings_set"' \
+  'operation:"profile_delete"' \
   'function nbSettingsSet(' \
   'function nbControl(' \
+  'function nbDelete(' \
   'value.type === "netbirdvpn"' \
   '"label-width": { span: 10 }' \
   '__nbActiveStockVpn' \
@@ -223,9 +218,5 @@ do
   fi
 done
 
-[ "$(printf '%s' "$MODEL_JS" | grep -Fo 'const nb="/admin/netbird"' | wc -l | tr -d ' ')" = "1" ] || {
-  echo "Error: provider delete cleanup is not the sole generic-model /admin/netbird helper" >&2; exit 1;
-}
-
 python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"
-echo "### NetBird native TP-Link VPN registration complete: stock flow + provider cleanup hook ###"
+echo "### NetBird native TP-Link VPN registration complete: generic flow fully stock ###"
