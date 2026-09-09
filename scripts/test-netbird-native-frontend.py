@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Hermetic offline checks for the native NetBird frontend/finalizer contract.
+"""Hermetic source checks for the stock-owned NetBird frontend integration.
 
-This test intentionally does not read rootfs/. `make firmware` recreates rootfs
-from the selected STOCK image only after the offline test target runs, so using a
-mutable repository rootfs here made the gate depend on leftovers from an older
-build. Final generated bundles are validated later by the pre-repack checks.
+The firmware may add a NetBird provider and protocol subform, but generic
+TP-Link VPN Client behavior must not be replaced. Generated rootfs bundles are
+validated again during `make firmware` after mods are applied.
 """
 from __future__ import annotations
 
@@ -13,66 +12,100 @@ import subprocess
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FORM = ROOT / "src" / "web" / "VpnServerNetbirdForm-NB.js"
-PATCHER = ROOT / "src" / "web" / "patchnetbird_native_crud.py"
+WEB_PATCHER = ROOT / "src" / "web" / "patchnetbird_web.py"
+FINALIZER = ROOT / "src" / "web" / "patchnetbird_native_crud.py"
+FACTORY_GUARD = ROOT / "src" / "web" / "patchnetbird_factory_semantics.py"
+
+
+def require(body: str, *tokens: str) -> None:
+    for token in tokens:
+        assert token in body, f"contract missing {token!r}"
 
 
 def main() -> int:
     form = FORM.read_text(encoding="utf-8")
-    patcher = PATCHER.read_text(encoding="utf-8")
+    web = WEB_PATCHER.read_text(encoding="utf-8")
+    finalizer = FINALIZER.read_text(encoding="utf-8")
+    factory = FACTORY_GUARD.read_text(encoding="utf-8")
 
-    required_form = [
+    require(
+        form,
         'const creating = ref(true)',
         'const existing = !!(value && (value.key || value.id))',
+        'const profileKey = ref("")',
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
         'stockComponent(this, "su-form")',
         'stockComponent(this, "su-form-item")',
         'stockComponent(this, "su-input")',
         'stockComponent(this, "su-checkbox")',
-        'stockComponent(this, "su-button")',
-        'key === "advertise_lan" && value === "1"',
-        'draft.value.disable_server_routes = "0"',
-        'draft.value.disable_firewall = "0"',
-        's.advertise_lan === "1" && s.disable_server_routes !== "0"',
-        's.advertise_lan === "1" && s.disable_firewall !== "0"',
+        'profile_key: profileKey.value',
         'Permitir roteamento da LAN',
-    ]
-    for token in required_form:
-        assert token in form, f"authored final form missing {token!r}"
-
-    forbidden_form = [
+        'Return protocol-specific fields only',
+    )
+    for token in (
         'value.type === "netbirdvpn"',
         'value.type === "netbird"',
         'const creating = ref(false)',
-        "NETBIRD_CSS",
+        'NETBIRD_CSS',
         'type: "checkbox"',
         'class: "netbird-input"',
         'Anunciar rede local',
-    ]
-    for token in forbidden_form:
-        assert token not in form, f"legacy/type-derived form token leaked: {token!r}"
+        'Já existe um perfil NetBird',
+        'enable: s.enable === "1" ? "on" : "off"',
+    ):
+        assert token not in form, f"generic/singleton field leaked into provider form: {token!r}"
 
-    required_patcher = [
+    # Initial provider injection is intentionally minimal and verifies the model
+    # is stock before doing anything to the page.
+    require(
+        web,
         'e.Netbird="netbirdvpn"',
-        'new URL(n).hostname',
-        'const existing = !!(value && (value.key || value.id))',
-        'const creating = ref(true)',
-        'function nbDelete(){return a.request(nb,{operation:"profile_delete"}',
-        'DELETE_HELPER =',
-        'strip_hybrid_helpers',
-        's.advertise_lan === "1" && s.disable_firewall !== "0"',
-        'Permitir roteamento da LAN',
-        'operation:"settings_set"',
-        'function nbSettingsSet(',
-    ]
-    for token in required_patcher:
-        assert token in patcher, f"native finalizer missing {token!r}"
+        'assert_stock_model_untouched',
+        'STOCK_CONNECTED_STATUS',
+        'STOCK_UPDATE',
+        'STOCK_DELETE',
+        'STOCK_LIST',
+        'STOCK_SAVE',
+        'case it.Netbird:return VpnServerNetbirdForm',
+        'VpnServerNetbirdForm-NB.js?v=',
+        'hashlib.sha256',
+        'generic TP-Link VPN CRUD remains stock',
+    )
 
-    # settings_set/control helpers may exist only as intermediate strings that
-    # the finalizer removes. assert_native must reject them in the final bundle.
-    assert "forbidden = [" in patcher
-    assert "'operation:\"settings_set\"'" in patcher
-    assert "'function nbSettingsSet('" in patcher
-    assert "'function nbControl('" in patcher
+    # Finalizer may extend only the serializer; it must retain exact stock
+    # list/update/delete/status functions and reject the historical bridges.
+    require(
+        finalizer,
+        'NATIVE_SERIALIZER =',
+        'type:u.Netbird,server:n,management_url:e.management_url||""',
+        'new URL(n).hostname',
+        'STOCK_CONNECTED_STATUS',
+        'STOCK_UPDATE',
+        'STOCK_DELETE',
+        'STOCK_LIST',
+        'STOCK_SAVE',
+        'VpnServerNetbirdForm-NB.js?v=',
+        'key:e.key||"netbird"',
+        'function nbSettingsSet(',
+        'function nbControl(',
+        'function nbDelete(',
+    )
+    assert 'DELETE_HELPER =' not in finalizer
+    assert 'native_delete =' not in finalizer
+    assert 'await nbDelete(' not in finalizer
+
+    # The historical factory-semantics mutator is now a pure guard.
+    require(
+        factory,
+        'TP-Link generic VPN list/add/edit/save/toggle/delete/status semantics remain stock',
+        'STOCK_CONNECTED_STATUS',
+        'STOCK_UPDATE',
+        'STOCK_DELETE',
+        'STOCK_LIST',
+        'STOCK_SAVE',
+    )
+    assert 'def patch_model()' not in factory
+    assert 'def patch_page()' not in factory
 
     subprocess.run(
         ["node", "--input-type=module", "--check"],
@@ -80,7 +113,7 @@ def main() -> int:
         check=True,
     )
 
-    print("netbird hermetic authored-form/finalizer policy-safe-routing contract ok")
+    print("netbird provider-only frontend/stock-flow source contract ok")
     return 0
 
 
