@@ -76,16 +76,11 @@ proto_netbird_setup() {
         return 1
     fi
 
-    # netbird is accepted only as a migration alias for profiles produced by the
-    # earlier hybrid implementation. New native profiles are always netbirdvpn.
-    case "$vpntype" in
-        netbirdvpn|netbird) ;;
-        *)
-            echo "netbird: unexpected vpntype=$vpntype" >/dev/console
-            proto_setup_failed "$config"
-            return 1
-            ;;
-    esac
+    if [ "$vpntype" != "netbirdvpn" ]; then
+        echo "netbird: unexpected vpntype=$vpntype" >/dev/console
+        proto_setup_failed "$config"
+        return 1
+    fi
 
     if ! netbird_select_config_profile "$config"; then
         proto_notify_error "$config" PROFILE_REQUIRED
@@ -125,7 +120,7 @@ proto_netbird_teardown() {
     local config="$1"
     echo "netbird: netifd teardown start ($config)" >/dev/console
     # Teardown may run in a fresh shell, so re-select the exact profile from the
-    # interface JSON before removing identity-scoped runtime/firewall state.
+    # interface JSON before removing profile-scoped runtime/firewall state.
     netbird_select_config_profile "$config" >/dev/null 2>&1 || nb_profile_select_active >/dev/null 2>&1 || true
     nb_runtime_stop >/dev/null 2>&1 || true
     netbird_publish_down "$config"
