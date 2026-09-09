@@ -1,10 +1,10 @@
--- NetBird runtime/identity controller for TP-Link Archer AX53 V1.
+-- NetBird provider-specific controller for TP-Link Archer AX53 V1.
 --
--- Generic profile CRUD/list/toggle/connected-status is owned by the stock
--- /admin/vpn?form=server endpoint for type=netbirdvpn. This endpoint remains
--- only for NetBird-specific concerns that the generic VPN contract cannot own:
--- per-profile enrollment, runtime diagnostics/logs/payload state, identity
--- cleanup and a manual restart action delegated to native vpnc/netifd.
+-- Generic profile list/CRUD/toggle/connected-status is owned exclusively by the
+-- stock /admin/vpn?form=server endpoint for type=netbirdvpn. This endpoint owns
+-- only behavior TP-Link cannot implement generically: profile-scoped NetBird
+-- enrollment, runtime diagnostics/logs/payload state and an explicit restart
+-- delegated back to the native vpnc/netifd lifecycle.
 module("luci.controller.admin.netbird", package.seeall)
 
 local nixio = require "nixio"
@@ -84,10 +84,6 @@ local function native_profile(profile_key)
     return found
 end
 
-local function native_profile_exists(profile_key)
-    return native_profile(profile_key) ~= nil
-end
-
 local function active_profile_key()
     local key = uci:get("network", "vpn", "profile_key")
     if key and model.valid_profile_key(key) then return key end
@@ -112,8 +108,8 @@ local function ensure_profile_key_option(profile_key, profile)
     return profile
 end
 
--- vpn/server is authoritative. The profile-scoped settings file is only a
--- materialized runtime view consumed by the existing shell/runtime.
+-- vpn.server is authoritative. The profile-scoped settings file is only a
+-- materialized runtime view consumed by the NetBird protocol implementation.
 local function sync_settings_from_native_profile(profile_key)
     local profile = native_profile(profile_key)
     if not profile then return nil, "native NetBird VPN profile not found" end
@@ -201,22 +197,8 @@ local function empty_netbird_status()
 end
 
 local function op_status(body)
-    local profile_key, key_err = requested_profile_key(body, false)
-    if key_err then return error_reply("bad_request", key_err) end
-
-    -- Add mode has no stock key yet. Return defaults only; another NetBird row
-    -- must never make creation look like editing or block a second profile.
-    if not profile_key then
-        return reply({
-            code = "disabled",
-            settings = model.get_settings(nil),
-            netbird = empty_netbird_status(),
-            profileExists = false,
-            profileKey = "",
-            traffic = traffic_sample(false),
-            payload = { version = model.payload_version(), state = model.payload_state(), provisioned = model.payload_ok() },
-        })
-    end
+    local profile_key, key_err = requested_profile_key(body, true)
+    if not profile_key then return error_reply("bad_request", key_err) end
 
     local profile = native_profile(profile_key)
     if not profile then
@@ -261,54 +243,16 @@ local function op_status(body)
     })
 end
 
-local function op_connected_status(body)
-    local profile_key, err = requested_profile_key(body, false)
-    if err then return error_reply("bad_request", err) end
-    return reply(model.connected_status(profile_key))
-end
-
-local function op_settings_get(body)
-    local profile_key, err = requested_profile_key(body, false)
-    if err then return error_reply("bad_request", err) end
-    return reply({ settings = model.get_settings(profile_key), profileExists = profile_key and native_profile_exists(profile_key) or false })
-end
-
--- Called after successful stock DELETE. Cleanup is keyed to the deleted stock
--- row, so removing one NetBird profile cannot destroy another profile's identity.
--- Calling it for a non-NetBird stock key is harmless because no profile-scoped
--- NetBird directory exists for that key.
-local function op_profile_delete(body)
-    local profile_key, key_err = requested_profile_key(body, true)
-    if not profile_key then return error_reply("bad_request", key_err) end
-    if native_profile_exists(profile_key) then
-        return reply({ result = "skipped", profileExists = true, profileKey = profile_key })
-    end
-
-    local active = native_profile_active(profile_key) or active_profile_key() == profile_key
-    if active then
-        local _, clean_rc = model.control("clean", profile_key)
-        if clean_rc ~= 0 then return error_reply("delete_failed", "failed to stop active NetBird profile") end
-    end
-
-    local dir = model.profile_dir(profile_key)
-    if not dir or not lfs.access(dir) then
-        return reply({ result = "noop", profileExists = false, profileKey = profile_key })
-    end
-    local removed, remove_err = model.remove_profile_state(profile_key)
-    if not removed then return error_reply("delete_failed", remove_err) end
-    return reply({ result = "ok", profileExists = false, profileKey = profile_key })
-end
-
 local function op_enroll(body)
     local profile_key, key_err = requested_profile_key(body, true)
     if not profile_key then return error_reply("bad_request", key_err) end
     local key = request_value(body, "setup_key")
     if not key or key == "" then return error_reply("bad_request", "setup key required") end
-    if not native_profile_exists(profile_key) then return error_reply("profile_required", "save the NetBird VPN profile before enrollment") end
+    if not native_profile(profile_key) then return error_reply("profile_required", "save the NetBird VPN profile before enrollment") end
 
     -- Enrollment temporarily starts the NetBird daemon. Do not disturb another
     -- active TP-Link VPN Client profile. Re-enrolling the currently active row
-    -- is also explicit: turn it off first, then enroll, then turn it on again.
+    -- is explicit: turn it off first, enroll, then use the stock toggle again.
     if uci:get("vpn", "client", "enabled") == "on" then
         return error_reply("active_conflict", "disable the active VPN Client profile before NetBird enrollment")
     end
@@ -340,19 +284,10 @@ local function op_restart(body)
     return reply({ result = "ok", profileKey = profile_key })
 end
 
-local function op_clean(body)
+local function op_log(body)
     local profile_key, key_err = requested_profile_key(body, true)
     if not profile_key then return error_reply("bad_request", key_err) end
-    if native_profile_active(profile_key) then
-        local _, rc = model.control("clean", profile_key)
-        if rc ~= 0 then return error_reply("control_failed", "NetBird clean failed") end
-    end
-    local removed, remove_err = model.remove_profile_state(profile_key)
-    if not removed then return error_reply("control_failed", remove_err) end
-    return reply({ result = "ok", profileKey = profile_key })
-end
-
-local function op_log(body)
+    if not native_profile(profile_key) then return error_reply("profile_required", "native NetBird VPN profile not found") end
     local n = request_value(body, "lines") or "100"
     return reply({ lines = model.log(tonumber(n) or 100) })
 end
@@ -365,12 +300,8 @@ function dispatch(body)
     local op = request_value(body, "operation") or "status"
     local ok_dispatch, result = pcall(function()
         if op == "status" then return op_status(body)
-        elseif op == "connected_status" then return op_connected_status(body)
-        elseif op == "settings_get" then return op_settings_get(body)
-        elseif op == "profile_delete" then return op_profile_delete(body)
         elseif op == "enroll" then return op_enroll(body)
         elseif op == "restart" then return op_restart(body)
-        elseif op == "clean" then return op_clean(body)
         elseif op == "log" then return op_log(body)
         elseif op == "payload_status" then return op_payload_status()
         else return error_reply("bad_request", "unknown operation") end
