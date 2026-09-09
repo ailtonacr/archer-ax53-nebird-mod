@@ -1,7 +1,12 @@
 #!/bin/sh /etc/rc.common
-# One-shot migration of the historical single NetBird identity into a native
-# TP-Link vpn.server row. This service never starts/stops NetBird; it only makes
-# an already-installed legacy client visible in the stock VPN Client list.
+# One-shot maintenance for native NetBird profiles.
+#
+# 1. Adopt the historical single NetBird identity into a real TP-Link vpn.server
+#    row so an already-installed client appears in the stock VPN Client list.
+# 2. Garbage-collect profile-scoped NetBird identities whose authoritative stock
+#    vpn.server row no longer exists. Generic DELETE itself remains untouched.
+#
+# This service never starts/stops NetBird.
 
 START=89
 STOP=12
@@ -17,6 +22,10 @@ start() {
 
     if ! nb_legacy_profile_adopt; then
         echo "netbird: legacy profile adoption failed" >/dev/console 2>&1
+        return 1
+    fi
+    if ! nb_profile_gc_orphans; then
+        echo "netbird: orphan profile cleanup failed" >/dev/console 2>&1
         return 1
     fi
     return 0
