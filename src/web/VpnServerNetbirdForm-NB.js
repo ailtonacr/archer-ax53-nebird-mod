@@ -62,19 +62,16 @@ function validManagementUrl(value) {
     return (u.protocol === "https:" || u.protocol === "http:") && !!u.hostname;
   } catch (_) { return false; }
 }
-
 function validHostname(value) {
   const s = String(value || "");
   return s.length <= 64 && /^[A-Za-z0-9._-]*$/.test(s);
 }
-
 function validWireGuardPort(value) {
   const raw = String(value || "").trim();
   if (!/^\d+$/.test(raw)) return false;
   const n = Number(raw);
   return Number.isInteger(n) && n >= 1 && n <= 65535;
 }
-
 function validCidr(value) {
   const m = String(value || "").match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/);
   if (!m) return false;
@@ -104,7 +101,6 @@ function componentCandidates(name) {
   const pascal = camel.charAt(0).toUpperCase() + camel.slice(1);
   return [name, camel, pascal];
 }
-
 function stockComponent(vm, name) {
   const internal = vm && vm.$;
   const local = internal && internal.type && internal.type.components || {};
@@ -115,7 +111,6 @@ function stockComponent(vm, name) {
   }
   throw new Error("Componente TP-Link não registrado: " + name);
 }
-
 function textSlot(text) { return { default: () => String(text == null ? "" : text) }; }
 
 export default defineComponent({
@@ -130,6 +125,7 @@ export default defineComponent({
     const payload = ref({});
     const traffic = ref({ uploadSpeed: 0, downloadSpeed: 0 });
     const profileExists = ref(false);
+    const profileKey = ref("");
     const setupKey = ref("");
     const log = ref("");
     const busy = ref(false);
@@ -144,9 +140,6 @@ export default defineComponent({
 
     function updateDraft(key, value) {
       draft.value[key] = value;
-      // Routing-peer mode needs server routes from management AND NetBird's own
-      // firewall so Route ACL policy remains authoritative. Enabling LAN routing
-      // therefore enables both prerequisites in the same draft transaction.
       if (key === "advertise_lan" && value === "1") {
         draft.value.disable_server_routes = "0";
         draft.value.disable_firewall = "0";
@@ -160,7 +153,8 @@ export default defineComponent({
       if (statusRequestPending) return;
       statusRequestPending = true;
       try {
-        const r = await nbReq("status");
+        const extra = profileKey.value ? { profile_key: profileKey.value } : {};
+        const r = await nbReq("status", extra);
         settings.value = r.settings || settings.value || {};
         profileExists.value = !!r.profileExists;
         if (!dirty.value && !creating.value) {
@@ -178,12 +172,15 @@ export default defineComponent({
     }
 
     async function enroll() {
-      if (creating.value && profileExists.value) { error.value = "Já existe um perfil NetBird. Exclua-o antes de criar outro."; return; }
+      if (creating.value || !profileKey.value || !profileExists.value) {
+        error.value = "Salve o perfil primeiro e depois abra Editar para fazer o enrollment.";
+        return;
+      }
       if (!setupKey.value) return;
-      if (!profileExists.value || dirty.value) { error.value = "Salve o perfil antes de fazer o enrollment."; return; }
+      if (dirty.value) { error.value = "Salve as alterações antes de fazer o enrollment."; return; }
       busy.value = true; error.value = ""; message.value = "";
       try {
-        const r = await nbReq("enroll", { setup_key: setupKey.value });
+        const r = await nbReq("enroll", { profile_key: profileKey.value, setup_key: setupKey.value });
         setupKey.value = "";
         settings.value = r.settings || settings.value;
         draft.value.enrolled = settings.value && settings.value.enrolled || "1";
@@ -194,9 +191,10 @@ export default defineComponent({
     }
 
     async function restart() {
+      if (!profileKey.value) { error.value = "Perfil NetBird ainda não foi salvo."; return; }
       if (dirty.value) { error.value = "Salve as alterações antes de reiniciar o NetBird."; return; }
       busy.value = true; error.value = ""; message.value = "";
-      try { await nbReq("restart"); message.value = "NetBird reiniciado."; }
+      try { await nbReq("restart", { profile_key: profileKey.value }); message.value = "NetBird reiniciado."; }
       catch (e) { error.value = errMsg(e); }
       finally { busy.value = false; await load(false); }
     }
@@ -204,14 +202,13 @@ export default defineComponent({
     async function fetchLog() {
       showLog.value = !showLog.value;
       if (!showLog.value) return;
-      try { const r = await nbReq("log", { lines: 100 }); log.value = r.lines || ""; }
+      try { const r = await nbReq("log", { lines: 100, profile_key: profileKey.value || undefined }); log.value = r.lines || ""; }
       catch (e) { error.value = errMsg(e); log.value = ""; }
     }
 
     async function validate() {
       error.value = "";
       const s = draft.value || {};
-      if (creating.value && profileExists.value) { error.value = "Já existe um perfil NetBird. Exclua-o antes de criar outro."; throw new Error(error.value); }
       if (!validHostname(s.hostname)) { error.value = "Hostname inválido. Use letras, números, ponto, hífen ou sublinhado (máx. 64 caracteres)."; throw new Error(error.value); }
       if (!validWireGuardPort(s.wireguard_port)) { error.value = "Informe uma porta WireGuard entre 1 e 65535."; throw new Error(error.value); }
       if (!validManagementUrl(s.management_url)) { error.value = "Informe uma URL de gerenciamento válida (http:// ou https://)."; throw new Error(error.value); }
@@ -224,9 +221,14 @@ export default defineComponent({
     function setForm(value) {
       const existing = !!(value && (value.key || value.id));
       creating.value = !existing;
-      draft.value = normalizeForm(value || {}, creating.value ? {} : (settings.value || {}));
+      profileKey.value = existing ? String(value.key || value.id) : "";
+      profileExists.value = existing;
+      // Never use settings from a previously edited NetBird row as the fallback
+      // for a different row. The stock row itself is the initial edit snapshot.
+      draft.value = normalizeForm(value || {}, {});
       if (creating.value) { draft.value.enable = "0"; draft.value.enrolled = "0"; }
-      dirty.value = false; error.value = ""; message.value = "";
+      dirty.value = false; error.value = ""; message.value = ""; setupKey.value = "";
+      if (existing) Promise.resolve().then(() => load(false));
       return true;
     }
 
@@ -243,7 +245,7 @@ export default defineComponent({
       };
     }
 
-    function resetForm() { draft.value = normalizeForm(settings.value || {}, settings.value || {}); dirty.value = false; error.value = ""; message.value = ""; return true; }
+    function resetForm() { draft.value = normalizeForm(settings.value || {}, {}); dirty.value = false; error.value = ""; message.value = ""; return true; }
     function clearValidate() { error.value = ""; return true; }
 
     context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate });
@@ -252,7 +254,7 @@ export default defineComponent({
     onMounted(function () { load(); timer = setInterval(function () { if (!busy.value) load(false); }, 5000); });
     onUnmounted(function () { if (timer) clearInterval(timer); });
 
-    return { props, settings, draft, status, netbird, payload, traffic, profileExists, setupKey, log, busy, message, error, showLog, dirty, creating, updateDraft, enroll, restart, fetchLog };
+    return { props, settings, draft, status, netbird, payload, traffic, profileExists, profileKey, setupKey, log, busy, message, error, showLog, dirty, creating, updateDraft, enroll, restart, fetchLog };
   },
 
   render() {
@@ -279,6 +281,8 @@ export default defineComponent({
       items.push(_h(SuFormItem, { label: "Payload" }, textSlot(payloadLabel(this.payload && this.payload.state) + version)));
       if (this.netbird && this.netbird.netbirdIp) items.push(_h(SuFormItem, { label: "IP NetBird" }, textSlot(this.netbird.netbirdIp)));
       items.push(_h(SuFormItem, { label: "Tráfego" }, textSlot("↑ " + speedLabel(this.traffic && this.traffic.uploadSpeed) + "  ↓ " + speedLabel(this.traffic && this.traffic.downloadSpeed))));
+    } else {
+      items.push(_h(SuAlert, null, textSlot("Salve o perfil. Depois abra Editar para informar a Setup Key e concluir o enrollment.")));
     }
 
     items.push(_h(SuFormItem, { label: "Management URL", name: "management_url" }, { default: () => _h(SuInput, { value: s.management_url || "", "onUpdate:value": value => this.updateDraft("management_url", value), disabled, placeholder: "https://netbird.example.com" }) }));
@@ -314,9 +318,10 @@ export default defineComponent({
 
     if (this.error) items.push(_h(SuAlert, { closable: "" }, textSlot(this.error)));
     else if (this.message) items.push(_h(SuAlert, { closable: "" }, textSlot(this.message)));
-
     if (edit && this.showLog && this.log) items.push(_h(SuFormItem, { label: "Logs" }, { default: () => _h(SuInput, { value: this.log, disabled: true, type: "textarea" }) }));
 
-    return _h(SuSpin, { spinning: this.busy }, { default: () => _h(SuForm, { model: s, "label-width": { span: 10 }, "content-width": { span: 10 } }, { default: () => items }) });
+    // The TP-Link dialog already owns the outer grid. Do not impose another
+    // 10/10 label/content grid here; that nested grid caused horizontal overflow.
+    return _h(SuSpin, { spinning: this.busy }, { default: () => _h(SuForm, { model: s }, { default: () => items }) });
   },
 });
