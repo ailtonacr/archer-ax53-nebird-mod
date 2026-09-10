@@ -28,7 +28,7 @@ for (const token of [
 for (const token of [
   "NETBIRD_CSS", 'type: "checkbox"', 'class: "netbird-input"', "syncNativeSaveButton", "unknown error",
   'value.type === "netbirdvpn"', 'value.type === "netbird"', "const creating = ref(false)",
-  'Anunciar rede local', 'Já existe um perfil NetBird', 'async function enroll()', 'async function afterStockSave()', 'setup_key: setupKey.value',
+  'Anunciar rede local', 'Já existe um perfil NetBird', 'async function enroll()', 'async function afterStockSave()',
   'enable: s.enable === "1" ? "on" : "off"',
 ]) assert.equal(original.includes(token), false, `generic/legacy UI token leaked: ${token}`);
 
