@@ -120,6 +120,7 @@ def assert_page_and_form() -> None:
         'const creating = ref(true)',
         'const profileKey = ref("")',
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
+        'stockComponent(this, "su-form")',
         'stockComponent(this, "su-form-item")',
         'stockComponent(this, "su-input")',
         'stockComponent(this, "su-password")',
@@ -128,7 +129,7 @@ def assert_page_and_form() -> None:
         'Setup Key',
         'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
         'Permitir roteamento da LAN',
-        'return _h(SuSpin, { spinning: this.busy }, { default: () => items })',
+        '_h(SuForm, { model: s }, { default: () => items })',
     )
     missing_form = [token for token in required_form if token not in form]
     if missing_form:
@@ -139,7 +140,7 @@ def assert_page_and_form() -> None:
         'a.value=_nb.concat(e)', 'it.Netbird===i.type?await Nbs(i)',
         'window.__netbirdSaveDraft', '__netbirdSaveListener', 'stopImmediatePropagation',
         'Já existe um perfil NetBird', 'value.type === "netbirdvpn"',
-        '"label-width": { span: 10 }', 'stockComponent(this, "su-form")',
+        '"label-width": { span: 10 }', '"content-width": { span: 14 }',
         'async function afterStockSave()', 'async function enroll()',
     )
     leaked = [token for token in forbidden if token in combined]
