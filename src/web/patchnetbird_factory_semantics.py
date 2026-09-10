@@ -73,7 +73,7 @@ def main() -> None:
         'stockComponent(this, "su-checkbox")',
         'const creating = ref(true)',
         'const existing = !!(value && (value.key || value.id))',
-        'setup_key: setupKey.value || ""',
+        'enrollment_token: enrollmentToken.value || ""', 'stage_setup_key',
         '_h(SuForm, { model: s }, { default: () => items })',
         'Permitir roteamento da LAN',
     )
@@ -83,7 +83,7 @@ def main() -> None:
 
     for token in (
         '"label-width": { span: 10 }', '"content-width": { span: 14 }', 'async function enroll()',
-        'async function afterStockSave()', 'Já existe um perfil NetBird',
+        'async function afterStockSave()', 'Já existe um perfil NetBird', 'setup_key: setupKey.value || ""',
     ):
         if token in form:
             raise RuntimeError("provider form escaped stock outer-form boundary: " + token)
