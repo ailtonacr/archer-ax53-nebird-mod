@@ -3,9 +3,8 @@
 
 Architectural rule: TP-Link owns every generic VPN Client operation it already
 implements. NetBird adds only a fifth provider, protocol fields/runtime and
-profile-scoped diagnostics. Setup-key enrollment is provider-specific but runs
-inside the normal stock Save callback; setup_key is transient and never belongs
-to VPN_TBL/UCI persistence.
+profile-scoped diagnostics. The Setup Key is staged through the provider
+endpoint; stock Save carries only an opaque enrollment token.
 """
 from __future__ import annotations
 
@@ -80,15 +79,18 @@ def check_native_registry() -> None:
         'local profile_key = profile_key_from_config(cfg)',
         'if profile_key == "" then', 'stock VPN profile key missing',
         'profile_key = profile_key,',
-        'local setup_key = cfg.setup_key', 'local function enroll_transient(profile_key, setup_key)',
-        'nb_model.control("enroll", profile_key, tmp)', 'nixio.fs.unlink(tmp)',
+        'local enrollment_token = cfg.enrollment_token', 'local function enroll_transient(profile_key, enrollment_token)',
+        'nb_model.staged_setup_key_path(enrollment_token)', 'nb_model.control("enroll", profile_key, keyfile)',
+        'nb_model.discard_staged_setup_key(enrollment_token)', 'clear_enrollment_token(profile_key)',
         'nb_model.control("stop", profile_key)',
         'nb_model.set_internal_settings({ enrolled = "1", enable = "0" }, profile_key)',
-        'setup key required for unenrolled profile',
+        'enrollment token required for unenrolled profile',
     )
     assert 'field = { key }' not in native and 'canbe_empty = true' not in native, "retired inferred VPN_TBL rule shape returned"
-    assert '"setup_key",' not in native.split('local FIELDS = {', 1)[1].split('}', 1)[0], "setup_key must never be a persistent VPN_TBL field"
-    assert 'setup_key = setup_key' not in native, "setup key leaked into returned persistent vpn config"
+    fields = native.split('local FIELDS = {', 1)[1].split('}', 1)[0]
+    assert '"setup_key",' not in fields, "setup_key must never be a VPN_TBL field"
+    assert '"enrollment_token",' in fields, "opaque enrollment token must reach protocol staging"
+    assert 'cfg.setup_key' not in native, "native stock callback must never receive the secret"
     assert 'key = "netbird"' not in native
     assert "debug.getupvalue" not in native and "debug.setupvalue" not in native
 
@@ -117,7 +119,7 @@ def check_stock_frontend_boundary() -> None:
     require(
         finalizer,
         'NATIVE_SERIALIZER =', 'k=e.key||t()', 'key:k,des:e.description,type:e.type,enable:i(e.enable),server:n,profile_key:k',
-        'management_url:e.management_url||""', 'setup_key:e.setup_key||""',
+        'management_url:e.management_url||""', 'enrollment_token:e.enrollment_token||""',
         'new URL(n).hostname',
         'required = (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE, NATIVE_SERIALIZER)',
         'text = text.replace(marker, NATIVE_SERIALIZER, 1)',
@@ -131,7 +133,7 @@ def check_stock_frontend_boundary() -> None:
         'function nbDelete(', 'operation:"profile_delete"', 'a.value=_nb.concat(e)',
         'it.Netbird===i.type?await Nbs(i)', 'window.__netbirdSaveDraft',
         '__netbirdSaveListener', 'stopImmediatePropagation',
-        'async function afterStockSave()', 'async function enroll()',
+        'async function afterStockSave()', 'async function enroll()', 'setup_key:e.setup_key',
     }
     guard_literals = python_named_literal_values(finalizer, "forbidden")
     missing_guards = guarded_tokens - guard_literals
@@ -151,7 +153,7 @@ def check_stock_frontend_boundary() -> None:
         form,
         'const creating = ref(true)', 'const existing = !!(value && (value.key || value.id))',
         'const profileKey = ref("")', 'if (!profileKey.value || creating.value || statusRequestPending) return',
-        'setup_key: setupKey.value || ""',
+        'enrollment_token: enrollmentToken.value || ""', 'stage_setup_key',
         'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
         'stockComponent(this, "su-form")', 'stockComponent(this, "su-form-item")', 'stockComponent(this, "su-input")',
@@ -162,7 +164,7 @@ def check_stock_frontend_boundary() -> None:
         '"label-width": { span: 10 }', '"content-width": { span: 14 }', 'async function enroll()', 'async function afterStockSave()',
         'value.type === "netbirdvpn"', 'value.type === "netbird"', 'key:e.key||"netbird"',
         'Já existe um perfil NetBird', 'a.value=_nb.concat(e)', 'operation:"settings_set"',
-        'function nbSettingsSet(', 'enable: s.enable === "1" ? "on" : "off"',
+        'function nbSettingsSet(', 'enable: s.enable === "1" ? "on" : "off"', 'setup_key: setupKey.value',
     ):
         assert token not in form, f"generic/singleton behavior leaked into provider form: {token!r}"
 
@@ -183,7 +185,10 @@ def check_auxiliary_boundary() -> None:
     for op in ("enroll", "settings_set", "settings_get", "connected_status", "profile_delete", "clean"):
         assert f'op == "{op}"' not in dispatch, f"auxiliary endpoint shadows stock/provider-save operation {op}"
     assert 'local function op_enroll' not in controller
-    assert 'setup_key' not in controller, "setup key must not travel through auxiliary endpoint"
+    require(controller, 'local function op_stage_setup_key(body)', 'model.stage_setup_key(setup_key)', 'op == "stage_setup_key"')
+    require(model, 'SETUP_STAGE_PREFIX = "/tmp/netbird-setup-stage-"', 'function stage_setup_key(setup_key)',
+            'function staged_setup_key_path(token)', 'function discard_staged_setup_key(token)')
+
 
     require(
         model,
@@ -296,7 +301,7 @@ def check_build_gates() -> None:
         mod010,
         'is_stock_vpn "$VPN_CONTROLLER"',
         'for forbidden_op in', "'enroll'", "'settings_set'", "'profile_delete'", "'connected_status'", "'settings_get'",
-        'if grep -Fq \'setup_key\' "$R/usr/lib/lua/luci/controller/admin/netbird.lua"; then',
+        'stage_setup_key',
     )
     require(
         mod012,
@@ -310,7 +315,7 @@ def check_build_gates() -> None:
         'PROFILE_GC_INIT=', 'netbird-profile-gc',
         "grep -Fq 'table.insert(schema, { key = key })'",
         "if grep -Fq 'field = { key }'",
-        'setup_key: setupKey.value || ""',
+        'enrollment_token: enrollmentToken.value || ""',
     )
     require(
         verifier,
