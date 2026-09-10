@@ -160,7 +160,7 @@ printf '%s' "$NB_FORM_JS" | grep -Fq 'setup_key: setupKey.value || ""' || {
 printf '%s' "$NB_FORM_JS" | grep -Fq 'throw new Error(error.value)' || {
   echo "Error: NetBird validate() does not reject invalid state like stock forms" >&2; exit 1;
 }
-for forbidden in 'stockComponent(this, "su-form")' 'async function enroll()' 'async function afterStockSave()' 'syncNativeSaveButton' 'data-netbird-dirty' '__netbirdSaveListener' 'stopImmediatePropagation' 'netbirdSaveSyncTimer' 'Já existe um perfil NetBird'; do
+for forbidden in '"label-width": { span: 10 }' '"content-width": { span: 14 }' 'async function enroll() 'async function afterStockSave()' 'syncNativeSaveButton' 'data-netbird-dirty' '__netbirdSaveListener' 'stopImmediatePropagation' 'netbirdSaveSyncTimer' 'Já existe um perfil NetBird'; do
   if printf '%s' "$NB_FORM_JS" | grep -Fq "$forbidden"; then
     echo "Error: obsolete/singleton NetBird form logic leaked into final form: $forbidden" >&2
     exit 1
