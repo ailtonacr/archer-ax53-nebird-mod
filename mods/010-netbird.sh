@@ -140,10 +140,9 @@ for forbidden_op in 'enroll' 'settings_set' 'profile_delete' 'connected_status' 
     exit 1
   fi
 done
-if grep -Fq 'setup_key' "$R/usr/lib/lua/luci/controller/admin/netbird.lua"; then
-  echo "Error: setup key leaked into auxiliary /admin/netbird endpoint" >&2
-  exit 1
-fi
+grep -q 'local function op_stage_setup_key(body)' "$R/usr/lib/lua/luci/controller/admin/netbird.lua" || {
+  echo "Error: provider-side Setup Key staging endpoint missing" >&2; exit 1;
+}
 grep -q 'description' "$R/usr/lib/lua/luci/model/netbird.lua" || {
   echo "Error: NetBird profile description persistence missing" >&2; exit 1;
 }
@@ -154,9 +153,13 @@ NB_FORM_JS="$(zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz")"
 printf '%s' "$NB_FORM_JS" | grep -Fq 'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })' || {
   echo "Error: NetBird subform does not expose TP-Link native isChanged contract" >&2; exit 1;
 }
-printf '%s' "$NB_FORM_JS" | grep -Fq 'setup_key: setupKey.value || ""' || {
-  echo "Error: NetBird subform does not pass transient setup_key into stock Save" >&2; exit 1;
+printf '%s' "$NB_FORM_JS" | grep -Fq 'enrollment_token: enrollmentToken.value || ""' || {
+  echo "Error: NetBird subform does not pass opaque enrollment token into stock Save" >&2; exit 1;
 }
+if printf '%s' "$NB_FORM_JS" | grep -Fq 'setup_key: setupKey.value || ""'; then
+  echo "Error: Setup Key leaked into stock Save form payload" >&2
+  exit 1
+fi
 printf '%s' "$NB_FORM_JS" | grep -Fq 'throw new Error(error.value)' || {
   echo "Error: NetBird validate() does not reject invalid state like stock forms" >&2; exit 1;
 }
