@@ -73,7 +73,7 @@ def check_stock_frontend_boundary() -> None:
         'NATIVE_SERIALIZER =',
         'type:u.Netbird,server:n,management_url:e.management_url||""',
         'new URL(n).hostname',
-        'Generic operations must be stock before and after provider finalization.',
+        'required = (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE, NATIVE_SERIALIZER)',
     )
     for token in ('DELETE_HELPER =', 'PROVIDER_DELETE =', 'await nbDelete(', 'operation:"profile_delete"'):
         assert token not in finalizer, f"generic delete interception leaked into finalizer: {token!r}"
