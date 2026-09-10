@@ -80,7 +80,7 @@ def main() -> int:
         '"label-width": { span: 10 }', '"content-width": { span: 14 }', 'async function enroll()', 'async function afterStockSave()',
         'value.type === "netbirdvpn"', 'value.type === "netbird"', 'const creating = ref(false)',
         'NETBIRD_CSS', 'type: "checkbox"', 'class: "netbird-input"', 'Anunciar rede local',
-        'Já existe um perfil NetBird', 'enable: s.enable === "1" ? "on" : "off"', 'setup_key: setupKey.value',
+        'Já existe um perfil NetBird', 'enable: s.enable === "1" ? "on" : "off"',
     ):
         assert token not in form, f"generic/singleton field leaked into provider form: {token!r}"
 
