@@ -69,15 +69,15 @@ def main() -> int:
         'const existing = !!(value && (value.key || value.id))',
         'const profileKey = ref("")',
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
-        'stockComponent(this, "su-form-item")', 'stockComponent(this, "su-input")',
+        'stockComponent(this, "su-form")', 'stockComponent(this, "su-form-item")', 'stockComponent(this, "su-input")',
         'stockComponent(this, "su-password")', 'stockComponent(this, "su-checkbox")',
         'setup_key: setupKey.value || ""',
         'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
-        'return _h(SuSpin, { spinning: this.busy }, { default: () => items })',
+        '_h(SuForm, { model: s }, { default: () => items })',
         'Permitir roteamento da LAN',
     )
     for token in (
-        'stockComponent(this, "su-form")', 'async function enroll()', 'async function afterStockSave()',
+        '"label-width": { span: 10 }', '"content-width": { span: 14 }', 'async function enroll()', 'async function afterStockSave()',
         'value.type === "netbirdvpn"', 'value.type === "netbird"', 'const creating = ref(false)',
         'NETBIRD_CSS', 'type: "checkbox"', 'class: "netbird-input"', 'Anunciar rede local',
         'Já existe um perfil NetBird', 'enable: s.enable === "1" ? "on" : "off"',
