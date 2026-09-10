@@ -70,7 +70,7 @@ def main() -> int:
         'const profileKey = ref("")',
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
         'stockComponent(this, "su-form")', 'stockComponent(this, "su-form-item")', 'stockComponent(this, "su-input")',
-        'stockComponent(this, "su-password")', 'stockComponent(this, "su-checkbox")',
+        'stockComponent(this, "su-password")', '"onUpdate:modelValue": onSetupKey', 'onInput: onSetupKey', 'stockComponent(this, "su-checkbox")',
         'enrollment_token: enrollmentToken.value || ""', 'stage_setup_key',
         'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
         '_h(SuForm, { model: s }, { default: () => items })',
