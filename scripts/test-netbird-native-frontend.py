@@ -74,8 +74,15 @@ def main() -> int:
     ):
         assert finalizer.count(guarded) == 1, f"forbidden frontend token escaped guard-only usage: {guarded!r}"
 
-    for token in ('PROVIDER_DELETE =', 'DELETE_HELPER =', 'await nbDelete(', 'afterStockSave'):
+    for token in ('PROVIDER_DELETE =', 'DELETE_HELPER =', 'await nbDelete('):
         assert token not in finalizer, f"non-stock frontend bridge leaked into finalizer: {token!r}"
+
+    # afterStockSave is intentionally named once inside the finalizer's forbidden
+    # token list so the generated page/form is rejected if that retired bridge
+    # ever reappears. It must not exist as executable finalizer logic.
+    assert finalizer.count('afterStockSave') == 1, \
+        "afterStockSave escaped guard-only usage in finalizer"
+    assert 'async function afterStockSave()' not in form
 
     require(
         factory,
