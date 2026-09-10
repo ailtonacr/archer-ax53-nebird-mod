@@ -3,7 +3,7 @@
 
 The firmware adds one provider. TP-Link keeps generic list/ADD/EDIT/Save/toggle,
 DELETE and connected-status. NetBird-specific frontend code is limited to
-provider discovery, protocol fields, transient setup_key and serialization.
+provider discovery, protocol fields, transient setup-key staging and serialization.
 """
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def main() -> int:
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
         'stockComponent(this, "su-form")', 'stockComponent(this, "su-form-item")', 'stockComponent(this, "su-input")',
         'stockComponent(this, "su-password")', 'stockComponent(this, "su-checkbox")',
-        'setup_key: setupKey.value || ""',
+        'enrollment_token: enrollmentToken.value || ""', 'stage_setup_key',
         'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
         '_h(SuForm, { model: s }, { default: () => items })',
         'Permitir roteamento da LAN',
@@ -80,7 +80,7 @@ def main() -> int:
         '"label-width": { span: 10 }', '"content-width": { span: 14 }', 'async function enroll()', 'async function afterStockSave()',
         'value.type === "netbirdvpn"', 'value.type === "netbird"', 'const creating = ref(false)',
         'NETBIRD_CSS', 'type: "checkbox"', 'class: "netbird-input"', 'Anunciar rede local',
-        'Já existe um perfil NetBird', 'enable: s.enable === "1" ? "on" : "off"',
+        'Já existe um perfil NetBird', 'enable: s.enable === "1" ? "on" : "off"', 'setup_key: setupKey.value',
     ):
         assert token not in form, f"generic/singleton field leaked into provider form: {token!r}"
 
@@ -95,7 +95,7 @@ def main() -> int:
     require(
         finalizer,
         'NATIVE_SERIALIZER =', 'k=e.key||t()', 'key:k,des:e.description,type:e.type,enable:i(e.enable),server:n,profile_key:k',
-        'management_url:e.management_url||""', 'setup_key:e.setup_key||""',
+        'management_url:e.management_url||""', 'enrollment_token:e.enrollment_token||""',
         'new URL(n).hostname', 'STOCK_CONNECTED_STATUS', 'STOCK_UPDATE', 'STOCK_DELETE',
         'STOCK_LIST', 'STOCK_SAVE', 'text = text.replace(marker, NATIVE_SERIALIZER, 1)',
         'def patch_model_import_cache_key() -> None:',
@@ -108,7 +108,7 @@ def main() -> int:
         'function nbDelete(', 'operation:"profile_delete"', 'a.value=_nb.concat(e)',
         'it.Netbird===i.type?await Nbs(i)', 'window.__netbirdSaveDraft',
         '__netbirdSaveListener', 'stopImmediatePropagation',
-        'async function afterStockSave()', 'async function enroll()',
+        'async function afterStockSave()', 'async function enroll()', 'setup_key:e.setup_key',
     }
     guard_literals = python_named_literal_values(finalizer, "forbidden")
     missing_guards = guarded_tokens - guard_literals
@@ -127,7 +127,7 @@ def main() -> int:
     assert "patch_page" not in factory_functions
 
     subprocess.run(["node", "--input-type=module", "--check"], input=form.encode(), check=True)
-    print("netbird provider-only frontend with stock Save + transient setup key ok")
+    print("netbird provider-only frontend with stock Save + staged setup key ok")
     return 0
 
 
