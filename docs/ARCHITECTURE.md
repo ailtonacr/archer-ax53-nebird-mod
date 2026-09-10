@@ -2,8 +2,8 @@
 
 This document describes the **current firmware architecture**. NetBird is a
 fifth TP-Link VPN Client provider. It is not a parallel VPN manager and the
-current implementation contains no import/adoption path for data created by
-older NetBird experiments.
+current implementation contains no import/adoption path for older NetBird
+experiments.
 
 ## Architectural rule
 
@@ -25,13 +25,15 @@ NetBird-specific code is limited to:
 ```text
 provider registration: netbirdvpn = type 5
 provider-specific form fields and serialization
+transient Setup Key enrollment inside the stock Save provider callback
 proto=netbird for netifd
 NetBird runtime / R2 payload materialization
 profile-scoped identity/settings/state
-Setup Key enrollment
 runtime / payload / log diagnostics
 orphan provider-state garbage collection
 ```
+
+There is no NetBird-specific generic Save, list, toggle or DELETE path.
 
 ## End-to-end flow
 
@@ -42,6 +44,7 @@ TP-Link VPN Client UI
 /admin/vpn?form=server                    <- generic flow remains stock
         |
         +-- type=netbirdvpn / id=5 / display=NetBird
+        +-- stock serializer generates key with the vendor key generator
         +-- vpn.server                    <- authoritative saved profiles
         +-- vpn.client                    <- authoritative active provider
         +-- network.vpn.proto=netbird
@@ -75,27 +78,36 @@ R2 HTTPS -> xzmini       /tmp/netbird.sock
 ```
 
 The vendor `usr/lib/lua/luci/controller/admin/vpn.lua` remains TP-Link bytecode.
-`luci.model.netbird_vpn_native` extends the module-global registries used by the
-controller:
+`luci.model.netbird_vpn_native` extends the module-global registries consumed by
+the stock controller:
 
 ```text
 VPN_TYPE_TBL[netbirdvpn]      = 5
 VPN_TYPE_NAME_TBL[netbirdvpn] = NetBird
-VPN_TBL[netbirdvpn]           = stock-shaped schema, proto=netbird
-VPN_CFG_TBL[netbirdvpn]       = NetBird config normalizer
+VPN_TBL[netbirdvpn]           = stock-shaped validator schema, proto=netbird
+VPN_CFG_TBL[netbirdvpn]       = NetBird provider config/enrollment callback
 ```
 
+The `VPN_TBL` rule entries follow the vendor validator contract:
+
+```lua
+{ field = { "field_name" }, canbe_empty = true }
+```
+
+The older `{ key = "field_name" }` shape is invalid for this controller and was
+identified during the 2026-09-10 hardware ADD failure. Build gates reject that
+shape.
+
 `scripts/verify-tplink-vpn-bytecode.py` fails the build if the expected stock
-registry contract is absent.
+registry contract is absent. The native registry loader requires
+`luci.model.netbird_vpn_native` inside its `index()` function, avoiding the LuCI
+index-cache upvalue failure previously observed on the AX53.
 
-The native registry loader requires `luci.model.netbird_vpn_native` inside its
-`index()` function. This avoids the LuCI index-cache upvalue failure previously
-observed on the AX53.
+## Stock key and multiple profiles
 
-## Profile authority and multi-profile storage
-
-`vpn.server` is the authoritative saved-profile store. A saved row's stock key
-is the namespace for all provider-specific persistent state.
+The frontend NetBird serializer follows the same stock convention used by the
+vendor providers: `key=e.key||t()`. That generated key is also copied to
+`profile_key` for provider state.
 
 For every NetBird profile:
 
@@ -127,21 +139,50 @@ No profile-specific operation is allowed to fall back to:
 
 Those paths are not part of the current implementation.
 
+## Setup Key and one-step enrollment
+
+The initial profile flow is intentionally one stock Save:
+
+```text
+Add NetBird
+  -> fill provider fields
+  -> enter Setup Key
+  -> TP-Link SALVAR
+       -> stock serializer creates the profile key
+       -> /admin/vpn?form=server processes type=netbirdvpn
+       -> VPN_CFG_TBL[netbirdvpn] consumes setup_key transiently
+       -> NetBird identity is enrolled under profiles/<stock key>/
+       -> setup_key temporary file is deleted
+       -> callback leaves NetBird stopped
+  -> stock row appears in the normal TP-Link list
+  -> enable with the normal stock toggle
+```
+
+`setup_key` is **not** a member of `VPN_TBL`, is not returned in the persistent
+`vpn` object, is not written to provider settings, and is never documented. The
+frontend includes it only in the current stock Save request. The provider
+callback stages it in a mode-0600 file under `/tmp`, invokes enrollment, unlinks
+the file, and stops the temporary enrollment daemon. Normal activation remains
+owned by the TP-Link toggle -> vpnc -> netifd lifecycle.
+
+An already enrolled saved row may be edited without a Setup Key. Supplying a
+Setup Key is provider-specific enrollment input, not a generic profile field.
+
 ## Auxiliary `/admin/netbird` boundary
 
-`/admin/netbird` exists only for behavior the generic TP-Link VPN contract does
-not implement:
+`/admin/netbird` is diagnostics/control only:
 
 ```text
 status          profile-scoped runtime/payload/traffic diagnostics
-enroll          Setup Key enrollment for an already-saved stock row
 restart         explicit restart delegated to /etc/init.d/vpnc
 log             diagnostics for the active NetBird profile
 payload_status  global payload diagnostics
 ```
 
-It must not expose generic `settings_set`, `settings_get`, `connected_status`,
-profile CRUD or DELETE helpers. Those remain under `/admin/vpn?form=server`.
+It does **not** expose enrollment or generic writable profile configuration.
+There is no `settings_set`, `settings_get`, `connected_status`, profile CRUD,
+DELETE helper or Setup Key handling there. Enrollment belongs to the provider
+callback reached by the normal stock Save.
 
 ## Frontend boundary
 
@@ -150,15 +191,14 @@ The outer TP-Link dialog owns:
 ```text
 Description
 VPN Type
-row key / identity
+stock row key / identity
 Save / Cancel
 enable / disable
 DELETE
 ```
 
-`VpnServerNetbirdForm-NB.js` is only the protocol subform. It uses registered
-TP-Link `su-*` controls and exposes the dynamic-form contract expected by the
-stock dialog:
+`VpnServerNetbirdForm-NB.js` supplies only protocol controls and transient Setup
+Key input. It uses TP-Link `su-*` controls and exposes the dynamic-form contract:
 
 ```text
 isChanged
@@ -169,42 +209,34 @@ resetForm()
 clearValidate()
 ```
 
-`getForm()` returns protocol-specific fields only. CREATE versus EDIT is derived
-from a persisted stock `key`/`id`; `type=netbirdvpn` exists in both modes and is
-not used as an Edit signal.
+CREATE versus EDIT is derived from a persisted stock `key`/`id`; the provider
+type itself is not an Edit signal. There is no custom `afterStockSave`, no
+frontend enrollment request and no synthetic NetBird row.
 
-The shared frontend model receives only the provider serializer needed to map
-the Management URL hostname into TP-Link's common `server` field. Stock
-list/request/update/delete/status functions remain unchanged.
+The provider subform does not create a nested `su-form`. Its `su-form-item`
+controls inherit the outer stock form context through `su-spin`; this removes
+the duplicate grid that caused the hardware modal to overflow horizontally.
+
+The shared frontend model receives only the provider serializer needed to:
+
+```text
+preserve type=netbirdvpn
+generate/reuse the stock key
+mirror it into profile_key
+map Management URL hostname into the common server field
+carry setup_key explicitly as transient request input
+```
+
+Stock list/request/update/delete/status functions remain unchanged.
 
 The custom module import includes a content-derived query key so a firmware
 update does not reuse a stale browser copy of `VpnServerNetbirdForm-NB.js`.
 
-## Setup Key and enrollment
-
-Enrollment is deliberately a second step:
-
-```text
-Add NetBird
-  -> TP-Link Save
-  -> stock row/key exists
-  -> Edit that row
-  -> enter Setup Key
-  -> Enrollment
-  -> enable with the stock toggle
-```
-
-The Setup Key is staged only in a restrictive temporary file and is removed
-after the enrollment call. It is never stored in the stock row, provider
-settings, repository or documentation.
-
 ## Provider-state garbage collection
 
-DELETE remains the exact stock TP-Link operation. The provider does not wrap or
-replace it.
-
-Because NetBird identity files live outside `vpn.server`, a small one-shot
-maintenance service removes directories under:
+DELETE remains the exact stock TP-Link operation. Because NetBird identity files
+live outside `vpn.server`, a one-shot maintenance service removes directories
+under:
 
 ```text
 /tp_data/netbird/profiles/<key>/
@@ -234,6 +266,7 @@ Ephemeral:
 /tmp/netbird.log
 /tmp/netbird-active-profile
 /tmp/netbird-firewall.state
+/tmp/nb-setup-key-*          <- only while a stock Save enrollment is running
 ```
 
 The large executable is not stored in rootfs or a new NAND partition. MIBIB
@@ -288,9 +321,9 @@ The polling recovery worker is an observer only: it can re-trigger TP-Link
 
 ## Routing-peer mode
 
-The UI option **Permitir roteamento da LAN** does not create or announce a
-NetBird Network/Resource. The Network/Resource/Policy is managed in NetBird
-Management and the AX53 is selected there as routing peer.
+The UI option **Permitir roteamento da LAN** does not create a NetBird
+Network/Resource. The Network/Resource/Policy is managed in NetBird Management
+and the AX53 is selected there as routing peer.
 
 Local routing requires:
 
