@@ -98,6 +98,9 @@ def main() -> int:
         'management_url:e.management_url||""', 'setup_key:e.setup_key||""',
         'new URL(n).hostname', 'STOCK_CONNECTED_STATUS', 'STOCK_UPDATE', 'STOCK_DELETE',
         'STOCK_LIST', 'STOCK_SAVE', 'text = text.replace(marker, NATIVE_SERIALIZER, 1)',
+        'def patch_model_import_cache_key() -> None:',
+        'hashlib.sha256(model.encode("utf-8")).hexdigest()[:12]',
+        'model-CI6Gt3Hz.js?v=',
     )
 
     guarded_tokens = {
