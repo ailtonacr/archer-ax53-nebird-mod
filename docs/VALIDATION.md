@@ -2,8 +2,7 @@
 
 This document defines the acceptance contract for the **current clean native
 implementation**. Earlier experiments remain in Git history and the project
-Notion ADR/Timeline, but they are not compatibility requirements for this
-firmware.
+Notion ADR/Timeline, but they are not compatibility requirements.
 
 ## Implementation under validation
 
@@ -11,6 +10,9 @@ firmware.
 TP-Link VPN Client UI
   -> /admin/vpn?form=server
   -> netbirdvpn = type 5
+  -> stock key generator
+  -> VPN_CFG_TBL[netbirdvpn]
+  -> transient Setup Key enrollment
   -> vpn.server = authoritative profile row
   -> network.vpn.proto = netbird
   -> network.vpn.profile_key = stock row key
@@ -21,20 +23,10 @@ TP-Link VPN Client UI
   -> wt0
 ```
 
-TP-Link owns generic:
-
-```text
-list
-ADD
-EDIT
-Save / Cancel
-enable / disable
-DELETE
-connected_status
-```
-
-NetBird adds only the provider-specific subform/serializer, registry entry,
-profile-scoped identity/runtime, enrollment and diagnostics.
+TP-Link owns generic list, ADD, EDIT, Save/Cancel, enable/disable, DELETE and
+`connected_status`. NetBird adds only provider discovery/form/serialization,
+the stock provider callback, profile-scoped identity/runtime, diagnostics and
+orphan provider-state GC.
 
 ## Stock-flow contract
 
@@ -43,26 +35,55 @@ The vendor `vpn.lua` remains TP-Link bytecode. The integration registers:
 ```text
 VPN_TYPE_TBL[netbirdvpn]      = 5
 VPN_TYPE_NAME_TBL[netbirdvpn] = NetBird
-VPN_TBL[netbirdvpn]           = stock-shaped schema
-VPN_CFG_TBL[netbirdvpn]       = NetBird config normalizer
+VPN_TBL[netbirdvpn]           = stock-shaped validator schema
+VPN_CFG_TBL[netbirdvpn]       = NetBird provider callback
 ```
 
-The final frontend must retain the original stock functions for:
+The validator rule shape must be:
 
-- list;
-- ADD/EDIT Save;
-- toggle/update;
-- DELETE;
-- connected status.
+```lua
+{ field = { key }, canbe_empty = true }
+```
 
-Forbidden regressions include:
+The older `{ key = key }` implementation is forbidden because the stock
+controller expects `rule.field`; the hardware ADD path returned HTTP 500 while
+that invalid schema was installed.
 
-- synthetic NetBird rows merged into the list;
-- fixed `key=netbird`;
-- custom generic Save bridge;
-- custom generic DELETE bridge;
-- `/admin/netbird` writable settings CRUD;
-- `/admin/netbird` connected-status replacement.
+The final frontend must retain the original stock functions for list,
+ADD/EDIT Save, toggle/update, DELETE and connected status. Forbidden regressions
+include synthetic rows, fixed `key=netbird`, custom Save/DELETE bridges,
+`/admin/netbird` writable settings CRUD and auxiliary connected-status.
+
+## Setup Key contract
+
+The initial profile is created and enrolled in a **single stock Save**:
+
+```text
+Add -> NetBird -> provider fields + Setup Key -> stock SALVAR
+    -> stock key generated
+    -> /admin/vpn?form=server
+    -> VPN_CFG_TBL[netbirdvpn]
+    -> profile-scoped enrollment
+    -> row visible in stock list
+    -> stock toggle activates it
+```
+
+Required properties:
+
+- the Setup Key control is visible in CREATE;
+- CREATE validation requires Setup Key;
+- provider `getForm()` supplies `setup_key` only as transient Save input;
+- the serializer explicitly carries `setup_key` in the stock Save request;
+- `setup_key` is not a `VPN_TBL` persistent field;
+- the returned persistent `vpn` object contains no Setup Key;
+- the provider callback stages the key under `/tmp/nb-setup-key-*` mode 0600;
+- the temporary key file is unlinked after the enrollment call;
+- the enrollment daemon is stopped after enrollment so the stock toggle remains
+the sole normal activation owner;
+- `/admin/netbird` does not accept Setup Key or expose an enrollment operation.
+
+An already enrolled profile may be saved with blank Setup Key. No secret may be
+printed into logs, tests, repository docs or Notion.
 
 ## Profile isolation contract
 
@@ -75,36 +96,11 @@ Each saved stock NetBird row has exactly one provider namespace:
   state/
 ```
 
-There is no root-level profile context. No current operation may use
-`/tp_data/netbird/settings`, `/tp_data/netbird/default.json` or
-`/tp_data/netbird/state/` as an implicit profile.
+There is no root-level profile context. Multiple NetBird rows may coexist. Tests
+must prove A/B isolation, safe deletion/GC, refusal to treat another provider's
+stock row as NetBird authority, and no Setup Key persistence.
 
-Multiple NetBird rows may coexist. Tests must prove:
-
-- A and B receive distinct directories;
-- deleting B cannot remove A;
-- a stock row belonging to another provider cannot authorize a NetBird identity;
-- an active profile is retained fail-safe during a transient config/lifecycle race;
-- provider state is garbage-collected only when its matching stock row is gone;
-- Setup Keys never enter persistent state.
-
-The clean implementation does not import or reconstruct prior NetBird profile
-state.
-
-## Setup Key flow
-
-Expected flow:
-
-1. Add NetBird through the normal TP-Link dialog.
-2. Save through the stock Save path.
-3. Confirm the stock row appears.
-4. Re-open Edit.
-5. Enter Setup Key.
-6. Run Enrollment.
-7. Enable using the stock toggle.
-
-Enrollment before the first stock Save is intentionally unsupported because no
-stock profile key exists yet.
+The clean implementation does not import or reconstruct prior NetBird state.
 
 ## Auxiliary endpoint contract
 
@@ -112,15 +108,25 @@ stock profile key exists yet.
 
 ```text
 status
-enroll
 restart
 log
 payload_status
 ```
 
-All profile-specific calls require a valid saved stock key. Status must never
-fall back to another NetBird row. Logs are meaningful only for the active
-NetBird profile. Restart delegates to `/etc/init.d/vpnc`.
+All profile-specific calls require a valid saved stock key. Status never falls
+back to another row. Logs are available only for the active NetBird profile.
+Restart delegates to `/etc/init.d/vpnc`.
+
+Forbidden auxiliary operations include:
+
+```text
+enroll
+settings_set
+settings_get
+connected_status
+profile_delete
+clean
+```
 
 ## R2/runtime facts already validated on hardware
 
@@ -128,15 +134,14 @@ These facts remain applicable:
 
 - NetBird `0.77.1` runs on the AX53.
 - Decoded ELF size: `39,125,176` bytes.
-- Decoded SHA-256:
-  `6cc347b741695e6664d4ba0ba7004e823a77ab0705a4de5ebe92b290623bb8e6`.
+- Decoded SHA-256: `6cc347b741695e6664d4ba0ba7004e823a77ab0705a4de5ebe92b290623bb8e6`.
 - Compressed XZ size: `9,455,188` bytes.
-- Compressed SHA-256:
-  `4b0648305e5f4126fa58be391e5db995447a58d867d5d290a15b2df972c58941`.
-- HTTPS streaming materialization to `/tmp/netbird` has worked on real hardware.
+- Compressed SHA-256: `4b0648305e5f4126fa58be391e5db995447a58d867d5d290a15b2df972c58941`.
+- HTTPS streaming materialization to `/tmp/netbird` has worked on hardware.
 - MIBIB remains stock.
 
-These facts do not by themselves validate the new stock-profile flow.
+These facts do not by themselves validate the newest one-step stock-profile
+flow.
 
 ## netifd lifecycle contract
 
@@ -146,22 +151,13 @@ Normal lifecycle has one owner:
 vpnc -> netifd -> proto_netbird -> shared runtime
 ```
 
-There is no standalone NetBird init lifecycle in the current implementation.
-`netbird-ctl` is a CLI facade and netifd does not depend on it.
+There is no standalone NetBird init lifecycle. `netbird-ctl` is a CLI facade and
+netifd does not depend on it. The interface may be published UP only when `wt0`
+exists, daemon status is Connected and management is connected.
 
-The interface may be published UP only when:
-
-```text
-wt0 exists
-daemonStatus == Connected
-management.connected == true
-```
-
-Immediate startup failure and connection timeout must both rollback the runtime
-before `proto_setup_failed`.
-
-The recovery supervisor may re-trigger TP-Link `network.interface.vpn`/`vpnc`,
-but may not call `nb_runtime_connect` directly.
+Immediate startup failure and connection timeout both rollback the runtime
+before `proto_setup_failed`. Recovery may re-trigger TP-Link
+`network.interface.vpn`/`vpnc`, but may not call `nb_runtime_connect` directly.
 
 ## Routing-peer invariants
 
@@ -176,17 +172,17 @@ disable_firewall=0
 The corresponding Network/Resource/Policy is owned by NetBird Management. The
 router does not create it.
 
-The current firewall contract requires:
+Firewall requirements:
 
-- no direct priority `iptables -I/--insert FORWARD` bypass in the runtime;
+- no direct priority `iptables -I/--insert FORWARD` bypass;
 - TP-Link scoped forwarding rules appended after NetBird policy chains;
 - exact applied values stored in `/tmp/netbird-firewall.state`;
-- configuration A removed before configuration B is applied;
-- cleanup failure preserves the old snapshot and aborts the transition.
+- configuration A removed before B is applied;
+- cleanup failure preserves old snapshot and aborts transition.
 
 ## Browser/frontend contract
 
-The provider subform must expose:
+The provider subform exposes:
 
 ```text
 isChanged
@@ -197,11 +193,13 @@ resetForm()
 clearValidate()
 ```
 
-It must use TP-Link `su-*` components and return only protocol-specific fields.
-The custom module import must include content-derived cache busting. This is
-required because a real hardware test showed a stale browser copy producing
-`setForm is not a function` while an incognito session loaded the corrected
-form.
+It uses TP-Link `su-*` components. It must **not** nest another `su-form` inside
+the outer VPN dialog; provider `su-form-item` controls inherit the stock form
+context through `su-spin`. This is the fix for the horizontally overflowing
+modal observed on hardware.
+
+The custom module import includes content-derived cache busting. Hardware has
+already shown stale browser copies can cause incompatible component behavior.
 
 ## Offline gate
 
@@ -211,16 +209,9 @@ Run:
 make test-netbird
 ```
 
-The gate covers:
-
-- shell syntax;
-- runtime status/flags/firewall transitions;
-- profile isolation and orphan GC;
-- polling recovery;
-- authored provider form behavior;
-- structural stock-flow contracts;
-- final frontend patch contracts;
-- Python syntax.
+The gate covers shell syntax, runtime/firewall transitions, profile isolation,
+recovery, the authored provider form, one-step Setup Key behavior, structural
+stock-flow contracts, frontend patch contracts and Python syntax.
 
 Any failure is a stop point.
 
@@ -234,71 +225,75 @@ make firmware STOCK=stock_decrypted.bin
 
 Before repack the build verifies:
 
-- TP-Link VPN controller bytecode contract;
+- TP-Link VPN controller bytecode remains stock;
 - `netbirdvpn=5` registry extension;
-- profile-scoped NetBird model/runtime;
-- stock list/ADD/EDIT/Save/toggle/DELETE/connected-status frontend functions;
-- provider form mapping and serializer;
-- no synthetic row/fixed key/generic CRUD bridge;
-- `network.vpn.proto=netbird` + `profile_key` path;
-- no separate NetBird lifecycle owner;
-- runtime rollback and routing policy invariants;
-- profile GC service;
-- cache-busted provider module;
+- stock `VPN_TBL` validator rule shape;
+- stock profile-key generation and `profile_key` mapping;
+- transient Setup Key provider callback without persistence;
+- stock list/ADD/EDIT/Save/toggle/DELETE/connected-status functions;
+- no auxiliary enrollment or generic CRUD bridge;
+- no nested provider `su-form`;
+- profile-scoped model/runtime and orphan GC;
+- `network.vpn.proto=netbird` + `profile_key` lifecycle;
+- runtime rollback/routing-policy invariants;
+- content cache-busting;
 - build identity stamp.
 
 ## Hardware acceptance gate
 
-The router should be tested from a clean NetBird profile state. Do not rely on
-any prior NetBird identity/configuration.
+Test from a clean NetBird profile state.
 
-First confirm basic router services after flash. Then create NetBird entirely
-through the stock UI.
+### First profile — one-step CREATE
 
-### First profile
-
-Validate:
+Expected UI flow:
 
 ```text
-Add -> NetBird -> stock Save -> row visible -> Edit -> Enrollment -> stock toggle
+Add -> NetBird -> Setup Key visible -> stock Save -> row visible -> stock toggle
 ```
 
-Observe metadata/runtime without printing credentials:
+Validate metadata without printing credentials:
 
 ```sh
 uci show vpn.client
 uci show network.vpn
 uci show vpn | grep -E "=server|type='netbirdvpn'|profile_key="
 find /tp_data/netbird/profiles -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null
+find /tmp -maxdepth 1 -name 'nb-setup-key-*' -print
 ubus call network.interface.vpn status
 /sbin/netbird-ctl status
 /sbin/netbird-ctl payload-status
 ip addr show wt0
 ```
 
+Success requires:
+
+- POST `/admin/vpn?form=server` does not return HTTP 500;
+- new row appears in stock list;
+- row key and `profile_key` match;
+- one matching provider directory exists;
+- no Setup Key is persisted;
+- no temporary Setup Key file remains;
+- activation happens only after the stock toggle.
+
 ### Multiple profiles
 
-Create profile B and verify:
-
-- A and B both appear in the stock list;
-- keys differ;
-- provider directories differ;
-- enrollment/edit of one does not mutate the other;
-- only the stock-selected profile is active.
+Create B with the same one-step flow and verify A/B both remain visible, keys and
+provider directories differ, one profile never mutates the other, and only the
+stock-selected profile is active.
 
 ### DELETE/GC
 
-Delete B through the stock UI. A must remain untouched. Then run:
+Delete B through the stock UI and run:
 
 ```sh
 /etc/init.d/netbird-profile-gc start
 ```
 
-B's provider directory should disappear while A remains.
+B provider state must disappear while A remains.
 
 ### Routing peer
 
-When enabled validate:
+When enabled inspect:
 
 ```sh
 cat /tmp/netbird-firewall.state
@@ -307,15 +302,8 @@ iptables -S NETBIRD-RT-FWD-IN
 iptables -t nat -S POSTROUTING | grep -E 'wt0|100\.64\.'
 ```
 
-Also test:
-
-```text
-CIDR A -> CIDR B
-routing ON -> OFF
-WireGuard port X -> Y
-```
-
-No stale A/X rule may remain.
+Also test CIDR A -> B, routing ON -> OFF and WireGuard port X -> Y. No stale
+rules may remain.
 
 ### Remote direction
 
@@ -326,23 +314,27 @@ From a real remote peer test:
 3. Proxmox/VMs/local Coolify as applicable;
 4. DNS without dependency on `10.8.0.1`.
 
-## Current validation status — 2026-09-09
+## Current validation status — 2026-09-10
 
 ```text
-clean native provider architecture: implemented on fix/netbird-ui-state-routing
-multi-profile stock-keyed persistence: implemented in code
-no root-level profile fallback: implemented in code
-stock generic CRUD/list/toggle/delete/status boundary: enforced in code/build gates
-LuCI index-cache upvalue fix: implemented in code
-browser cache busting: implemented in code
-R2 runtime: previously validated on hardware
-make test-netbird after clean-break refactor: PENDING LOCAL EXECUTION
-firmware build/repack after clean-break refactor: PENDING
-hardware stock Save/Edit/Enrollment acceptance: PENDING
+clean native provider architecture: IMPLEMENTED IN CODE
+multi-profile stock-keyed persistence: IMPLEMENTED IN CODE
+no root-level profile fallback: IMPLEMENTED IN CODE
+stock generic CRUD/list/toggle/delete/status boundary: ENFORCED BY SOURCE/BUILD GATES
+Setup Key visible during CREATE: IMPLEMENTED IN CODE; HARDWARE PENDING
+one-step Setup Key via stock Save provider callback: IMPLEMENTED IN CODE; HARDWARE PENDING
+stock VPN_TBL rule shape fix for observed HTTP 500: IMPLEMENTED IN CODE; HARDWARE PENDING
+nested su-form/layout fix: IMPLEMENTED IN CODE; HARDWARE PENDING
+LuCI index-cache upvalue fix: IMPLEMENTED
+browser cache busting: IMPLEMENTED
+R2 runtime: PREVIOUSLY VALIDATED ON HARDWARE
+latest make test-netbird: PENDING LOCAL EXECUTION AFTER THESE COMMITS
+latest firmware build/repack: PENDING
+hardware one-step ADD -> LIST acceptance: PENDING
 multi-profile hardware acceptance: PENDING
 remote peer -> AX53/LAN acceptance: PENDING
 WG-Easy decommission: NOT AUTHORIZED
 ```
 
-Do not claim this refactor validated until the local gate, build and hardware
-acceptance all pass.
+Do not claim the newest flow validated until the local gate, build and hardware
+acceptance pass.
