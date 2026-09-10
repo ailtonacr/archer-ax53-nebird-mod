@@ -4,8 +4,8 @@
 Architectural rule: TP-Link owns every generic VPN Client operation it already
 implements. NetBird adds only a fifth provider, its protocol fields/runtime and
 profile-scoped enrollment/diagnostics. Provider persistence maintenance must not
-intercept generic CRUD. No compatibility/migration path from older NetBird
-implementations is part of the current firmware.
+intercept generic CRUD. The current firmware has no compatibility import path;
+all provider identity/state is keyed by a real stock profile.
 """
 from __future__ import annotations
 
@@ -45,7 +45,6 @@ def check_native_registry() -> None:
         'if profile_key ~= "" then vpn.profile_key = profile_key end',
     )
     assert 'key = "netbird"' not in native
-    assert 'legacy_identity' not in native
     assert "debug.getupvalue" not in native and "debug.setupvalue" not in native
 
     index_body = loader.split("function index()", 1)[1]
@@ -109,7 +108,8 @@ def check_auxiliary_boundary() -> None:
         'local function native_profile_active(profile_key)', 'local function op_status(body)',
         'local function op_enroll(body)', 'model.control("enroll", profile_key, tmp)',
         'local function op_restart(body)', 'sys.call("/etc/init.d/vpnc restart >/dev/null 2>&1")',
-        'local function op_log(body)', 'local function op_payload_status()',
+        'local function op_log(body)', 'model.log(profile_key, tonumber(n) or 100)',
+        'local function op_payload_status()',
     )
     dispatch = controller.split("function dispatch(body)", 1)[1]
     for op in ("settings_set", "settings_get", "connected_status", "profile_delete", "clean"):
@@ -125,8 +125,9 @@ def check_auxiliary_boundary() -> None:
         'valid_profile_key', 'profile_dir', 'function status(profile_key)', 'function control(op, profile_key, keyfile)',
         'if not valid_profile_key(profile_key) then return nil, "invalid profile key" end',
     )
-    for token in ('SETTINGS = ROOT .. "/settings"', 'LEGACY_ADOPTION =', 'function connected_status(', 'function remove_profile_state(', 'mark_legacy_profile_deleted'):
-        assert token not in model, f"obsolete singleton/delete helper remains in provider model: {token!r}"
+    assert 'SETTINGS = ROOT .. "/settings"' not in model
+    assert 'function connected_status(' not in model
+    assert 'function remove_profile_state(' not in model
 
 
 def check_profile_authority() -> None:
@@ -141,10 +142,6 @@ def check_profile_authority() -> None:
         'nb_profile_gc_orphans()', 'NB_CONFIG_DIR=""', 'NB_SETTINGS_FILE=""',
         'there is intentionally no singleton/default profile context',
     )
-    for token in ('NB_LEGACY', 'nb_legacy', 'legacy_identity', 'migrate-profile', 'legacy-adoption'):
-        assert token not in profiles, f"migration token remains in profile helper: {token!r}"
-    assert not (ROOT / "src/init/netbird-profile-migrate.init").exists(), "obsolete profile migration init still exists"
-
     require(gc_init, 'nb_profile_gc_orphans', 'never creates profiles', 'never starts or')
     gc_code = shell_code(gc_init)
     for token in ('nb_runtime_connect', 'netbird-ctl up', 'service_start', 'uci set'):
@@ -155,7 +152,8 @@ def check_profile_authority() -> None:
         'root-level profile context survived helper load',
         'deleting B damaged A',
         'root-level identity was created',
-        'obsolete migration token remains',
+        'root-level settings were created',
+        'root-level state directory was created',
     )
 
 
@@ -166,7 +164,13 @@ def check_runtime_library() -> None:
     proto = text("src/init/netbird-proto.sh")
     recovery = text("src/init/netbird-recovery")
 
-    require(base, 'NB_BIN="/tmp/netbird"', 'nb_materialize()', 'nb_payload_status()', 'nb_daemon_start()', 'nb_daemon_stop()', 'nb_fw_access()', 'nb_fw_block()')
+    require(
+        base,
+        'NB_CONFIG_DIR=""', 'NB_CONFIG_FILE=""', 'NB_SETTINGS_FILE=""',
+        'nb_require_profile_context()', '/tp_data/netbird/profiles/*',
+        'NB_BIN="/tmp/netbird"', 'nb_materialize()', 'nb_payload_status()',
+        'nb_daemon_start()', 'nb_daemon_stop()', 'nb_fw_access()', 'nb_fw_block()',
+    )
     require(
         runtime,
         'nb_up_flags()', '"--wireguard-port=${wg_port}"', 'nb_runtime_validate_settings()',
@@ -184,9 +188,6 @@ def check_runtime_library() -> None:
         '. /lib/netbird/netbird-profiles.sh', '--profile-key', 'nb_profile_select "$profile_key"',
         'no active native NetBird profile; use --profile-key KEY', '. /lib/netbird/netbird-runtime.sh',
     )
-    for token in ('migrate-profile', 'nb_profile_use_legacy', 'nb_legacy_profile_adopt'):
-        assert token not in ctl, f"obsolete CLI migration path remains: {token!r}"
-
     require(
         proto,
         '. /lib/netbird/netbird-profiles.sh', 'proto_config_add_string "profile_key"',
@@ -198,6 +199,7 @@ def check_runtime_library() -> None:
     assert "proto_set_available" not in proto
 
     require(recovery, 'nb_recovery_native_active()', 'nb_profile_select_active', '/etc/init.d/vpnc restart')
+    assert 'netbirdvpn|netbird' not in recovery
     assert "nb_runtime_connect" not in shell_code(recovery)
 
 
@@ -221,6 +223,12 @@ def check_build_gates() -> None:
     makefile = text("Makefile")
     verifier = text("scripts/verify-tplink-vpn-bytecode.py")
     require(
+        mod010,
+        'is_stock_vpn "$VPN_CONTROLLER"',
+        'rebuild from the clean stock firmware',
+        'for generic_op in', "'profile_delete'", "'connected_status'", "'settings_get'",
+    )
+    require(
         mod012,
         'Generic list/ADD/EDIT/Save/toggle/DELETE/connected-status remain stock.',
         'python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"',
@@ -232,10 +240,6 @@ def check_build_gates() -> None:
         'VpnServerNetbirdForm-NB.js?v=', 'nb_profile_gc_orphans',
         'PROFILE_GC_INIT=', 'netbird-profile-gc', 'generic flow fully stock',
     )
-    for token in ('PROFILE_MIGRATE_INIT', 'nb_legacy_profile_adopt', 'S89netbird-profile-migrate'):
-        assert token not in mod012 or token == 'S89netbird-profile-migrate', f"obsolete migration implementation remains: {token!r}"
-    require(mod012, 'rm -f "$R/etc/init.d/netbird-profile-migrate"', 'obsolete NetBird migration token remains')
-    require(mod010, 'for generic_op in', "'profile_delete'", "'connected_status'", "'settings_get'")
     require(
         verifier,
         '"VPN_TBL"', '"VPN_CFG_TBL"', '"VPN_TYPE_TBL"', '"VPN_TYPE_NAME_TBL"',
@@ -244,10 +248,8 @@ def check_build_gates() -> None:
     require(
         makefile,
         'test-netbird:', 'src/init/netbird-profile-gc.init', 'scripts/test-netbird-profiles.sh',
-        'scripts/test-netbird-recovery.sh', 'obsolete NetBird profile migration service remains',
-        'independent profile identities + orphan GC; no migration path',
+        'scripts/test-netbird-recovery.sh', 'independent profile identities + orphan GC',
     )
-    assert 'src/init/netbird-profile-migrate.init' not in makefile
 
 
 def main() -> None:
