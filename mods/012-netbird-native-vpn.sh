@@ -5,8 +5,9 @@
 # Allowed custom surface:
 #   - register type=netbirdvpn in the stock controller registries
 #   - provider-specific frontend subform/serialization
+#   - transient setup-key enrollment inside the stock Save provider callback
 #   - netifd proto=netbird + runtime
-#   - profile-scoped enrollment/identity/diagnostics
+#   - profile-scoped identity/diagnostics
 #   - provider-state orphan garbage collection
 #
 # Generic list/ADD/EDIT/Save/toggle/DELETE/connected-status remain stock.
@@ -84,9 +85,7 @@ if new not in text:
     path.write_text(text)
 PY
 
-# Native registry contract: extend the stock registries instead of replacing the
-# controller or adding a parallel profile manager. The stock VPN_TBL validator
-# requires numeric rule entries shaped as { field={...}, canbe_empty=..., check=... }.
+# Native registry + provider-save contract.
 grep -q 'TYPE = "netbirdvpn"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'TYPE_ID = "5"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q '"profile_key"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
@@ -100,20 +99,29 @@ grep -q 'vpn.VPN_CFG_TBL\[TYPE\] = netbird_config' "$R/usr/lib/lua/luci/model/ne
 grep -q 'vpn.VPN_TYPE_TBL\[TYPE\] = TYPE_ID' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'vpn.VPN_TYPE_NAME_TBL\[TYPE\] = TYPE_NAME' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'vpn.VPN_TBL\[TYPE\] = schema' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -q 'local setup_key = cfg.setup_key' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -q 'local function enroll_transient(profile_key, setup_key)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -Fq 'nb_model.control("enroll", profile_key, tmp)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -Fq 'nixio.fs.unlink(tmp)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+if sed -n '/local FIELDS = {/,/^}/p' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua" | grep -Fq '"setup_key"'; then
+  echo "Error: setup_key leaked into persistent VPN_TBL fields" >&2
+  exit 1
+fi
 grep -q 'native.install()' "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua"
 grep -Fq 'if [ "$vpntype" != "netbirdvpn" ]; then' "$VPN_CORE"
 
-# /admin/netbird may expose only provider-specific operations. Generic writable
-# profile configuration and generic CRUD/status must never be duplicated there.
-if grep -Fq 'elseif op == "settings_set"' "$NB_AUX_CONTROLLER"; then
-  echo "Error: auxiliary /admin/netbird still exposes writable settings_set" >&2
+# /admin/netbird is diagnostics/control only. Enrollment is not a second Save
+# path: it is consumed by VPN_CFG_TBL[netbirdvpn] during the stock Save request.
+if grep -Eq 'op == "(enroll|settings_set|settings_get|profile_delete|connected_status)"' "$NB_AUX_CONTROLLER"; then
+  echo "Error: auxiliary /admin/netbird shadows stock/provider-save operations" >&2
+  exit 1
+fi
+if grep -Fq 'setup_key' "$NB_AUX_CONTROLLER"; then
+  echo "Error: setup key leaked into auxiliary NetBird endpoint" >&2
   exit 1
 fi
 grep -q 'requested_profile_key' "$NB_AUX_CONTROLLER" || {
-  echo "Error: auxiliary NetBird operations are not keyed to a stock profile" >&2; exit 1;
-}
-grep -q 'local function op_enroll' "$NB_AUX_CONTROLLER" || {
-  echo "Error: profile-scoped NetBird enrollment endpoint missing" >&2; exit 1;
+  echo "Error: auxiliary NetBird diagnostics are not keyed to a stock profile" >&2; exit 1;
 }
 
 # Profile-scoped persistence only. There is no singleton identity. TP-Link owns
@@ -165,7 +173,7 @@ PROTO_SETUP="$(sed -n '/^proto_netbird_setup()/,/^proto_netbird_teardown()/p' "$
 }
 test ! -e "$R/etc/rc.d/S99netbird" || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }
 
-# Canonical firewall must preserve NetBird v0.77.1 Route ACL ordering.
+# Canonical firewall must preserve NetBird Route ACL ordering.
 NB_FW_CANONICAL="$(sed -n '/# NetBird v4 CIDR-scoped\/applied-state/,$p' "$R/lib/firewall/tpcmd.sh")"
 [ -n "$NB_FW_CANONICAL" ] || { echo "Error: ACL-safe canonical NetBird firewall source missing" >&2; exit 1; }
 if printf '%s\n' "$NB_FW_CANONICAL" | grep -Fq 'fw_s_add 4 f FORWARD ACCEPT 1 {'; then
@@ -178,7 +186,7 @@ printf '%s\n' "$NB_FW_CANONICAL" | grep -Fq 'fw_s_add 4 f FORWARD ACCEPT { "-i w
 }
 
 # Final frontend contract: provider injection/serialization only. Every generic
-# TP-Link function remains unchanged.
+# TP-Link function remains unchanged; setup_key is transient stock-Save input.
 UPDATE_JS="$(zcat "$R/www/webpages/js/update-store-DQkZxaRI.js.gz")"
 MODEL_JS="$(zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz")"
 PAGE_JS="$(zcat "$R/www/webpages/js/index-DTNtPvwx.js.gz")"
@@ -188,15 +196,18 @@ printf '%s' "$UPDATE_JS" | grep -Fq 'e.Netbird="netbirdvpn"'
 printf '%s' "$MODEL_JS" | grep -Fq 'function f(e){return a.request(y,{operation:"connected_status",key:e},{preventSuccess:!0})}'
 printf '%s' "$MODEL_JS" | grep -Fq 'async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}'
 printf '%s' "$MODEL_JS" | grep -Fq 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
-printf '%s' "$MODEL_JS" | grep -Fq 'new URL(n).hostname'
+printf '%s' "$MODEL_JS" | grep -Fq 'k=e.key||t()'
+printf '%s' "$MODEL_JS" | grep -Fq 'key:k,profile_key:k'
 printf '%s' "$PAGE_JS" | grep -Fq 'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}'
 printf '%s' "$PAGE_JS" | grep -Fq '"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
 printf '%s' "$PAGE_JS" | grep -Fq 'case it.Netbird:return VpnServerNetbirdForm'
 printf '%s' "$PAGE_JS" | grep -Fq 'VpnServerNetbirdForm-NB.js?v='
 printf '%s' "$FORM_JS" | grep -Fq 'const existing = !!(value && (value.key || value.id))'
 printf '%s' "$FORM_JS" | grep -Fq 'const profileKey = ref("")'
-printf '%s' "$FORM_JS" | grep -Fq 'profile_key: profileKey.value'
-printf '%s' "$FORM_JS" | grep -Fq 'stockComponent(this, "su-form")'
+printf '%s' "$FORM_JS" | grep -Fq 'setup_key: setupKey.value || ""'
+printf '%s' "$FORM_JS" | grep -Fq 'stockComponent(this, "su-password")'
+printf '%s' "$FORM_JS" | grep -Fq 'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link'
+printf '%s' "$FORM_JS" | grep -Fq 'return _h(SuSpin, { spinning: this.busy }, { default: () => items })'
 printf '%s' "$FORM_JS" | grep -Fq 'Permitir roteamento da LAN'
 
 for forbidden in \
@@ -211,6 +222,9 @@ for forbidden in \
   'function nbDelete(' \
   'value.type === "netbirdvpn"' \
   '"label-width": { span: 10 }' \
+  'stockComponent(this, "su-form")' \
+  'async function enroll()' \
+  'async function afterStockSave()' \
   '__nbActiveStockVpn' \
   'window.__netbirdSaveDraft' \
   '__netbirdSaveListener'
