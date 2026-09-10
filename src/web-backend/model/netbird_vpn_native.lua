@@ -74,12 +74,12 @@ local function settings_from_config(cfg, profile_key)
     local management_url = value_or_current(cfg, current, "management_url", "")
     if management_url == "" then management_url = current.management_url or "" end
 
-    local connect = cfg.connect
+    local stock_enable = cfg.enable
     local enable
-    if connect == nil then
+    if stock_enable == nil then
         enable = current.enable or "0"
     else
-        enable = (connect == "0" or connect == 0 or connect == false or connect == "off") and "0" or "1"
+        enable = (stock_enable == "0" or stock_enable == 0 or stock_enable == false or stock_enable == "off") and "0" or "1"
     end
 
     return {
@@ -154,7 +154,7 @@ local function netbird_config(cfg, vpn_type)
     local vpn = {
         proto = PROTO,
         auto = "1",
-        connectable = cfg.connect or "1",
+        connectable = cfg.enable or "1",
         management_url = updated.management_url,
         hostname = updated.hostname,
         wireguard_port = updated.wireguard_port,
