@@ -170,7 +170,7 @@ def check_auxiliary_boundary() -> None:
     require(
         controller,
         'local NATIVE_TYPE = "netbirdvpn"', 'local function requested_profile_key(body, required)',
-        'local function native_profile(profile_key)', 'name == profile_key and section.type == NATIVE_TYPE',
+        'local function native_profile(profile_key)', 'section.key == profile_key and section.type == NATIVE_TYPE',
         'local function native_profile_active(profile_key)', 'local function op_status(body)',
         'local function op_restart(body)', 'sys.call("/etc/init.d/vpnc restart >/dev/null 2>&1")',
         'local function op_log(body)', 'model.log(profile_key, tonumber(n) or 100)',
@@ -204,8 +204,8 @@ def check_profile_authority() -> None:
     require(
         profiles,
         'NB_ROOT=', 'NB_PROFILES_ROOT=', 'nb_profile_clear_context()', 'nb_profile_key_valid()',
-        'nb_profile_select()', 'nb_profile_stock_exists()', 'vpn.$key.type',
-        '[ "$section_type" = "server" ] && [ "$profile_type" = "netbirdvpn" ]',
+        'nb_profile_select()', 'nb_profile_stock_exists()', 'vpn.@server[$idx].key',
+        '[ "$row_key" = "$key" ] && [ "$row_type" = "netbirdvpn" ]',
         'nb_profile_gc_orphans()', 'NB_CONFIG_DIR=""', 'NB_SETTINGS_FILE=""',
         'nb_profile_clear_context',
     )
