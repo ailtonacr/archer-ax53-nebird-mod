@@ -1,14 +1,15 @@
 import { d as defineComponent, r as ref, e as onMounted, O as onUnmounted, h as _h } from "./vendor-BrE4IMR2.js";
 import { s as api } from "./update-store-DQkZxaRI.js";
 
-// NetBird protocol subform rendered by TP-Link's stock VPN Client dialog.
-// The outer dialog owns Description, VPN Type, Save/Cancel and row deletion.
-// This subform resolves TP-Link's registered su-* components instead of drawing
-// native HTML controls or maintaining a parallel CSS/design system.
+// NetBird protocol subform rendered inside TP-Link's stock VPN Client dialog.
+// The outer dialog owns Description, VPN Type, Save/Cancel, list/toggle/delete
+// and the stock /admin/vpn?form=server request. setup_key is intentionally
+// transient: getForm() exposes it only to that Save request and the backend
+// provider callback consumes it without persisting it in VPN_TBL/UCI.
 const NB = "/admin/netbird";
 
 function nbReq(operation, extra) {
-  return api.request(NB, Object.assign({ operation: operation }, extra || {}), { preventSuccess: true, preventError: true });
+  return api.request(NB, Object.assign({ operation }, extra || {}), { preventSuccess: true, preventError: true });
 }
 
 function errMsg(e) {
@@ -133,8 +134,6 @@ export default defineComponent({
     const error = ref("");
     const showLog = ref(false);
     const dirty = ref(false);
-    // Add is the safe default. Only a persisted stock key/id proves Edit mode;
-    // type=netbirdvpn is present in both Add and Edit and must not decide this.
     const creating = ref(true);
     let statusRequestPending = false;
 
@@ -149,10 +148,14 @@ export default defineComponent({
       message.value = "";
     }
 
+    function updateSetupKey(value) {
+      setupKey.value = String(value || "");
+      dirty.value = true;
+      error.value = "";
+      message.value = "";
+    }
+
     async function load(clearStaleError = true) {
-      // Add mode has no stock profile identity yet. Do not involve the auxiliary
-      // NetBird backend in generic creation; defaults are authored locally and
-      // the stock Save path creates the row first.
       if (!profileKey.value || creating.value || statusRequestPending) return;
       statusRequestPending = true;
       try {
@@ -171,25 +174,6 @@ export default defineComponent({
         if (clearStaleError) error.value = "";
       } catch (e) { error.value = errMsg(e); }
       finally { statusRequestPending = false; }
-    }
-
-    async function enroll() {
-      if (creating.value || !profileKey.value || !profileExists.value) {
-        error.value = "Salve o perfil primeiro e depois abra Editar para fazer o enrollment.";
-        return;
-      }
-      if (!setupKey.value) return;
-      if (dirty.value) { error.value = "Salve as alterações antes de fazer o enrollment."; return; }
-      busy.value = true; error.value = ""; message.value = "";
-      try {
-        const r = await nbReq("enroll", { profile_key: profileKey.value, setup_key: setupKey.value });
-        setupKey.value = "";
-        settings.value = r.settings || settings.value;
-        draft.value.enrolled = settings.value && settings.value.enrolled || "1";
-        draft.value.enable = settings.value && settings.value.enable || "0";
-        message.value = "Enrollment concluído.";
-      } catch (e) { error.value = errMsg(e); }
-      finally { busy.value = false; await load(false); }
     }
 
     async function restart() {
@@ -215,6 +199,8 @@ export default defineComponent({
       if (!validHostname(s.hostname)) { error.value = "Hostname inválido. Use letras, números, ponto, hífen ou sublinhado (máx. 64 caracteres)."; throw new Error(error.value); }
       if (!validWireGuardPort(s.wireguard_port)) { error.value = "Informe uma porta WireGuard entre 1 e 65535."; throw new Error(error.value); }
       if (!validManagementUrl(s.management_url)) { error.value = "Informe uma URL de gerenciamento válida (http:// ou https://)."; throw new Error(error.value); }
+      if ((creating.value || s.enrolled !== "1") && !setupKey.value) { error.value = "Informe a Setup Key do NetBird para concluir o enrollment neste salvamento."; throw new Error(error.value); }
+      if (setupKey.value.length > 4096) { error.value = "Setup Key inválida."; throw new Error(error.value); }
       if (s.advertise_lan === "1" && !validCidr(s.advertise_cidr)) { error.value = "Informe uma rede LAN válida em CIDR, por exemplo 192.168.10.0/24."; throw new Error(error.value); }
       if (s.advertise_lan === "1" && s.disable_server_routes !== "0") { error.value = "Para rotear a LAN, habilite Rotas de servidor do NetBird."; throw new Error(error.value); }
       if (s.advertise_lan === "1" && s.disable_firewall !== "0") { error.value = "Para rotear a LAN com políticas, habilite o firewall do NetBird."; throw new Error(error.value); }
@@ -226,30 +212,35 @@ export default defineComponent({
       creating.value = !existing;
       profileKey.value = existing ? String(value.key || value.id) : "";
       profileExists.value = existing;
-      // Never use settings from a previously edited NetBird row as the fallback
-      // for a different row. The stock row itself is the initial edit snapshot.
       draft.value = normalizeForm(value || {}, {});
       if (creating.value) { draft.value.enable = "0"; draft.value.enrolled = "0"; }
-      dirty.value = false; error.value = ""; message.value = ""; setupKey.value = "";
+      setupKey.value = "";
+      dirty.value = false; error.value = ""; message.value = "";
       if (existing) Promise.resolve().then(() => load(false));
       return true;
     }
 
     function getForm() {
       const s = draft.value || {};
-      // Return protocol-specific fields only. Generic profile identity, enabled
-      // state and list semantics remain owned by TP-Link's outer stock form.
+      // Generic identity/list fields remain stock-owned. setup_key is the sole
+      // transient field: the native provider callback consumes it and never
+      // includes it in VPN_TBL or the returned persistent vpn object.
       return {
         management_url: s.management_url || "", server: s.management_url || "", hostname: s.hostname || "",
         disable_dns: s.disable_dns || "1", disable_firewall: s.disable_firewall || "1",
         disable_client_routes: s.disable_client_routes || "1", disable_server_routes: s.disable_server_routes || "1",
         disable_ipv6: s.disable_ipv6 || "1", network_monitor: s.network_monitor || "0",
         advertise_lan: s.advertise_lan || "0", advertise_cidr: s.advertise_cidr || "",
-        wireguard_port: s.wireguard_port || "51820",
+        wireguard_port: s.wireguard_port || "51820", setup_key: setupKey.value || "",
       };
     }
 
-    function resetForm() { draft.value = normalizeForm(settings.value || {}, {}); dirty.value = false; error.value = ""; message.value = ""; return true; }
+    function resetForm() {
+      draft.value = normalizeForm(settings.value || {}, {});
+      setupKey.value = "";
+      dirty.value = false; error.value = ""; message.value = "";
+      return true;
+    }
     function clearValidate() { error.value = ""; return true; }
 
     context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate });
@@ -261,11 +252,10 @@ export default defineComponent({
     });
     onUnmounted(function () { if (timer) clearInterval(timer); });
 
-    return { props, settings, draft, status, netbird, payload, traffic, profileExists, profileKey, setupKey, log, busy, message, error, showLog, dirty, creating, updateDraft, enroll, restart, fetchLog };
+    return { props, settings, draft, status, netbird, payload, traffic, profileExists, profileKey, setupKey, log, busy, message, error, showLog, dirty, creating, updateDraft, updateSetupKey, restart, fetchLog };
   },
 
   render() {
-    const SuForm = stockComponent(this, "su-form");
     const SuFormItem = stockComponent(this, "su-form-item");
     const SuInput = stockComponent(this, "su-input");
     const SuPassword = stockComponent(this, "su-password");
@@ -288,13 +278,13 @@ export default defineComponent({
       items.push(_h(SuFormItem, { label: "Payload" }, textSlot(payloadLabel(this.payload && this.payload.state) + version)));
       if (this.netbird && this.netbird.netbirdIp) items.push(_h(SuFormItem, { label: "IP NetBird" }, textSlot(this.netbird.netbirdIp)));
       items.push(_h(SuFormItem, { label: "Tráfego" }, textSlot("↑ " + speedLabel(this.traffic && this.traffic.uploadSpeed) + "  ↓ " + speedLabel(this.traffic && this.traffic.downloadSpeed))));
-    } else {
-      items.push(_h(SuAlert, null, textSlot("Salve o perfil. Depois abra Editar para informar a Setup Key e concluir o enrollment.")));
     }
 
     items.push(_h(SuFormItem, { label: "Management URL", name: "management_url" }, { default: () => _h(SuInput, { value: s.management_url || "", "onUpdate:value": value => this.updateDraft("management_url", value), disabled, placeholder: "https://netbird.example.com" }) }));
     items.push(_h(SuFormItem, { label: "Hostname", name: "hostname", optional: "" }, { default: () => _h(SuInput, { value: s.hostname || "", "onUpdate:value": value => this.updateDraft("hostname", value), disabled, placeholder: "archer-ax53" }) }));
     items.push(_h(SuFormItem, { label: "Porta WireGuard", name: "wireguard_port" }, { default: () => _h(SuInput, { value: s.wireguard_port || "51820", "onUpdate:value": value => this.updateDraft("wireguard_port", value), disabled }) }));
+    items.push(_h(SuFormItem, { label: "Setup Key", name: "setup_key", optional: edit && s.enrolled === "1" ? "" : undefined }, { default: () => _h(SuPassword, { value: this.setupKey || "", "onUpdate:value": value => this.updateSetupKey(value), disabled, placeholder: edit && s.enrolled === "1" ? "Deixe em branco para manter a identidade atual" : "Setup Key do NetBird" }) }));
+    items.push(_h(SuAlert, null, textSlot(edit ? "A Setup Key só é usada se preenchida durante SALVAR; ela nunca é armazenada no perfil." : "A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link e não será armazenada.")));
 
     const flags = [
       ["Habilitar DNS do NetBird", "disable_dns", s.disable_dns === "0", true],
@@ -314,9 +304,7 @@ export default defineComponent({
     }
 
     if (edit) {
-      items.push(_h(SuFormItem, { label: "Setup key", optional: "" }, { default: () => _h(SuPassword, { value: this.setupKey || "", "onUpdate:value": value => { this.setupKey = value; }, disabled, placeholder: "Setup key para enrollment/re-enrollment" }) }));
       const actions = [
-        _h(SuButton, { type: "primary", secondary: "", loading: this.busy, disabled: disabled || !this.setupKey || this.dirty || !this.profileExists, onClick: this.enroll }, textSlot(s.enrolled === "1" ? "Re-enroll" : "Enrollment")),
         _h(SuButton, { secondary: "", loading: this.busy, disabled: disabled || this.dirty || !active, onClick: this.restart }, textSlot("Reiniciar")),
         _h(SuButton, { secondary: "", disabled, onClick: this.fetchLog }, textSlot(this.showLog ? "Ocultar logs" : "Logs")),
       ];
@@ -327,8 +315,9 @@ export default defineComponent({
     else if (this.message) items.push(_h(SuAlert, { closable: "" }, textSlot(this.message)));
     if (edit && this.showLog && this.log) items.push(_h(SuFormItem, { label: "Logs" }, { default: () => _h(SuInput, { value: this.log, disabled: true, type: "textarea" }) }));
 
-    // The TP-Link dialog already owns the outer grid. Do not impose another
-    // 10/10 label/content grid here; that nested grid caused horizontal overflow.
-    return _h(SuSpin, { spinning: this.busy }, { default: () => _h(SuForm, { model: s }, { default: () => items }) });
+    // Do not nest a second su-form inside TP-Link's outer VPN form. The provider
+    // items inherit the stock form context directly, preventing the duplicate
+    // grid that pushed inputs outside the modal.
+    return _h(SuSpin, { spinning: this.busy }, { default: () => items });
   },
 });
