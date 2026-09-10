@@ -121,7 +121,7 @@ firmware: $(TARGET) test-netbird
 		grep -Fq "VpnServerNetbirdForm-NB.js?v=" "$$VERIFY_JS_DIR/page.js" || { echo "Error: NetBird custom module cache-busting missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		grep -Fq "const existing = !!(value && (value.key || value.id))" "$$VERIFY_JS_DIR/form.js" || { echo "Error: NetBird Add/Edit is not keyed by persisted stock identity" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		grep -Fq "enrollment_token: enrollmentToken.value || \"\"" "$$VERIFY_JS_DIR/form.js" || { echo "Error: opaque enrollment token missing from stock Save payload" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
-		grep -Fq '"onUpdate:modelValue": onSetupKey' "$$VERIFY_JS_DIR/form.js" || { echo "Error: Setup Key password model binding missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "\"onUpdate:modelValue\": onSetupKey" "$$VERIFY_JS_DIR/form.js" || { echo "Error: Setup Key password model binding missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		grep -Fq "onInput: onSetupKey" "$$VERIFY_JS_DIR/form.js" || { echo "Error: Setup Key input fallback missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		if grep -Fq "setup_key:e.setup_key" "$$VERIFY_JS_DIR/model.js"; then echo "Error: Setup Key leaked into stock VPN serializer" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; fi; \
 		grep -Fq "stockComponent(this, \"su-password\")" "$$VERIFY_JS_DIR/form.js" || { echo "Error: stock Setup Key control missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
@@ -142,7 +142,7 @@ firmware: $(TARGET) test-netbird
 		echo "    ok independent profile identities + orphan GC"; \
 		echo "    ok vpnc/netifd sole normal lifecycle owner + rollback"; \
 		echo "    ok routing-peer invariants + NetBird Route ACL ordering"; \
-		echo "    ok build identity: $STAMPED_VERSION"; \
+		echo "    ok build identity: $$STAMPED_VERSION"; \
 		echo "=== [5/6] Repacking firmware ==="; \
 		rm -f "$(FIRMWARE_OUTPUT)"; \
 		bash 02-repack-ubi.sh "$(FIRMWARE_OUTPUT)" 2>&1 | tail -5; \
