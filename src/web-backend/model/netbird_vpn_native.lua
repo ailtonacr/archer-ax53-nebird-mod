@@ -7,6 +7,8 @@
 -- monkey-patching any captured dispatcher closure.
 module("luci.model.netbird_vpn_native", package.seeall)
 
+local nixio    = require "nixio"
+local fs       = require "luci.fs"
 local nb_model = require "luci.model.netbird"
 
 TYPE = "netbirdvpn"
@@ -16,6 +18,9 @@ PROTO = "netbird"
 
 local installed = false
 
+-- Only persistent provider fields belong in VPN_TBL. setup_key is deliberately
+-- absent: it is transient input consumed by netbird_config() during the stock
+-- Save request and must never be written to vpn/server or /tp_data settings.
 local FIELDS = {
     "management_url",
     "hostname",
@@ -94,23 +99,53 @@ local function settings_from_config(cfg, profile_key)
     }
 end
 
+local function enroll_transient(profile_key, setup_key)
+    setup_key = tostring(setup_key or "")
+    if setup_key == "" then return true end
+    if #setup_key > 4096 or setup_key:find("%z") then return nil, "invalid setup key" end
+
+    local tmp = "/tmp/nb-setup-key-" .. tostring(os.time()) .. "-" .. tostring(math.random(0x7fffffff))
+    if not fs.writefile(tmp, setup_key) then return nil, "failed to stage setup key" end
+    nixio.fs.chmod(tmp, "0600")
+
+    local out, rc = nb_model.control("enroll", profile_key, tmp)
+    nixio.fs.unlink(tmp)
+    if rc ~= 0 then
+        return nil, (out or "enrollment failed"):gsub("%s+$", "")
+    end
+
+    -- Enrollment temporarily starts the daemon. The stock VPN Client toggle is
+    -- the only owner of normal runtime activation, so leave the profile stopped.
+    nb_model.control("stop", profile_key)
+    local updated, err = nb_model.set_internal_settings({ enrolled = "1", enable = "0" }, profile_key)
+    if not updated then return nil, err or "failed to persist enrollment state" end
+    return true
+end
+
 local function netbird_config(cfg, vpn_type)
     cfg = cfg or {}
     local profile_key = profile_key_from_config(cfg)
-    local settings = settings_from_config(cfg, profile_key)
-
-    -- vpn/server remains authoritative. Materialize a profile-scoped runtime
-    -- settings view only once the persisted stock profile key is known. During
-    -- the initial ADD request the stock key may not exist yet; that is valid and
-    -- must never force all NetBird rows onto a synthetic key such as "netbird".
-    local updated, err
-    if profile_key ~= "" then
-        updated, err = nb_model.set_settings(settings, profile_key)
-    else
-        updated, err = nb_model.preview_settings(settings)
+    if profile_key == "" then
+        io.stderr:write("netbird: stock VPN profile key missing\n")
+        return {}
     end
+
+    local settings = settings_from_config(cfg, profile_key)
+    local updated, err = nb_model.set_settings(settings, profile_key)
     if not updated then
         io.stderr:write("netbird: native VPN config rejected: " .. tostring(err or "invalid settings") .. "\n")
+        return {}
+    end
+
+    local setup_key = cfg.setup_key
+    if setup_key ~= nil and tostring(setup_key) ~= "" then
+        local ok, enroll_err = enroll_transient(profile_key, setup_key)
+        if not ok then
+            io.stderr:write("netbird: enrollment failed for profile " .. profile_key .. ": " .. tostring(enroll_err or "unknown error") .. "\n")
+            return {}
+        end
+    elseif not nb_model.identity_present(profile_key) then
+        io.stderr:write("netbird: setup key required for unenrolled profile " .. profile_key .. "\n")
         return {}
     end
 
@@ -125,8 +160,8 @@ local function netbird_config(cfg, vpn_type)
         wireguard_port = updated.wireguard_port,
         server = server,
         parent = cfg.parent or "wan",
+        profile_key = profile_key,
     }
-    if profile_key ~= "" then vpn.profile_key = profile_key end
     if cfg.kill_switch ~= nil then vpn.kill_switch = cfg.kill_switch end
     return { vpn = vpn }
 end
@@ -143,9 +178,7 @@ function install()
 
     -- Match the vendor VPN_TBL validator contract exactly. The stock controller
     -- iterates numeric rule entries and expects rule.field (an array), optional
-    -- rule.canbe_empty and optional rule.check. NetBird performs its semantic
-    -- validation in preview_settings()/set_settings(), so the stock layer only
-    -- needs to accept these provider-specific fields as optional inputs.
+    -- rule.canbe_empty and optional rule.check.
     local schema = { proto = PROTO }
     for _, key in ipairs(FIELDS) do
         table.insert(schema, { field = { key }, canbe_empty = true })
