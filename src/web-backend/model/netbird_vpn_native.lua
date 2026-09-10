@@ -30,7 +30,6 @@ local FIELDS = {
     "wireguard_port",
     "server",
     "profile_key",
-    "legacy_identity",
     "kill_switch",
 }
 
