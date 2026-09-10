@@ -5,7 +5,6 @@ import vm from "node:vm";
 const original = fs.readFileSync(new URL("./VpnServerNetbirdForm-NB.js", import.meta.url), "utf8");
 
 for (const token of [
-  'stockComponent(this, "su-form")',
   'stockComponent(this, "su-form-item")',
   'stockComponent(this, "su-input")',
   'stockComponent(this, "su-password")',
@@ -16,17 +15,19 @@ for (const token of [
   'const creating = ref(true)',
   'const existing = !!(value && (value.key || value.id))',
   'const profileKey = ref("")',
-  'profile_key: profileKey.value',
-  'Return protocol-specific fields only',
+  'setup_key: setupKey.value || ""',
+  'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
   's.advertise_lan === "1" && s.disable_server_routes !== "0"',
   's.advertise_lan === "1" && s.disable_firewall !== "0"',
   'Permitir roteamento da LAN',
+  'return _h(SuSpin, { spinning: this.busy }, { default: () => items })',
 ]) assert.ok(original.includes(token), `missing authored token ${token}`);
 
 for (const token of [
+  'stockComponent(this, "su-form")',
   "NETBIRD_CSS", 'type: "checkbox"', 'class: "netbird-input"', "syncNativeSaveButton", "unknown error",
   'value.type === "netbirdvpn"', 'value.type === "netbird"', "const creating = ref(false)",
-  'Anunciar rede local', 'Já existe um perfil NetBird',
+  'Anunciar rede local', 'Já existe um perfil NetBird', 'async function enroll()', 'async function afterStockSave()',
   'enable: s.enable === "1" ? "on" : "off"',
 ]) assert.equal(original.includes(token), false, `generic/legacy UI token leaked: ${token}`);
 
@@ -62,7 +63,6 @@ const context = {
   URL,
   api: { request: async (path, body) => {
     requests.push({ path, ...body });
-    if (body.operation === "enroll") return { settings: { ...response.settings, enrolled: "1", enable: "0" } };
     return response;
   } },
 };
@@ -78,14 +78,17 @@ for (const key of ["validate", "setForm", "getForm", "resetForm", "clearValidate
   assert.equal(typeof exposed[key], "function", `${key} must be exposed`);
 assert.equal(typeof context.component.render, "function");
 
-// Add mode is entirely stock-owned: no persisted key means the provider subform
-// must not call /admin/netbird or infer Edit from type=netbirdvpn.
+// CREATE remains stock-owned. The provider contributes protocol fields plus one
+// transient setup_key that is consumed by the backend callback during the same
+// /admin/vpn Save. It must not call /admin/netbird before the profile exists.
 assert.equal(exposed.setForm({
   type: "netbirdvpn", management_url: "https://netbird.example",
   advertise_lan: "0", disable_server_routes: "1", disable_firewall: "1", wireguard_port: "51820",
 }), true);
 assert.equal(state.creating.value, true);
 assert.equal(state.profileKey.value, "");
+await assert.rejects(() => exposed.validate(), /Setup Key/);
+state.updateSetupKey("setup-key-only-for-save");
 assert.equal(await exposed.validate(), true);
 await timers[0]();
 assert.equal(requests.length, 0, "Add mode must not use auxiliary backend before stock Save");
@@ -94,9 +97,11 @@ const addForm = exposed.getForm();
 for (const field of ["key", "id", "type", "description", "enable", "enabled", "enrolled"])
   assert.equal(field in addForm, false, `provider subform must not own generic field ${field}`);
 assert.equal(addForm.management_url, "https://netbird.example");
+assert.equal(addForm.setup_key, "setup-key-only-for-save");
 
-// A persisted stock key alone proves Edit. Status/enrollment diagnostics are
-// then profile-scoped to that exact stock identity.
+// A persisted stock key alone proves Edit. Diagnostics are profile-scoped. An
+// already enrolled profile may save with setup_key blank; a populated value is
+// treated as explicit re-enrollment by the provider callback.
 assert.equal(exposed.setForm({
   key: "arbitrary-stock-key", type: "netbirdvpn", server: "https://netbird.example",
   management_url: "https://netbird.example", enable: "on", enrolled: "1",
@@ -112,6 +117,7 @@ assert.equal(await exposed.validate(), true);
 const editForm = exposed.getForm();
 assert.equal(editForm.management_url, "https://netbird.example");
 assert.equal(editForm.server, "https://netbird.example");
+assert.equal(editForm.setup_key, "");
 for (const field of ["key", "id", "type", "description", "enable", "enabled", "enrolled"])
   assert.equal(field in editForm, false, `protocol subform must not own TP-Link field ${field}`);
 
@@ -132,7 +138,7 @@ await assert.rejects(() => exposed.validate(), /firewall do NetBird/);
 state.updateDraft("disable_firewall", "0");
 assert.equal(await exposed.validate(), true);
 
-// Polling is read-only and cannot clobber an in-progress stock-dialog draft.
+// Polling remains read-only and cannot overwrite a draft being edited.
 state.updateDraft("advertise_cidr", "192.168.");
 assert.equal(state.dirty.value, true);
 response = { ...response, settings: { ...response.settings, advertise_cidr: "10.0.0.0/24" } };
@@ -148,4 +154,4 @@ assert.equal(await exposed.validate(), true);
 assert.equal(requests.some(r => r.operation === "settings_set"), false, "editing must never persist before stock dialog Save");
 
 context.unmounted();
-console.log("netbird protocol-only stock-form/multi-profile/draft contract ok");
+console.log("netbird stock-create/transient-setup-key/multi-profile/draft contract ok");
