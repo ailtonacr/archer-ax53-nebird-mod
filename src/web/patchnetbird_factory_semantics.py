@@ -66,6 +66,7 @@ def main() -> None:
 
     required_form = (
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
+        'stockComponent(this, "su-form")',
         'stockComponent(this, "su-form-item")',
         'stockComponent(this, "su-input")',
         'stockComponent(this, "su-password")',
@@ -73,7 +74,7 @@ def main() -> None:
         'const creating = ref(true)',
         'const existing = !!(value && (value.key || value.id))',
         'setup_key: setupKey.value || ""',
-        'return _h(SuSpin, { spinning: this.busy }, { default: () => items })',
+        '_h(SuForm, { model: s }, { default: () => items })',
         'Permitir roteamento da LAN',
     )
     missing_form = [token for token in required_form if token not in form]
@@ -81,7 +82,7 @@ def main() -> None:
         raise RuntimeError("native NetBird provider form contract incomplete: " + ", ".join(missing_form))
 
     for token in (
-        'stockComponent(this, "su-form")', 'async function enroll()',
+        '"label-width": { span: 10 }', '"content-width": { span: 14 }', 'async function enroll()',
         'async function afterStockSave()', 'Já existe um perfil NetBird',
     ):
         if token in form:
