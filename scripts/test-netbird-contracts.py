@@ -38,12 +38,14 @@ def check_native_registry() -> None:
         native,
         'TYPE = "netbirdvpn"', 'TYPE_ID = "5"', 'TYPE_NAME = "NetBird"', 'PROTO = "netbird"',
         'local vpn = require "luci.controller.admin.vpn"',
-        'local schema = { proto = PROTO }', 'table.insert(schema, { key = key })',
+        'local schema = { proto = PROTO }',
+        'table.insert(schema, { field = { key }, canbe_empty = true })',
         'vpn.VPN_TBL[TYPE] = schema', 'vpn.VPN_CFG_TBL[TYPE] = netbird_config',
         'vpn.VPN_TYPE_TBL[TYPE] = TYPE_ID', 'vpn.VPN_TYPE_NAME_TBL[TYPE] = TYPE_NAME',
         'local profile_key = profile_key_from_config(cfg)',
         'if profile_key ~= "" then vpn.profile_key = profile_key end',
     )
+    assert 'table.insert(schema, { key = key })' not in native, "invalid pre-stock VPN_TBL rule shape returned"
     assert 'key = "netbird"' not in native
     assert "debug.getupvalue" not in native and "debug.setupvalue" not in native
 
@@ -78,14 +80,19 @@ def check_stock_frontend_boundary() -> None:
     )
 
     # These strings intentionally occur once in the finalizer's forbidden-token
-    # guard. Their presence there is protection, not an implementation. Actual
-    # custom delete helpers/constants must not exist at all.
+    # tuples. That guard-only occurrence is expected; executable occurrences are
+    # forbidden.
     for guarded in (
-        'operation:"profile_delete"',
+        'key:e.key||"netbird"',
         'function nbSettingsSet(',
         'function nbControl(',
         'function nbDelete(',
-        'key:e.key||"netbird"',
+        'operation:"profile_delete"',
+        'a.value=_nb.concat(e)',
+        'it.Netbird===i.type?await Nbs(i)',
+        'window.__netbirdSaveDraft',
+        '__netbirdSaveListener',
+        'stopImmediatePropagation',
     ):
         assert finalizer.count(guarded) == 1, f"forbidden frontend token escaped guard-only usage: {guarded!r}"
     for token in ('DELETE_HELPER =', 'PROVIDER_DELETE =', 'await nbDelete('):
@@ -252,7 +259,9 @@ def check_build_gates() -> None:
         '"add"===n.type?await Ce(i):await ne(i,n.tableItem)',
         'VpnServerNetbirdForm-NB.js?v=', 'nb_profile_gc_orphans',
         'PROFILE_GC_INIT=', 'netbird-profile-gc', 'generic flow fully stock',
+        'table.insert(schema, { field = { key }, canbe_empty = true })',
     )
+    assert 'table.insert(schema, { key = key })' not in mod012
     require(
         verifier,
         '"VPN_TBL"', '"VPN_CFG_TBL"', '"VPN_TYPE_TBL"', '"VPN_TYPE_NAME_TBL"',
