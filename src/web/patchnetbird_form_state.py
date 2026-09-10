@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Validate CREATE/EDIT semantics authored directly in the NetBird subform.
 
-A NetBird type value exists in both Add and Edit. Only a persisted stock key/id
-may switch the protocol subform to Edit mode. Generic profile identity/enabled
-state remains owned by the TP-Link outer dialog; this stage performs no rewrite.
+Only a persisted stock key/id switches the protocol subform to Edit mode.
+CREATE carries a transient setup_key through the stock Save; EDIT accepts a
+blank setup_key only after an identity is already enrolled.
 """
 from __future__ import annotations
 
@@ -26,8 +26,9 @@ required = [
     'draft.value.enable = "0"',
     'draft.value.enrolled = "0"',
     'if (!profileKey.value || creating.value || statusRequestPending) return',
-    'creating.value || !profileKey.value || !profileExists.value',
-    'Return protocol-specific fields only',
+    '(creating.value || s.enrolled !== "1") && !setupKey.value',
+    'setup_key: setupKey.value || ""',
+    'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
     's.advertise_lan === "1" && s.disable_server_routes !== "0"',
     's.advertise_lan === "1" && s.disable_firewall !== "0"',
     'draft.value.disable_firewall = "0"',
@@ -38,11 +39,9 @@ if missing:
     raise RuntimeError("native CREATE/EDIT/provider boundary incomplete: " + ", ".join(missing))
 
 forbidden = [
-    'value.type === "netbirdvpn"',
-    'value.type === "netbird"',
-    "const creating = ref(false)",
-    'Anunciar rede local',
-    'Já existe um perfil NetBird',
+    'async function enroll()', 'async function afterStockSave()',
+    'value.type === "netbirdvpn"', 'value.type === "netbird"',
+    "const creating = ref(false)", 'Anunciar rede local', 'Já existe um perfil NetBird',
     'enable: s.enable === "1" ? "on" : "off"',
 ]
 leaked = [token for token in forbidden if token in text]
@@ -53,4 +52,4 @@ check = subprocess.run(["node", "--input-type=module", "--check"], input=text.en
 if check.returncode:
     raise RuntimeError("node --check failed for NetBird form:\n" + check.stderr.decode()[:2000])
 
-print("NetBird stock-owned CREATE/EDIT + protocol-only form contract verified")
+print("NetBird stock-owned CREATE/EDIT + one-step setup-key contract verified")
