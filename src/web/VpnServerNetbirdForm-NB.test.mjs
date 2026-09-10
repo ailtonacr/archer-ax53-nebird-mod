@@ -16,7 +16,8 @@ for (const token of [
   'const creating = ref(true)',
   'const existing = !!(value && (value.key || value.id))',
   'const profileKey = ref("")',
-  'setup_key: setupKey.value || ""',
+  'enrollment_token: enrollmentToken.value || ""',
+  'stage_setup_key',
   'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
   's.advertise_lan === "1" && s.disable_server_routes !== "0"',
   's.advertise_lan === "1" && s.disable_firewall !== "0"',
@@ -27,7 +28,7 @@ for (const token of [
 for (const token of [
   "NETBIRD_CSS", 'type: "checkbox"', 'class: "netbird-input"', "syncNativeSaveButton", "unknown error",
   'value.type === "netbirdvpn"', 'value.type === "netbird"', "const creating = ref(false)",
-  'Anunciar rede local', 'Já existe um perfil NetBird', 'async function enroll()', 'async function afterStockSave()',
+  'Anunciar rede local', 'Já existe um perfil NetBird', 'async function enroll()', 'async function afterStockSave()', 'setup_key: setupKey.value',
   'enable: s.enable === "1" ? "on" : "off"',
 ]) assert.equal(original.includes(token), false, `generic/legacy UI token leaked: ${token}`);
 
@@ -63,6 +64,7 @@ const context = {
   URL,
   api: { request: async (path, body) => {
     requests.push({ path, ...body });
+    if (body && body.operation === "stage_setup_key") return { enrollment_token: "0123456789abcdef0123456789abcdef" };
     return response;
   } },
 };
@@ -108,9 +110,9 @@ assert.equal(localForm.tag, "SuForm");
 assert.equal(localForm.props.model, state.draft.value);
 assert.ok(Array.isArray(localForm.children.default()), "local su-form must wrap provider items");
 
-// CREATE remains stock-owned. The provider contributes protocol fields plus one
-// transient setup_key that is consumed by the backend callback during the same
-// /admin/vpn Save. It must not call /admin/netbird before the profile exists.
+// CREATE remains stock-owned. validate() stages the secret through the provider
+// endpoint and getForm() contributes only the opaque enrollment token to the
+// normal stock Save payload.
 assert.equal(exposed.setForm({
   type: "netbirdvpn", management_url: "https://netbird.example",
   advertise_lan: "0", disable_server_routes: "1", disable_firewall: "1", wireguard_port: "51820",
@@ -121,17 +123,19 @@ await assert.rejects(() => exposed.validate(), /Setup Key/);
 state.updateSetupKey("setup-key-only-for-save");
 assert.equal(await exposed.validate(), true);
 await timers[0]();
-assert.equal(requests.length, 0, "Add mode must not use auxiliary backend before stock Save");
+assert.equal(requests.filter(r => r.operation === "stage_setup_key").length, 1);
+assert.equal(requests.some(r => r.operation === "stage_setup_key" && r.setup_key === "setup-key-only-for-save"), true);
 
 const addForm = exposed.getForm();
 for (const field of ["key", "id", "type", "description", "enable", "enabled", "enrolled"])
   assert.equal(field in addForm, false, `provider subform must not own generic field ${field}`);
 assert.equal(addForm.management_url, "https://netbird.example");
-assert.equal(addForm.setup_key, "setup-key-only-for-save");
+assert.equal(addForm.enrollment_token, "0123456789abcdef0123456789abcdef");
+assert.equal("setup_key" in addForm, false, "secret must never enter stock Save payload");
 
 // A persisted stock key alone proves Edit. Diagnostics are profile-scoped. An
-// already enrolled profile may save with setup_key blank; a populated value is
-// treated as explicit re-enrollment by the provider callback.
+// already enrolled profile may save with no staged token; entering a new Setup
+// Key stages a fresh token for explicit re-enrollment.
 assert.equal(exposed.setForm({
   key: "arbitrary-stock-key", type: "netbirdvpn", server: "https://netbird.example",
   management_url: "https://netbird.example", enable: "on", enrolled: "1",
@@ -147,7 +151,8 @@ assert.equal(await exposed.validate(), true);
 const editForm = exposed.getForm();
 assert.equal(editForm.management_url, "https://netbird.example");
 assert.equal(editForm.server, "https://netbird.example");
-assert.equal(editForm.setup_key, "");
+assert.equal(editForm.enrollment_token, "");
+assert.equal("setup_key" in editForm, false);
 for (const field of ["key", "id", "type", "description", "enable", "enabled", "enrolled"])
   assert.equal(field in editForm, false, `protocol subform must not own TP-Link field ${field}`);
 
@@ -184,4 +189,4 @@ assert.equal(await exposed.validate(), true);
 assert.equal(requests.some(r => r.operation === "settings_set"), false, "editing must never persist before stock dialog Save");
 
 context.unmounted();
-console.log("netbird stock-create/transient-setup-key/multi-profile/draft contract ok");
+console.log("netbird stock-create/staged-setup-key/multi-profile/draft contract ok");
