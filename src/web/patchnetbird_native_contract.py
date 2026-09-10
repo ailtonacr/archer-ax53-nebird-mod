@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Validate the authored TP-Link native subform contract.
 
-The form no longer relies on DOM Save interception or post-build structural
-rewrites. This stage is retained in the existing pipeline as a fail-fast check
-that the source still exposes exactly what VpnServerFormDialog consumes.
+The form does not rely on DOM Save interception or post-build structural
+rewrites. This stage is a fail-fast check that the source exposes exactly what
+VpnServerFormDialog consumes while leaving the TP-Link dialog/button untouched.
 """
 from __future__ import annotations
 
@@ -50,7 +50,7 @@ forbidden = [
 ]
 leaked = [token for token in forbidden if token in text]
 if leaked:
-    raise RuntimeError("legacy/custom form implementation leaked: " + ", ".join(leaked))
+    raise RuntimeError("obsolete/custom form implementation leaked: " + ", ".join(leaked))
 
 check = subprocess.run(["node", "--input-type=module", "--check"], input=text.encode(), capture_output=True)
 if check.returncode:
