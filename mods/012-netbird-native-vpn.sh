@@ -99,10 +99,11 @@ grep -q 'vpn.VPN_CFG_TBL\[TYPE\] = netbird_config' "$R/usr/lib/lua/luci/model/ne
 grep -q 'vpn.VPN_TYPE_TBL\[TYPE\] = TYPE_ID' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'vpn.VPN_TYPE_NAME_TBL\[TYPE\] = TYPE_NAME' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'vpn.VPN_TBL\[TYPE\] = schema' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
-grep -q 'local setup_key = cfg.setup_key' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
-grep -q 'local function enroll_transient(profile_key, setup_key)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
-grep -Fq 'nb_model.control("enroll", profile_key, tmp)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
-grep -Fq 'nixio.fs.unlink(tmp)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -q 'local enrollment_token = cfg.enrollment_token' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -q 'local function enroll_transient(profile_key, enrollment_token)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -Fq 'nb_model.staged_setup_key_path(enrollment_token)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -Fq 'nb_model.control("enroll", profile_key, keyfile)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -Fq 'nb_model.discard_staged_setup_key(enrollment_token)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 if sed -n '/local FIELDS = {/,/^}/p' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua" | grep -Fq '"setup_key"'; then
   echo "Error: setup_key leaked into persistent VPN_TBL fields" >&2
   exit 1
@@ -116,10 +117,8 @@ if grep -Eq 'op == "(enroll|settings_set|settings_get|profile_delete|connected_s
   echo "Error: auxiliary /admin/netbird shadows stock/provider-save operations" >&2
   exit 1
 fi
-if grep -Fq 'setup_key' "$NB_AUX_CONTROLLER"; then
-  echo "Error: setup key leaked into auxiliary NetBird endpoint" >&2
-  exit 1
-fi
+grep -q 'local function op_stage_setup_key(body)' "$NB_AUX_CONTROLLER"
+grep -q 'model.stage_setup_key(setup_key)' "$NB_AUX_CONTROLLER"
 grep -q 'requested_profile_key' "$NB_AUX_CONTROLLER" || {
   echo "Error: auxiliary NetBird diagnostics are not keyed to a stock profile" >&2; exit 1;
 }
@@ -186,7 +185,8 @@ printf '%s\n' "$NB_FW_CANONICAL" | grep -Fq 'fw_s_add 4 f FORWARD ACCEPT { "-i w
 }
 
 # Final frontend contract: provider injection/serialization only. Every generic
-# TP-Link function remains unchanged; setup_key is transient stock-Save input.
+# TP-Link generic functions remain unchanged; stock Save carries only an opaque
+# enrollment token while the secret is staged provider-side in /tmp.
 UPDATE_JS="$(zcat "$R/www/webpages/js/update-store-DQkZxaRI.js.gz")"
 MODEL_JS="$(zcat "$R/www/webpages/js/model-CI6Gt3Hz.js.gz")"
 PAGE_JS="$(zcat "$R/www/webpages/js/index-DTNtPvwx.js.gz")"
@@ -205,7 +205,11 @@ printf '%s' "$PAGE_JS" | grep -Fq 'case it.Netbird:return VpnServerNetbirdForm'
 printf '%s' "$PAGE_JS" | grep -Fq 'VpnServerNetbirdForm-NB.js?v='
 printf '%s' "$FORM_JS" | grep -Fq 'const existing = !!(value && (value.key || value.id))'
 printf '%s' "$FORM_JS" | grep -Fq 'const profileKey = ref("")'
-printf '%s' "$FORM_JS" | grep -Fq 'setup_key: setupKey.value || ""'
+printf '%s' "$FORM_JS" | grep -Fq 'enrollment_token: enrollmentToken.value || ""'
+if printf '%s' "$MODEL_JS" | grep -Fq 'setup_key:e.setup_key'; then
+  echo "Error: Setup Key leaked into stock VPN serializer" >&2
+  exit 1
+fi
 printf '%s' "$FORM_JS" | grep -Fq 'stockComponent(this, "su-password")'
 printf '%s' "$FORM_JS" | grep -Fq 'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link'
 printf '%s' "$FORM_JS" | grep -Fq '_h(SuForm, { model: s }, { default: () => items })'
