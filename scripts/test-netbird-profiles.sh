@@ -24,18 +24,20 @@ uci() {
             case "$key" in
                 network.vpn.profile_key)
                     [ -n "$UCI_ACTIVE" ] && printf '%s\n' "$UCI_ACTIVE" || return 1 ;;
-                vpn.profile-a)
-                    [ "$UCI_A" = "1" ] && printf 'server\n' || return 1 ;;
-                vpn.profile-a.type)
+                'vpn.@server[0].key')
+                    [ "$UCI_A" = "1" ] && printf 'profile-a\n' || return 1 ;;
+                'vpn.@server[0].type')
                     [ "$UCI_A" = "1" ] && printf 'netbirdvpn\n' || return 1 ;;
-                vpn.profile-b)
-                    [ "$UCI_B" = "1" ] && printf 'server\n' || return 1 ;;
-                vpn.profile-b.type)
-                    [ "$UCI_B" = "1" ] && printf 'netbirdvpn\n' || return 1 ;;
-                vpn.other)
-                    [ "$UCI_NON_NETBIRD" = "1" ] && printf 'server\n' || return 1 ;;
-                vpn.other.type)
-                    [ "$UCI_NON_NETBIRD" = "1" ] && printf 'wireguardvpn\n' || return 1 ;;
+                'vpn.@server[1].key')
+                    if [ "$UCI_B" = "1" ]; then printf 'profile-b\n'
+                    elif [ "$UCI_NON_NETBIRD" = "1" ]; then printf 'other\n'
+                    else return 1
+                    fi ;;
+                'vpn.@server[1].type')
+                    if [ "$UCI_B" = "1" ]; then printf 'netbirdvpn\n'
+                    elif [ "$UCI_NON_NETBIRD" = "1" ]; then printf 'wireguard\n'
+                    else return 1
+                    fi ;;
                 *) return 1 ;;
             esac
             ;;
