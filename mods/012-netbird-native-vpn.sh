@@ -198,7 +198,8 @@ printf '%s' "$MODEL_JS" | grep -Fq 'async function W(e,n){await function(e,n,t){
 printf '%s' "$MODEL_JS" | grep -Fq 'async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}'
 printf '%s' "$MODEL_JS" | grep -Fq 'k=e.key||t()'
 printf '%s' "$MODEL_JS" | grep -Fq 'key:k,des:e.description,type:e.type,enable:i(e.enable),server:n,profile_key:k'
-printf '%s' "$PAGE_JS" | grep -Eq 'from"\./model-CI6Gt3Hz\.js\?v=[0-9a-f]{12}"'
+MODEL_CACHE_KEY="$(printf '%s' "$MODEL_JS" | sha256sum | cut -c1-12)"
+printf '%s' "$PAGE_JS" | grep -Fq "from\"./model-CI6Gt3Hz.js?v=$MODEL_CACHE_KEY\""
 printf '%s' "$PAGE_JS" | grep -Fq 'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}'
 printf '%s' "$PAGE_JS" | grep -Fq '"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
 printf '%s' "$PAGE_JS" | grep -Fq 'case it.Netbird:return VpnServerNetbirdForm'
