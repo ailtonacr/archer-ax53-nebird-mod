@@ -74,8 +74,21 @@ def check_stock_frontend_boundary() -> None:
         'type:u.Netbird,server:n,management_url:e.management_url||""',
         'new URL(n).hostname',
         'required = (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE, NATIVE_SERIALIZER)',
+        'leaked = [token for token in forbidden if token in text]',
     )
-    for token in ('DELETE_HELPER =', 'PROVIDER_DELETE =', 'await nbDelete(', 'operation:"profile_delete"'):
+
+    # These strings intentionally occur once in the finalizer's forbidden-token
+    # guard. Their presence there is protection, not an implementation. Actual
+    # custom delete helpers/constants must not exist at all.
+    for guarded in (
+        'operation:"profile_delete"',
+        'function nbSettingsSet(',
+        'function nbControl(',
+        'function nbDelete(',
+        'key:e.key||"netbird"',
+    ):
+        assert finalizer.count(guarded) == 1, f"forbidden frontend token escaped guard-only usage: {guarded!r}"
+    for token in ('DELETE_HELPER =', 'PROVIDER_DELETE =', 'await nbDelete('):
         assert token not in finalizer, f"generic delete interception leaked into finalizer: {token!r}"
     assert "def patch_model()" not in factory and "def patch_page()" not in factory
 
