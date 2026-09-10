@@ -176,12 +176,13 @@ function install()
         return nil, "stock VPN registries unavailable"
     end
 
-    -- Match the vendor VPN_TBL validator contract exactly. The stock controller
-    -- iterates numeric rule entries and expects rule.field (an array), optional
-    -- rule.canbe_empty and optional rule.check.
+    -- Match the vendor VPN_TBL contract observed on hardware exactly. Each
+    -- provider-specific field is represented as a positional rule table with a
+    -- single string member named "key"; generic fields (key/des/type/enable)
+    -- remain owned by the stock controller.
     local schema = { proto = PROTO }
     for _, key in ipairs(FIELDS) do
-        table.insert(schema, { field = { key }, canbe_empty = true })
+        table.insert(schema, { key = key })
     end
 
     vpn.VPN_TBL[TYPE] = schema
