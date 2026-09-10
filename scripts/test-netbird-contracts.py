@@ -124,8 +124,8 @@ def check_stock_frontend_boundary() -> None:
         'required = (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE, NATIVE_SERIALIZER)',
         'text = text.replace(marker, NATIVE_SERIALIZER, 1)',
         'def patch_model_import_cache_key() -> None:',
-        'hashlib.sha256(model.encode("utf-8")).hexdigest()[:12]',
-        'MODEL_CACHE_KEY=', 'sha256sum', 'model-CI6Gt3Hz.js?v=',
+        'digest = hashlib.sha256(model.encode("utf-8")).hexdigest()[:12]',
+        'desired = f\'from"./model-CI6Gt3Hz.js?v={digest}"\'',
     )
 
     guarded_tokens = {
