@@ -72,8 +72,7 @@ local function native_profile(profile_key)
     if not profile_key or not model.valid_profile_key(profile_key) then return nil end
     local found
     uci:foreach("vpn", "server", function(section)
-        local name = section[".name"]
-        if name == profile_key and section.type == NATIVE_TYPE then
+        if section.key == profile_key and section.type == NATIVE_TYPE then
             found = section
             return false
         end
@@ -94,26 +93,13 @@ local function native_profile_active(profile_key)
            active_profile_key() == profile_key
 end
 
-local function ensure_profile_key_option(profile_key, profile)
-    if not profile then return nil, "native NetBird VPN profile not found" end
-    if profile.profile_key == profile_key then return profile end
-    if not uci:set("vpn", profile_key, "profile_key", profile_key) then
-        return nil, "failed to persist native profile key"
-    end
-    if not uci:commit("vpn") then return nil, "failed to commit native profile key" end
-    profile.profile_key = profile_key
-    return profile
-end
-
 local function sync_settings_from_native_profile(profile_key)
     local profile = native_profile(profile_key)
     if not profile then return nil, "native NetBird VPN profile not found" end
-    local ensured, ensure_err = ensure_profile_key_option(profile_key, profile)
-    if not ensured then return nil, ensure_err end
 
     local cand = {}
     for key, kind in pairs(PROFILE_KEYS) do
-        local value = ensured[key]
+        local value = profile[key]
         if value ~= nil then cand[key] = kind == "bool" and bool01(value, nil) or scalar(value) end
     end
     cand.enable = native_profile_active(profile_key) and "1" or "0"
