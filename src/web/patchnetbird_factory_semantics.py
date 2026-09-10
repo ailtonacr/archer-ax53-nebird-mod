@@ -69,7 +69,7 @@ def main() -> None:
         'stockComponent(this, "su-form")',
         'stockComponent(this, "su-form-item")',
         'stockComponent(this, "su-input")',
-        'stockComponent(this, "su-password")',
+        'stockComponent(this, "su-password")', '"onUpdate:modelValue": onSetupKey', 'onInput: onSetupKey',
         'stockComponent(this, "su-checkbox")',
         'const creating = ref(true)',
         'const existing = !!(value && (value.key || value.id))',
