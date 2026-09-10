@@ -32,7 +32,7 @@ R="$ROOTFS_DIR"
 WEB_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_web.py"
 FACTORY_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_factory_semantics.py"
 FORM_STATE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_form_state.py"
-NATIVE_SAVE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_native_save.py"
+NATIVE_CONTRACT="$PROJECT_ROOT/src/web/patchnetbird_native_contract.py"
 NB_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird.lua"
 NB_MODEL="$PROJECT_ROOT/src/web-backend/model/netbird.lua"
 FIREWALL_SRC="$RUNTIME_SRC/netbird_firewall.inc"
@@ -90,13 +90,13 @@ echo "[3/7] patching VPN Client frontend ..."
 [ -f "$WEB_PATCHER" ] || { echo "Error: missing $WEB_PATCHER" >&2; exit 1; }
 [ -f "$FACTORY_PATCHER" ] || { echo "Error: missing $FACTORY_PATCHER" >&2; exit 1; }
 [ -f "$FORM_STATE_PATCHER" ] || { echo "Error: missing $FORM_STATE_PATCHER" >&2; exit 1; }
-[ -f "$NATIVE_SAVE_PATCHER" ] || { echo "Error: missing $NATIVE_SAVE_PATCHER" >&2; exit 1; }
+[ -f "$NATIVE_CONTRACT" ] || { echo "Error: missing $NATIVE_CONTRACT" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required for frontend patching" >&2; exit 1; }
 command -v node >/dev/null 2>&1 || { echo "Error: node is required for frontend syntax validation" >&2; exit 1; }
 python3 "$WEB_PATCHER" "$R"
 python3 "$FACTORY_PATCHER" "$R"
 python3 "$FORM_STATE_PATCHER" "$R"
-python3 "$NATIVE_SAVE_PATCHER" "$R"
+python3 "$NATIVE_CONTRACT" "$R"
 
 echo "[4/7] adding canonical CIDR-scoped NetBird firewall integration ..."
 if ! grep -q "# NetBird v4 CIDR-scoped/applied-state" "$R/lib/firewall/tpcmd.sh" 2>/dev/null; then
