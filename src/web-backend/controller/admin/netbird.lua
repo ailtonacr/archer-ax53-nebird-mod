@@ -288,8 +288,11 @@ local function op_log(body)
     local profile_key, key_err = requested_profile_key(body, true)
     if not profile_key then return error_reply("bad_request", key_err) end
     if not native_profile(profile_key) then return error_reply("profile_required", "native NetBird VPN profile not found") end
+    if not native_profile_active(profile_key) then
+        return error_reply("not_active", "logs are available only for the active NetBird profile")
+    end
     local n = request_value(body, "lines") or "100"
-    return reply({ lines = model.log(tonumber(n) or 100) })
+    return reply({ lines = model.log(profile_key, tonumber(n) or 100) })
 end
 
 local function op_payload_status()
