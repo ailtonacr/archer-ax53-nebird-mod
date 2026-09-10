@@ -18,7 +18,6 @@ end
 
 ROOT     = "/tp_data/netbird"
 PROFILES = ROOT .. "/profiles"
-SETTINGS = ROOT .. "/settings" -- historical single-profile compatibility only
 CTL      = "/sbin/netbird-ctl"
 
 KEYS = {
@@ -49,7 +48,6 @@ function profile_dir(profile_key)
 end
 
 local function settings_path(profile_key)
-    if profile_key == nil or profile_key == "" then return SETTINGS end
     local dir, err = profile_dir(profile_key)
     if not dir then return nil, err end
     return dir .. "/settings"
@@ -68,11 +66,10 @@ function profile_state_path(profile_key)
 end
 
 local function ensure_profile_dir(profile_key)
-    fs.mkdir(ROOT)
-    nixio.fs.chmod(ROOT, "0700")
-    if profile_key == nil or profile_key == "" then return ROOT end
     local dir, err = profile_dir(profile_key)
     if not dir then return nil, err end
+    fs.mkdir(ROOT)
+    nixio.fs.chmod(ROOT, "0700")
     fs.mkdir(PROFILES)
     nixio.fs.chmod(PROFILES, "0700")
     fs.mkdir(dir)
@@ -81,6 +78,7 @@ local function ensure_profile_dir(profile_key)
 end
 
 local function read_settings(profile_key)
+    if not valid_profile_key(profile_key) then return {} end
     local path = settings_path(profile_key)
     local t = {}
     local raw = path and fs.readfile(path) or ""
@@ -92,6 +90,7 @@ local function read_settings(profile_key)
 end
 
 function get_settings(profile_key)
+    if not valid_profile_key(profile_key) then return nil, "invalid profile key" end
     local cur, out = read_settings(profile_key), {}
     for k, spec in pairs(KEYS) do out[k] = cur[k] or spec.default end
     return out
@@ -174,8 +173,8 @@ local function merged_settings(cand, profile_key)
     return cur
 end
 
-function preview_settings(cand, profile_key)
-    return merged_settings(cand, profile_key)
+function preview_settings(cand)
+    return merged_settings(cand, nil)
 end
 
 local function write_settings(cur, profile_key)
@@ -191,18 +190,14 @@ local function write_settings(cur, profile_key)
 end
 
 function set_settings(cand, profile_key)
-    if profile_key ~= nil and profile_key ~= "" and not valid_profile_key(profile_key) then
-        return nil, "invalid profile key"
-    end
+    if not valid_profile_key(profile_key) then return nil, "invalid profile key" end
     local cur, err = merged_settings(cand, profile_key)
     if not cur then return nil, err end
     return write_settings(cur, profile_key)
 end
 
 function set_internal_settings(cand, profile_key)
-    if profile_key ~= nil and profile_key ~= "" and not valid_profile_key(profile_key) then
-        return nil, "invalid profile key"
-    end
+    if not valid_profile_key(profile_key) then return nil, "invalid profile key" end
     local allowed = {}
     if cand and cand.enrolled ~= nil then allowed.enrolled = cand.enrolled end
     if cand and cand.enable ~= nil then allowed.enable = cand.enable end
@@ -235,12 +230,8 @@ local function run_ex(...)
 end
 
 local function profile_args(profile_key, ...)
-    local args = {}
-    if profile_key and profile_key ~= "" then
-        if not valid_profile_key(profile_key) then return nil end
-        args[#args + 1] = "--profile-key"
-        args[#args + 1] = profile_key
-    end
+    if not valid_profile_key(profile_key) then return nil end
+    local args = { "--profile-key", profile_key }
     for i = 1, select("#", ...) do args[#args + 1] = select(i, ...) end
     return args
 end
@@ -276,11 +267,11 @@ function control(op, profile_key, keyfile)
     return nil, nil
 end
 
-function log(n)
+function log(profile_key, n)
     local lines = tonumber(n) or 100
     if lines < 1 then lines = 100 end
     if lines > 500 then lines = 500 end
-    return run("log", tostring(lines)) or ""
+    return run_profile(profile_key, "log", tostring(lines)) or ""
 end
 function payload_version() return (run("payload-version") or ""):gsub("%s+$", "") end
 function payload_ok() local _, rc = run_ex("payload-status"); return rc == 0 end
