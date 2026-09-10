@@ -67,8 +67,6 @@ cmp -s "$RUNTIME_SRC/netbird-proto.sh" "$R/lib/netifd/proto/netbird.sh" || { ech
 
 echo "[2/7] verifying untouched TP-Link VPN controller ..."
 VPN_CONTROLLER="$R/usr/lib/lua/luci/controller/admin/vpn.lua"
-OBSOLETE_VPN_STOCK="$R/usr/lib/lua/luci/netbird/vpn_stock.lua"
-OBSOLETE_CONTROLLER_BACKUP="$R/usr/lib/lua/luci/controller/admin/vpn_stock.lua"
 [ -f "$VPN_CONTROLLER" ] || { echo "Error: missing VPN controller $VPN_CONTROLLER" >&2; exit 1; }
 
 is_stock_vpn() {
@@ -83,7 +81,6 @@ is_stock_vpn "$VPN_CONTROLLER" || {
   echo "Error: vpn.lua is not original TP-Link bytecode; rebuild from the clean stock firmware" >&2
   exit 1
 }
-rm -f "$OBSOLETE_VPN_STOCK" "$OBSOLETE_CONTROLLER_BACKUP"
 
 if command -v luac >/dev/null 2>&1; then
   luac -p "$NB_CONTROLLER" "$NB_MODEL"
@@ -136,8 +133,6 @@ for f in lib/netbird/netbird.sh lib/netbird/netbird-profiles.sh lib/netifd/proto
   [ -f "$R/$f" ] && echo "    ok  $f" || { echo "    MISSING $f" >&2; exit 1; }
 done
 
-[ ! -e "$OBSOLETE_VPN_STOCK" ] || { echo "Error: obsolete vpn_stock.lua backup remains in image" >&2; exit 1; }
-[ ! -e "$OBSOLETE_CONTROLLER_BACKUP" ] || { echo "Error: obsolete vpn_stock.lua remains in controller tree" >&2; exit 1; }
 is_stock_vpn "$VPN_CONTROLLER" || { echo "Error: /admin/vpn controller is not original TP-Link bytecode" >&2; exit 1; }
 grep -q 'local function op_enroll' "$R/usr/lib/lua/luci/controller/admin/netbird.lua" || {
   echo "Error: NetBird provider enrollment operation missing" >&2; exit 1;
