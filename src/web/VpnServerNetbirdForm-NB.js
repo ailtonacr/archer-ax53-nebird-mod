@@ -3,9 +3,9 @@ import { s as api } from "./update-store-DQkZxaRI.js";
 
 // NetBird protocol subform rendered inside TP-Link's stock VPN Client dialog.
 // The outer dialog owns Description, VPN Type, Save/Cancel, list/toggle/delete
-// and the stock /admin/vpn?form=server request. setup_key is intentionally
-// transient: getForm() exposes it only to that Save request and the backend
-// provider callback consumes it without persisting it in VPN_TBL/UCI.
+// and the stock /admin/vpn?form=server request. The Setup Key is staged through
+// the provider endpoint during validate(); getForm() exposes only an opaque
+// enrollment token to the stock Save request, never the secret itself.
 const NB = "/admin/netbird";
 
 function nbReq(operation, extra) {
@@ -128,6 +128,7 @@ export default defineComponent({
     const profileExists = ref(false);
     const profileKey = ref("");
     const setupKey = ref("");
+    const enrollmentToken = ref("");
     const log = ref("");
     const busy = ref(false);
     const message = ref("");
@@ -150,6 +151,7 @@ export default defineComponent({
 
     function updateSetupKey(value) {
       setupKey.value = String(value || "");
+      enrollmentToken.value = "";
       dirty.value = true;
       error.value = "";
       message.value = "";
@@ -201,6 +203,14 @@ export default defineComponent({
       if (!validManagementUrl(s.management_url)) { error.value = "Informe uma URL de gerenciamento válida (http:// ou https://)."; throw new Error(error.value); }
       if ((creating.value || s.enrolled !== "1") && !setupKey.value) { error.value = "Informe a Setup Key do NetBird para concluir o enrollment neste salvamento."; throw new Error(error.value); }
       if (setupKey.value.length > 4096) { error.value = "Setup Key inválida."; throw new Error(error.value); }
+      if (setupKey.value && !enrollmentToken.value) {
+        const staged = await nbReq("stage_setup_key", { setup_key: setupKey.value });
+        enrollmentToken.value = String(staged && staged.enrollment_token || "");
+        if (!enrollmentToken.value) {
+          error.value = "Não foi possível preparar a Setup Key para este salvamento.";
+          throw new Error(error.value);
+        }
+      }
       if (s.advertise_lan === "1" && !validCidr(s.advertise_cidr)) { error.value = "Informe uma rede LAN válida em CIDR, por exemplo 192.168.10.0/24."; throw new Error(error.value); }
       if (s.advertise_lan === "1" && s.disable_server_routes !== "0") { error.value = "Para rotear a LAN, habilite Rotas de servidor do NetBird."; throw new Error(error.value); }
       if (s.advertise_lan === "1" && s.disable_firewall !== "0") { error.value = "Para rotear a LAN com políticas, habilite o firewall do NetBird."; throw new Error(error.value); }
@@ -215,6 +225,7 @@ export default defineComponent({
       draft.value = normalizeForm(value || {}, {});
       if (creating.value) { draft.value.enable = "0"; draft.value.enrolled = "0"; }
       setupKey.value = "";
+      enrollmentToken.value = "";
       dirty.value = false; error.value = ""; message.value = "";
       if (existing) Promise.resolve().then(() => load(false));
       return true;
@@ -222,22 +233,22 @@ export default defineComponent({
 
     function getForm() {
       const s = draft.value || {};
-      // Generic identity/list fields remain stock-owned. setup_key is the sole
-      // transient field: the native provider callback consumes it and never
-      // includes it in VPN_TBL or the returned persistent vpn object.
+      // Generic identity/list fields remain stock-owned. The Setup Key itself
+      // never enters the stock payload; only a short-lived opaque token does.
       return {
         management_url: s.management_url || "", server: s.management_url || "", hostname: s.hostname || "",
         disable_dns: s.disable_dns || "1", disable_firewall: s.disable_firewall || "1",
         disable_client_routes: s.disable_client_routes || "1", disable_server_routes: s.disable_server_routes || "1",
         disable_ipv6: s.disable_ipv6 || "1", network_monitor: s.network_monitor || "0",
         advertise_lan: s.advertise_lan || "0", advertise_cidr: s.advertise_cidr || "",
-        wireguard_port: s.wireguard_port || "51820", setup_key: setupKey.value || "",
+        wireguard_port: s.wireguard_port || "51820", enrollment_token: enrollmentToken.value || "",
       };
     }
 
     function resetForm() {
       draft.value = normalizeForm(settings.value || {}, {});
       setupKey.value = "";
+      enrollmentToken.value = "";
       dirty.value = false; error.value = ""; message.value = "";
       return true;
     }
@@ -252,7 +263,7 @@ export default defineComponent({
     });
     onUnmounted(function () { if (timer) clearInterval(timer); });
 
-    return { props, settings, draft, status, netbird, payload, traffic, profileExists, profileKey, setupKey, log, busy, message, error, showLog, dirty, creating, updateDraft, updateSetupKey, restart, fetchLog };
+    return { props, settings, draft, status, netbird, payload, traffic, profileExists, profileKey, setupKey, enrollmentToken, log, busy, message, error, showLog, dirty, creating, updateDraft, updateSetupKey, restart, fetchLog };
   },
 
   render() {
