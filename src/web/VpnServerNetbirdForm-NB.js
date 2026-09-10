@@ -316,7 +316,6 @@ export default defineComponent({
       "onUpdate:value": onSetupKey,
       "onUpdate:modelValue": onSetupKey,
       onInput: onSetupKey,
-      onChange: onSetupKey,
       disabled,
       placeholder: edit && s.enrolled === "1" ? "Deixe em branco para manter a identidade atual" : "Setup Key do NetBird",
     }) }));
