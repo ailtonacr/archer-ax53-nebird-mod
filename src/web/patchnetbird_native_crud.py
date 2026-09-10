@@ -10,8 +10,10 @@ it is never part of VPN_TBL/UCI persistence.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import io
 import os
+import re
 import subprocess
 import sys
 
@@ -63,6 +65,29 @@ def patch_update_store() -> None:
         raise RuntimeError("native NetBird enum netbirdvpn is missing")
     check_js(name, text)
     write_gz(name, text)
+
+
+def patch_model_import_cache_key() -> None:
+    """Version the model chunk import after provider serialization changes."""
+    model_name = "model-CI6Gt3Hz.js.gz"
+    page_name = "index-DTNtPvwx.js.gz"
+    model = read_gz(model_name)
+    page = read_gz(page_name)
+    digest = hashlib.sha256(model.encode("utf-8")).hexdigest()[:12]
+
+    pattern = re.compile(r'from"\./model-CI6Gt3Hz\.js(?:\?v=[0-9a-f]+)?"')
+    matches = pattern.findall(page)
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"model cache-busting: expected exactly one model import in {page_name}, found {len(matches)}"
+        )
+    desired = f'from"./model-CI6Gt3Hz.js?v={digest}"'
+    page = pattern.sub(desired, page, count=1)
+    if desired not in page:
+        raise RuntimeError("model cache-busting: versioned import was not installed")
+
+    check_js(page_name, page)
+    write_gz(page_name, page)
 
 
 def patch_model() -> None:
@@ -154,6 +179,7 @@ def assert_page_and_form() -> None:
 def main() -> None:
     patch_update_store()
     patch_model()
+    patch_model_import_cache_key()
     assert_page_and_form()
     print("Native NetBird finalized: stock CRUD + one-step transient setup-key enrollment")
 
