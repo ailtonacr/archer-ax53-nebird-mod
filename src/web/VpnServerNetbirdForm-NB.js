@@ -149,9 +149,16 @@ export default defineComponent({
       message.value = "";
     }
 
+    function setupKeyValue(value) {
+      if (value && typeof value === "object" && value.target && value.target.value !== undefined) {
+        return String(value.target.value || "");
+      }
+      return String(value == null ? "" : value);
+    }
+
     function updateSetupKey(value) {
       const staleToken = enrollmentToken.value;
-      setupKey.value = String(value || "");
+      setupKey.value = setupKeyValue(value);
       enrollmentToken.value = "";
       if (staleToken) nbReq("discard_setup_key", { enrollment_token: staleToken }).catch(() => {});
       dirty.value = true;
@@ -302,7 +309,17 @@ export default defineComponent({
     items.push(_h(SuFormItem, { label: "Management URL", name: "management_url" }, { default: () => _h(SuInput, { value: s.management_url || "", "onUpdate:value": value => this.updateDraft("management_url", value), disabled, placeholder: "https://netbird.example.com" }) }));
     items.push(_h(SuFormItem, { label: "Hostname", name: "hostname", optional: "" }, { default: () => _h(SuInput, { value: s.hostname || "", "onUpdate:value": value => this.updateDraft("hostname", value), disabled, placeholder: "archer-ax53" }) }));
     items.push(_h(SuFormItem, { label: "Porta WireGuard", name: "wireguard_port" }, { default: () => _h(SuInput, { value: s.wireguard_port || "51820", "onUpdate:value": value => this.updateDraft("wireguard_port", value), disabled }) }));
-    items.push(_h(SuFormItem, { label: "Setup Key", name: "setup_key", optional: edit && s.enrolled === "1" ? "" : undefined }, { default: () => _h(SuPassword, { value: this.setupKey || "", "onUpdate:value": value => this.updateSetupKey(value), disabled, placeholder: edit && s.enrolled === "1" ? "Deixe em branco para manter a identidade atual" : "Setup Key do NetBird" }) }));
+    const onSetupKey = value => this.updateSetupKey(value);
+    items.push(_h(SuFormItem, { label: "Setup Key", name: "setup_key", optional: edit && s.enrolled === "1" ? "" : undefined }, { default: () => _h(SuPassword, {
+      value: this.setupKey || "",
+      modelValue: this.setupKey || "",
+      "onUpdate:value": onSetupKey,
+      "onUpdate:modelValue": onSetupKey,
+      onInput: onSetupKey,
+      onChange: onSetupKey,
+      disabled,
+      placeholder: edit && s.enrolled === "1" ? "Deixe em branco para manter a identidade atual" : "Setup Key do NetBird",
+    }) }));
     items.push(_h(SuAlert, null, textSlot(edit ? "A Setup Key só é usada se preenchida durante SALVAR; ela nunca é armazenada no perfil." : "A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link e não será armazenada.")));
 
     const flags = [
