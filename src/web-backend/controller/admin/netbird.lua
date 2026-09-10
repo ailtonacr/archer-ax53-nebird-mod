@@ -1,13 +1,12 @@
 -- NetBird provider-specific controller for TP-Link Archer AX53 V1.
 --
 -- Generic profile list/CRUD/toggle/connected-status is owned exclusively by the
--- stock /admin/vpn?form=server endpoint for type=netbirdvpn. This endpoint owns
--- only behavior TP-Link cannot implement generically: profile-scoped NetBird
--- enrollment, runtime diagnostics/logs/payload state and an explicit restart
--- delegated back to the native vpnc/netifd lifecycle.
+-- stock /admin/vpn?form=server endpoint for type=netbirdvpn. Setup-key enrollment
+-- is consumed by the provider callback during that same stock Save request. This
+-- endpoint exposes only runtime diagnostics/logs/payload state and an explicit
+-- restart delegated back to the native vpnc/netifd lifecycle.
 module("luci.controller.admin.netbird", package.seeall)
 
-local nixio = require "nixio"
 local http   = require "luci.http"
 local lfs    = require "luci.fs"
 local sys    = require "luci.sys"
@@ -69,8 +68,6 @@ local function requested_profile_key(body, required)
     return key
 end
 
--- Resolve exactly one persisted stock row. Never fall back to "the first"
--- NetBird section: multiple profiles of the same provider are valid.
 local function native_profile(profile_key)
     if not profile_key or not model.valid_profile_key(profile_key) then return nil end
     local found
@@ -108,8 +105,6 @@ local function ensure_profile_key_option(profile_key, profile)
     return profile
 end
 
--- vpn.server is authoritative. The profile-scoped settings file is only a
--- materialized runtime view consumed by the NetBird protocol implementation.
 local function sync_settings_from_native_profile(profile_key)
     local profile = native_profile(profile_key)
     if not profile then return nil, "native NetBird VPN profile not found" end
@@ -243,36 +238,6 @@ local function op_status(body)
     })
 end
 
-local function op_enroll(body)
-    local profile_key, key_err = requested_profile_key(body, true)
-    if not profile_key then return error_reply("bad_request", key_err) end
-    local key = request_value(body, "setup_key")
-    if not key or key == "" then return error_reply("bad_request", "setup key required") end
-    if not native_profile(profile_key) then return error_reply("profile_required", "save the NetBird VPN profile before enrollment") end
-
-    -- Enrollment temporarily starts the NetBird daemon. Do not disturb another
-    -- active TP-Link VPN Client profile. Re-enrolling the currently active row
-    -- is explicit: turn it off first, enroll, then use the stock toggle again.
-    if uci:get("vpn", "client", "enabled") == "on" then
-        return error_reply("active_conflict", "disable the active VPN Client profile before NetBird enrollment")
-    end
-
-    local synced, sync_err = sync_settings_from_native_profile(profile_key)
-    if not synced then return error_reply("profile_required", sync_err) end
-
-    local tmp = "/tmp/nb-setup-key-" .. tostring(os.time()) .. "-" .. tostring(math.random(0x7fffffff))
-    if not lfs.writefile(tmp, key) then return error_reply("internal", "failed to stage setup key") end
-    nixio.fs.chmod(tmp, "0600")
-    local out, rc = model.control("enroll", profile_key, tmp)
-    nixio.fs.unlink(tmp)
-    if rc ~= 0 then return error_reply("enroll_failed", (out or "enrollment failed"):gsub("%s+$", "")) end
-
-    model.control("stop", profile_key)
-    local cur, state_err = model.set_internal_settings({ enrolled = "1", enable = "0" }, profile_key)
-    if not cur then return error_reply("internal", state_err or "failed to persist enrollment state") end
-    return reply({ result = "ok", profileKey = profile_key, settings = cur })
-end
-
 local function op_restart(body)
     local profile_key, key_err = requested_profile_key(body, true)
     if not profile_key then return error_reply("bad_request", key_err) end
@@ -303,7 +268,6 @@ function dispatch(body)
     local op = request_value(body, "operation") or "status"
     local ok_dispatch, result = pcall(function()
         if op == "status" then return op_status(body)
-        elseif op == "enroll" then return op_enroll(body)
         elseif op == "restart" then return op_restart(body)
         elseif op == "log" then return op_log(body)
         elseif op == "payload_status" then return op_payload_status()
