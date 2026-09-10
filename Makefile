@@ -112,8 +112,8 @@ firmware: $(TARGET) test-netbird
 		printf "%s" "$$MODEL_JS" | grep -Fq "async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}" || { echo "Error: generic VPN DELETE is not stock" >&2; exit 1; }; \
 		printf "%s" "$$MODEL_JS" | grep -Fq "k=e.key||t()" || { echo "Error: NetBird does not use the stock profile-key generator" >&2; exit 1; }; \
 		printf "%s" "$$MODEL_JS" | grep -Fq "key:k,des:e.description,type:e.type,enable:i(e.enable),server:n,profile_key:k" || { echo "Error: NetBird generic serializer fields do not match stock provider shape" >&2; exit 1; }; \
-		MODEL_CACHE_KEY="$(printf "%s" "$MODEL_JS" | sha256sum | cut -c1-12)"; \
-		printf "%s" "$PAGE_JS" | grep -Fq "from\"./model-CI6Gt3Hz.js?v=$MODEL_CACHE_KEY\"" || { echo "Error: modified VPN model import cache key does not match model digest" >&2; exit 1; }; \
+		MODEL_CACHE_KEY="$$(zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | sha256sum | cut -c1-12)"; \\
+		printf "%s" "$$PAGE_JS" | grep -Fq "from\"./model-CI6Gt3Hz.js?v=$$MODEL_CACHE_KEY\"" || { echo "Error: modified VPN model import cache key does not match model digest" >&2; exit 1; }; \\
 		printf "%s" "$$PAGE_JS" | grep -Fq "i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}" || { echo "Error: VPN list is not stock" >&2; exit 1; }; \
 		printf "%s" "$$PAGE_JS" | grep -Fq "\"add\"===n.type?await Ce(i):await ne(i,n.tableItem)" || { echo "Error: VPN ADD/EDIT Save path is not stock" >&2; exit 1; }; \
 		printf "%s" "$$PAGE_JS" | grep -Fq "case it.Netbird:return VpnServerNetbirdForm" || { echo "Error: NetBird provider form mapping missing" >&2; exit 1; }; \
