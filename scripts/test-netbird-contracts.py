@@ -248,7 +248,8 @@ def check_build_gates() -> None:
     require(
         mod010,
         'is_stock_vpn "$VPN_CONTROLLER"', 'rebuild from the clean stock firmware',
-        'for generic_op in', "'profile_delete'", "'connected_status'", "'settings_get'",
+        'for forbidden_op in', "'enroll'", "'settings_set'", "'profile_delete'", "'connected_status'", "'settings_get'",
+        'setup key leaked into auxiliary /admin/netbird endpoint',
     )
     require(
         mod012,
