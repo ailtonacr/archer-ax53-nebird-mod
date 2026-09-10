@@ -27,10 +27,12 @@ STOCK_DELETE = 'async function J(e,n){await function(e,n){return a.remove(y,{key
 STOCK_LIST = 'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}'
 STOCK_SAVE = '"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
 
-# Prefix inserted into TP-Link's existing R(e) serializer. The inserted brace
-# closes only the NetBird branch; the original stock function body remains the
-# fallback for every other provider and retains ownership of the generic shape.
-NATIVE_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,type:u.Netbird,server:n,management_url:e.management_url||""};}'
+# Prefix inserted into TP-Link's existing R(e) serializer. Stock serializers use
+# the vendor key generator t() as `key:e.key||t()`. NetBird must follow that same
+# identity convention so initial ADD receives a real stock key and multiple
+# NetBird rows remain independent. profile_key intentionally equals that stock
+# key; there is no synthetic/singleton provider identity.
+NATIVE_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"",k=e.key||t();try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:k,profile_key:k,type:u.Netbird,server:n,management_url:e.management_url||""};}'
 
 
 def read_gz(name: str) -> str:
@@ -120,6 +122,7 @@ def assert_page_and_form() -> None:
         'e===it.Netbird||ut.supportVpnClientType(e)',
         'case it.Netbird:return VpnServerNetbirdForm',
         'VpnServerNetbirdForm-NB.js?v=',
+        'afterStockSave',
     )
     missing_page = [token for token in required_page if token not in page]
     if missing_page:
@@ -129,12 +132,15 @@ def assert_page_and_form() -> None:
         'const existing = !!(value && (value.key || value.id))',
         'const creating = ref(true)',
         'const profileKey = ref("")',
-        'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
+        'stockProfileKey()',
+        'async function afterStockSave()',
+        'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate, afterStockSave })',
         'stockComponent(this, "su-form")',
         'stockComponent(this, "su-form-item")',
         'stockComponent(this, "su-input")',
         'stockComponent(this, "su-checkbox")',
         'profile_key: profileKey.value',
+        'Setup Key',
         'Permitir roteamento da LAN',
     )
     missing_form = [token for token in required_form if token not in form]
