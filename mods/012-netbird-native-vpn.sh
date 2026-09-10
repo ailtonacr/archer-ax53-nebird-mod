@@ -222,7 +222,6 @@ for forbidden in \
   'function nbDelete(' \
   'value.type === "netbirdvpn"' \
   '"label-width": { span: 10 }' \
-  '"label-width": { span: 10 }' \
   '"content-width": { span: 14 }' \
   'async function enroll()' \
   'async function afterStockSave()' \
