@@ -150,8 +150,10 @@ export default defineComponent({
     }
 
     function updateSetupKey(value) {
+      const staleToken = enrollmentToken.value;
       setupKey.value = String(value || "");
       enrollmentToken.value = "";
+      if (staleToken) nbReq("discard_setup_key", { enrollment_token: staleToken }).catch(() => {});
       dirty.value = true;
       error.value = "";
       message.value = "";
@@ -261,7 +263,12 @@ export default defineComponent({
       if (profileKey.value && !creating.value) load(false);
       timer = setInterval(function () { if (!busy.value && profileKey.value && !creating.value) load(false); }, 5000);
     });
-    onUnmounted(function () { if (timer) clearInterval(timer); });
+    onUnmounted(function () {
+      if (timer) clearInterval(timer);
+      const staleToken = enrollmentToken.value;
+      enrollmentToken.value = "";
+      if (staleToken) nbReq("discard_setup_key", { enrollment_token: staleToken }).catch(() => {});
+    });
 
     return { props, settings, draft, status, netbird, payload, traffic, profileExists, profileKey, setupKey, enrollmentToken, log, busy, message, error, showLog, dirty, creating, updateDraft, updateSetupKey, restart, fetchLog };
   },
