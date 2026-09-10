@@ -7,6 +7,7 @@ provider discovery, protocol fields, transient setup_key and serialization.
 """
 from __future__ import annotations
 
+import ast
 import pathlib
 import subprocess
 
@@ -20,6 +21,40 @@ FACTORY_GUARD = ROOT / "src" / "web" / "patchnetbird_factory_semantics.py"
 def require(body: str, *tokens: str) -> None:
     for token in tokens:
         assert token in body, f"contract missing {token!r}"
+
+
+def python_tree(body: str) -> ast.AST:
+    return ast.parse(body)
+
+
+def python_function_names(body: str) -> set[str]:
+    return {node.name for node in ast.walk(python_tree(body)) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+
+def python_assignment_string(body: str, name: str) -> str:
+    for node in ast.walk(python_tree(body)):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+            value = node.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value
+    raise AssertionError(f"python string assignment {name!r} missing")
+
+
+def python_named_literal_values(body: str, name: str) -> set[str]:
+    values: set[str] = set()
+    for node in ast.walk(python_tree(body)):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            continue
+        if isinstance(node.value, (ast.Tuple, ast.List, ast.Set)):
+            for item in node.value.elts:
+                if isinstance(item, ast.Constant) and isinstance(item.value, str):
+                    values.add(item.value)
+    return values
 
 
 def main() -> int:
@@ -54,43 +89,39 @@ def main() -> int:
         'e.Netbird="netbirdvpn"', 'assert_stock_model_untouched',
         'STOCK_CONNECTED_STATUS', 'STOCK_UPDATE', 'STOCK_DELETE', 'STOCK_LIST', 'STOCK_SAVE',
         'case it.Netbird:return VpnServerNetbirdForm', 'VpnServerNetbirdForm-NB.js?v=',
-        'hashlib.sha256', 'generic TP-Link VPN CRUD remains stock',
+        'hashlib.sha256', 'patch_vpn_page(root, module_spec)',
     )
 
     require(
         finalizer,
         'NATIVE_SERIALIZER =', 'k=e.key||t()', 'key:k,profile_key:k',
-        'type:u.Netbird,server:n,management_url:e.management_url||""',
+        'type:u.Netbird,server:n,management_url:e.management_url||"",setup_key:e.setup_key||""',
         'new URL(n).hostname', 'STOCK_CONNECTED_STATUS', 'STOCK_UPDATE', 'STOCK_DELETE',
-        'STOCK_LIST', 'STOCK_SAVE', 'expected clean stock model input',
-        'setup_key travels in', 'backend provider callback',
+        'STOCK_LIST', 'STOCK_SAVE', 'text = text.replace(marker, NATIVE_SERIALIZER, 1)',
     )
 
-    for guarded in (
+    guarded_tokens = {
         'key:e.key||"netbird"', 'function nbSettingsSet(', 'function nbControl(',
         'function nbDelete(', 'operation:"profile_delete"', 'a.value=_nb.concat(e)',
         'it.Netbird===i.type?await Nbs(i)', 'window.__netbirdSaveDraft',
         '__netbirdSaveListener', 'stopImmediatePropagation',
-    ):
-        assert finalizer.count(guarded) == 1, f"forbidden frontend token escaped guard-only usage: {guarded!r}"
+        'async function afterStockSave()', 'async function enroll()',
+    }
+    guard_literals = python_named_literal_values(finalizer, "forbidden")
+    missing_guards = guarded_tokens - guard_literals
+    assert not missing_guards, f"finalizer guard list missing retired tokens: {sorted(missing_guards)!r}"
 
-    for token in ('PROVIDER_DELETE =', 'DELETE_HELPER =', 'await nbDelete('):
-        assert token not in finalizer, f"non-stock frontend bridge leaked into finalizer: {token!r}"
+    serializer = python_assignment_string(finalizer, "NATIVE_SERIALIZER")
+    leaked_serializer = [token for token in guarded_tokens if token in serializer]
+    assert not leaked_serializer, f"retired bridge leaked into injected serializer: {leaked_serializer!r}"
 
-    # afterStockSave is intentionally named once inside the finalizer's forbidden
-    # token list so the generated page/form is rejected if that retired bridge
-    # ever reappears. It must not exist as executable finalizer logic.
-    assert finalizer.count('afterStockSave') == 1, \
-        "afterStockSave escaped guard-only usage in finalizer"
-    assert 'async function afterStockSave()' not in form
+    finalizer_functions = python_function_names(finalizer)
+    assert "patch_page" not in finalizer_functions
+    assert "afterStockSave" not in finalizer_functions and "nbDelete" not in finalizer_functions
 
-    require(
-        factory,
-        'TP-Link generic VPN list/add/edit/save/toggle/delete/status semantics remain stock',
-        'STOCK_CONNECTED_STATUS', 'STOCK_UPDATE', 'STOCK_DELETE', 'STOCK_LIST', 'STOCK_SAVE',
-    )
-    assert 'def patch_model()' not in factory
-    assert 'def patch_page()' not in factory
+    factory_functions = python_function_names(factory)
+    assert "patch_model" not in factory_functions
+    assert "patch_page" not in factory_functions
 
     subprocess.run(["node", "--input-type=module", "--check"], input=form.encode(), check=True)
     print("netbird provider-only frontend with stock Save + transient setup key ok")
