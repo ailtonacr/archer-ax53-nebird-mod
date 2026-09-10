@@ -4,8 +4,8 @@
 #
 # This is the bootstrap stage consumed by 012-netbird-native-vpn.sh. The final
 # image uses NetBird as native type=netbirdvpn/proto=netbird through the stock
-# /admin/vpn endpoint; the dedicated /admin/netbird endpoint remains auxiliary
-# for enrollment/runtime diagnostics only.
+# /admin/vpn endpoint; the dedicated /admin/netbird endpoint remains diagnostics
+# only. Setup-key enrollment is consumed inside the stock provider Save callback.
 #
 # The large NetBird ELF is NOT embedded in rootfs and NOT stored on any MTD/UBI
 # partition; it is downloaded over HTTPS and materialized into /tmp at runtime.
@@ -134,15 +134,16 @@ for f in lib/netbird/netbird.sh lib/netbird/netbird-profiles.sh lib/netifd/proto
 done
 
 is_stock_vpn "$VPN_CONTROLLER" || { echo "Error: /admin/vpn controller is not original TP-Link bytecode" >&2; exit 1; }
-grep -q 'local function op_enroll' "$R/usr/lib/lua/luci/controller/admin/netbird.lua" || {
-  echo "Error: NetBird provider enrollment operation missing" >&2; exit 1;
-}
-for generic_op in 'settings_set' 'profile_delete' 'connected_status' 'settings_get'; do
-  if grep -Fq "op == \"$generic_op\"" "$R/usr/lib/lua/luci/controller/admin/netbird.lua"; then
-    echo "Error: /admin/netbird shadows generic TP-Link operation: $generic_op" >&2
+for forbidden_op in 'enroll' 'settings_set' 'profile_delete' 'connected_status' 'settings_get'; do
+  if grep -Fq "op == \"$forbidden_op\"" "$R/usr/lib/lua/luci/controller/admin/netbird.lua"; then
+    echo "Error: /admin/netbird shadows stock/provider-save operation: $forbidden_op" >&2
     exit 1
   fi
 done
+if grep -Fq 'setup_key' "$R/usr/lib/lua/luci/controller/admin/netbird.lua"; then
+  echo "Error: setup key leaked into auxiliary /admin/netbird endpoint" >&2
+  exit 1
+fi
 grep -q 'description' "$R/usr/lib/lua/luci/model/netbird.lua" || {
   echo "Error: NetBird profile description persistence missing" >&2; exit 1;
 }
@@ -153,10 +154,13 @@ NB_FORM_JS="$(zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz")"
 printf '%s' "$NB_FORM_JS" | grep -Fq 'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })' || {
   echo "Error: NetBird subform does not expose TP-Link native isChanged contract" >&2; exit 1;
 }
+printf '%s' "$NB_FORM_JS" | grep -Fq 'setup_key: setupKey.value || ""' || {
+  echo "Error: NetBird subform does not pass transient setup_key into stock Save" >&2; exit 1;
+}
 printf '%s' "$NB_FORM_JS" | grep -Fq 'throw new Error(error.value)' || {
   echo "Error: NetBird validate() does not reject invalid state like stock forms" >&2; exit 1;
 }
-for forbidden in 'syncNativeSaveButton' 'data-netbird-dirty' '__netbirdSaveListener' 'stopImmediatePropagation' 'netbirdSaveSyncTimer' 'Já existe um perfil NetBird'; do
+for forbidden in 'stockComponent(this, "su-form")' 'async function enroll()' 'async function afterStockSave()' 'syncNativeSaveButton' 'data-netbird-dirty' '__netbirdSaveListener' 'stopImmediatePropagation' 'netbirdSaveSyncTimer' 'Já existe um perfil NetBird'; do
   if printf '%s' "$NB_FORM_JS" | grep -Fq "$forbidden"; then
     echo "Error: obsolete/singleton NetBird form logic leaked into final form: $forbidden" >&2
     exit 1
