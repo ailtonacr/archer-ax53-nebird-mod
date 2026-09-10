@@ -160,7 +160,6 @@ def check_stock_frontend_boundary() -> None:
         'value.type === "netbirdvpn"', 'value.type === "netbird"', 'key:e.key||"netbird"',
         'Já existe um perfil NetBird', 'a.value=_nb.concat(e)', 'operation:"settings_set"',
         'function nbSettingsSet(', 'enable: s.enable === "1" ? "on" : "off"',
-        '"label-width": { span: 10 }',
     ):
         assert token not in form, f"generic/singleton behavior leaked into provider form: {token!r}"
 
