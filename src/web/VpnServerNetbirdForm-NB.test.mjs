@@ -18,6 +18,8 @@ for (const token of [
   'const profileKey = ref("")',
   'enrollment_token: enrollmentToken.value || ""',
   'stage_setup_key',
+  '"onUpdate:modelValue": onSetupKey',
+  'onInput: onSetupKey',
   'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
   's.advertise_lan === "1" && s.disable_server_routes !== "0"',
   's.advertise_lan === "1" && s.disable_firewall !== "0"',
@@ -109,6 +111,19 @@ const localForm = rendered.children.default();
 assert.equal(localForm.tag, "SuForm");
 assert.equal(localForm.props.model, state.draft.value);
 assert.ok(Array.isArray(localForm.children.default()), "local su-form must wrap provider items");
+
+const renderedItems = localForm.children.default();
+const setupItem = renderedItems.find(node => node && node.props && node.props.name === "setup_key");
+assert.ok(setupItem, "Setup Key form item must render");
+const setupPassword = setupItem.children.default();
+assert.equal(setupPassword.tag, "SuPassword");
+assert.equal(typeof setupPassword.props["onUpdate:value"], "function");
+assert.equal(typeof setupPassword.props["onUpdate:modelValue"], "function");
+assert.equal(typeof setupPassword.props.onInput, "function");
+setupPassword.props["onUpdate:modelValue"]("bound-from-password-component");
+assert.equal(state.setupKey.value, "bound-from-password-component");
+setupPassword.props.onInput({ target: { value: "bound-from-native-input" } });
+assert.equal(state.setupKey.value, "bound-from-native-input");
 
 // CREATE remains stock-owned. validate() stages the secret through the provider
 // endpoint and getForm() contributes only the opaque enrollment token to the
