@@ -18,9 +18,9 @@ PROTO = "netbird"
 
 local installed = false
 
--- Only persistent provider fields belong in VPN_TBL. setup_key is deliberately
--- absent: it is transient input consumed by netbird_config() during the stock
--- Save request and must never be written to vpn/server or /tp_data settings.
+-- Provider fields staged by the stock VPN path belong in VPN_TBL. The Setup Key
+-- itself is deliberately absent; only an opaque short-lived enrollment_token
+-- crosses vpn/server -> protocol.netbirdvpn and is deleted after consumption.
 local FIELDS = {
     "management_url",
     "hostname",
