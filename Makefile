@@ -57,6 +57,7 @@ firmware: $(TARGET) test-netbird
 		STAMPED_VERSION="$$(sed -n "s/^soft_ver://p" rootfs/etc/partition_config/soft-version | head -n1)"; \
 		case "$$STAMPED_VERSION" in *"-netbird mod Build $$BUILD_NO") : ;; *) echo "Error: unexpected stamped soft version: $$STAMPED_VERSION" >&2; exit 1;; esac; \
 		echo "=== [4/6] Verifying modified rootfs before repack ==="; \
+		set -x; \
 		python3 scripts/verify-tplink-vpn-bytecode.py rootfs/usr/lib/lua/luci/controller/admin/vpn.lua; \
 		grep -q "TYPE = \"netbirdvpn\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN type registration missing" >&2; exit 1; }; \
 		grep -q "TYPE_ID = \"5\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN type id is not 5" >&2; exit 1; }; \
@@ -139,7 +140,8 @@ firmware: $(TARGET) test-netbird
 		echo "    ok independent profile identities + orphan GC"; \
 		echo "    ok vpnc/netifd sole normal lifecycle owner + rollback"; \
 		echo "    ok routing-peer invariants + NetBird Route ACL ordering"; \
-		echo "    ok build identity: $$STAMPED_VERSION"; \
+		echo "    ok build identity: $STAMPED_VERSION"; \
+		set +x; \
 		echo "=== [5/6] Repacking firmware ==="; \
 		rm -f "$(FIRMWARE_OUTPUT)"; \
 		bash 02-repack-ubi.sh "$(FIRMWARE_OUTPUT)" 2>&1 | tail -5; \
