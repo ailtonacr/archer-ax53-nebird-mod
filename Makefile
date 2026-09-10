@@ -61,8 +61,8 @@ firmware: $(TARGET) test-netbird
 		grep -q "TYPE = \"netbirdvpn\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN type registration missing" >&2; exit 1; }; \
 		grep -q "TYPE_ID = \"5\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN type id is not 5" >&2; exit 1; }; \
 		grep -q "local schema = { proto = PROTO }" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN_TBL schema does not match stock shape" >&2; exit 1; }; \
-		grep -Fq "table.insert(schema, { field = { key }, canbe_empty = true })" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN_TBL validator entries are not stock-shaped" >&2; exit 1; }; \
-		if grep -Fq "table.insert(schema, { key = key })" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua; then echo "Error: invalid pre-stock VPN_TBL rule shape remains" >&2; exit 1; fi; \
+		grep -Fq "table.insert(schema, { key = key })" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN_TBL entries do not match stock { key = field } shape" >&2; exit 1; }; \
+		if grep -Fq "field = { key }" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || grep -Fq "canbe_empty = true" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua; then echo "Error: retired inferred VPN_TBL rule shape remains" >&2; exit 1; fi; \
 		grep -q "vpn.VPN_CFG_TBL\[TYPE\] = netbird_config" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN config handler missing" >&2; exit 1; }; \
 		grep -q "vpn.VPN_TYPE_TBL\[TYPE\] = TYPE_ID" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: VPN_TYPE_TBL NetBird registration missing" >&2; exit 1; }; \
 		grep -q "vpn.VPN_TYPE_NAME_TBL\[TYPE\] = TYPE_NAME" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: VPN_TYPE_NAME_TBL NetBird registration missing" >&2; exit 1; }; \
