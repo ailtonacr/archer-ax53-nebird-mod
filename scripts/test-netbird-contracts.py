@@ -9,6 +9,7 @@ to VPN_TBL/UCI persistence.
 """
 from __future__ import annotations
 
+import ast
 import pathlib
 import re
 import sys
@@ -29,6 +30,40 @@ def shell_code(body: str) -> str:
 def require(body: str, *tokens: str) -> None:
     for token in tokens:
         assert token in body, f"contract missing {token!r}"
+
+
+def python_tree(body: str) -> ast.AST:
+    return ast.parse(body)
+
+
+def python_function_names(body: str) -> set[str]:
+    return {node.name for node in ast.walk(python_tree(body)) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+
+def python_assignment_string(body: str, name: str) -> str:
+    for node in ast.walk(python_tree(body)):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if any(isinstance(target, ast.Name) and target.id == name for target in targets):
+            value = node.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value
+    raise AssertionError(f"python string assignment {name!r} missing")
+
+
+def python_named_literal_values(body: str, name: str) -> set[str]:
+    values: set[str] = set()
+    for node in ast.walk(python_tree(body)):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            continue
+        if isinstance(node.value, (ast.Tuple, ast.List, ast.Set)):
+            for item in node.value.elts:
+                if isinstance(item, ast.Constant) and isinstance(item.value, str):
+                    values.add(item.value)
+    return values
 
 
 def check_native_registry() -> None:
@@ -76,27 +111,38 @@ def check_stock_frontend_boundary() -> None:
     require(
         web,
         'e.Netbird="netbirdvpn"', 'case it.Netbird:return VpnServerNetbirdForm',
-        'VpnServerNetbirdForm-NB.js?v=', 'hashlib.sha256', 'generic TP-Link VPN CRUD remains stock',
+        'VpnServerNetbirdForm-NB.js?v=', 'hashlib.sha256',
+        'assert_stock_model_untouched(root)', 'patch_vpn_page(root, module_spec)',
     )
     require(
         finalizer,
         'NATIVE_SERIALIZER =', 'k=e.key||t()', 'key:k,profile_key:k',
-        'type:u.Netbird,server:n,management_url:e.management_url||""',
+        'type:u.Netbird,server:n,management_url:e.management_url||"",setup_key:e.setup_key||""',
         'new URL(n).hostname',
         'required = (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE, NATIVE_SERIALIZER)',
-        'setup_key travels in', 'backend provider callback',
+        'text = text.replace(marker, NATIVE_SERIALIZER, 1)',
     )
 
-    for guarded in (
+    guarded_tokens = {
         'key:e.key||"netbird"', 'function nbSettingsSet(', 'function nbControl(',
         'function nbDelete(', 'operation:"profile_delete"', 'a.value=_nb.concat(e)',
         'it.Netbird===i.type?await Nbs(i)', 'window.__netbirdSaveDraft',
         '__netbirdSaveListener', 'stopImmediatePropagation',
-    ):
-        assert finalizer.count(guarded) == 1, f"forbidden frontend token escaped guard-only usage: {guarded!r}"
-    for token in ('DELETE_HELPER =', 'PROVIDER_DELETE =', 'await nbDelete('):
-        assert token not in finalizer, f"generic delete interception leaked into finalizer: {token!r}"
-    assert "def patch_model()" not in factory and "def patch_page()" not in factory
+        'async function afterStockSave()', 'async function enroll()',
+    }
+    guard_literals = python_named_literal_values(finalizer, "forbidden")
+    missing_guards = guarded_tokens - guard_literals
+    assert not missing_guards, f"finalizer guard list missing retired tokens: {sorted(missing_guards)!r}"
+
+    serializer = python_assignment_string(finalizer, "NATIVE_SERIALIZER")
+    leaked_serializer = [token for token in guarded_tokens if token in serializer]
+    assert not leaked_serializer, f"retired bridge leaked into injected serializer: {leaked_serializer!r}"
+
+    finalizer_functions = python_function_names(finalizer)
+    assert "patch_page" not in finalizer_functions, "finalizer must not patch the generic VPN page"
+    assert "nbDelete" not in finalizer_functions and "afterStockSave" not in finalizer_functions
+    factory_functions = python_function_names(factory)
+    assert "patch_model" not in factory_functions and "patch_page" not in factory_functions
 
     require(
         form,
@@ -247,13 +293,12 @@ def check_build_gates() -> None:
     verifier = text("scripts/verify-tplink-vpn-bytecode.py")
     require(
         mod010,
-        'is_stock_vpn "$VPN_CONTROLLER"', 'rebuild from the clean stock firmware',
+        'is_stock_vpn "$VPN_CONTROLLER"',
         'for forbidden_op in', "'enroll'", "'settings_set'", "'profile_delete'", "'connected_status'", "'settings_get'",
-        'setup key leaked into auxiliary /admin/netbird endpoint',
+        'if grep -Fq \'setup_key\' "$R/usr/lib/lua/luci/controller/admin/netbird.lua"; then',
     )
     require(
         mod012,
-        'Generic list/ADD/EDIT/Save/toggle/DELETE/connected-status remain stock.',
         'python3 "$BYTECODE_VERIFIER" "$VPN_CONTROLLER"',
         'function f(e){return a.request(y,{operation:"connected_status",key:e}',
         'async function W(e,n){await function(e,n,t){return a.update(y,{key:e}',
@@ -261,15 +306,11 @@ def check_build_gates() -> None:
         'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}',
         '"add"===n.type?await Ce(i):await ne(i,n.tableItem)',
         'VpnServerNetbirdForm-NB.js?v=', 'nb_profile_gc_orphans',
-        'PROFILE_GC_INIT=', 'netbird-profile-gc', 'generic flow fully stock',
-        'table.insert(schema, { field = { key }, canbe_empty = true })',
+        'PROFILE_GC_INIT=', 'netbird-profile-gc',
+        "grep -Fq 'table.insert(schema, { field = { key }, canbe_empty = true })'",
+        "if grep -Fq 'table.insert(schema, { key = key })'",
         'setup_key: setupKey.value || ""',
     )
-    # The retired invalid schema token is expected exactly once in mod012 as a
-    # fail-fast guard against packaging it into the rootfs; it must not appear
-    # as executable schema construction.
-    assert mod012.count('table.insert(schema, { key = key })') == 1, \
-        "invalid VPN_TBL schema token escaped guard-only usage in mod012"
     require(
         verifier,
         '"VPN_TBL"', '"VPN_CFG_TBL"', '"VPN_TYPE_TBL"', '"VPN_TYPE_NAME_TBL"',
