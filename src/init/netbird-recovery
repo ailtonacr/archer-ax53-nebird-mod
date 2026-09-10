@@ -39,8 +39,7 @@ nb_recovery_native_active() {
     local enabled vpntype
     enabled="$(uci -q get vpn.client.enabled 2>/dev/null || true)"
     vpntype="$(uci -q get vpn.client.vpntype 2>/dev/null || true)"
-    [ "$enabled" = "on" ] || return 1
-    case "$vpntype" in netbirdvpn|netbird) return 0 ;; *) return 1 ;; esac
+    [ "$enabled" = "on" ] && [ "$vpntype" = "netbirdvpn" ]
 }
 
 nb_recovery_identity_ready() {
