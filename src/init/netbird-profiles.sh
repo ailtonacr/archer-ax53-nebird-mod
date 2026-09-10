@@ -7,7 +7,7 @@
 #
 #   /tp_data/netbird/profiles/<stock-profile-key>/
 #
-# There is intentionally no singleton/default profile context and no migration
+# there is intentionally no singleton/default profile context and no migration
 # path from older NetBird integrations. A caller must select a real stock key
 # before any profile-specific runtime operation.
 
@@ -122,6 +122,6 @@ nb_profile_gc_orphans() {
     return 0
 }
 
-# Sourcing this helper must never leave the old root-level singleton paths as an
-# implicit writable context inherited from netbird.sh.
+# Sourcing this helper must never leave root-level singleton paths as an implicit
+# writable context inherited from netbird.sh.
 nb_profile_clear_context
