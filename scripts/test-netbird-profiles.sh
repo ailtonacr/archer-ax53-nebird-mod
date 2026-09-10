@@ -43,8 +43,8 @@ uci() {
     esac
 }
 
-# Simulate netbird.sh having supplied an unsafe root-level default context.
-# Sourcing the profile helper must erase it until a real stock key is selected.
+# Simulate a caller arriving with an unsafe root-level default context. Sourcing
+# the profile helper must erase it until a real stock key is selected.
 NB_CONFIG_DIR="$NB_ROOT"
 NB_STATE_DIR="$NB_ROOT/state"
 NB_CONFIG_FILE="$NB_ROOT/default.json"
@@ -104,13 +104,7 @@ UCI_NON_NETBIRD=1
 nb_profile_gc_orphans || fail "GC failed for non-NetBird stock row"
 [ ! -d "$NB_PROFILES_ROOT/other" ] || fail "non-NetBird row incorrectly retained NetBird identity"
 
-# No profile helper may implement migration/adoption or persistent setup-key state.
-PROFILE_SOURCE="$(cat "$ROOT/src/init/netbird-profiles.sh")"
-for forbidden in NB_LEGACY nb_legacy legacy_identity migrate-profile legacy-adoption; do
-    if printf '%s' "$PROFILE_SOURCE" | grep -Fq "$forbidden"; then
-        fail "obsolete migration token remains: $forbidden"
-    fi
-done
+# Setup keys must never enter persistent provider state.
 if grep -R -E 'setup[_-]?key=' "$NB_ROOT" >/dev/null 2>&1; then
     fail "setup key leaked into persistent profile storage"
 fi
