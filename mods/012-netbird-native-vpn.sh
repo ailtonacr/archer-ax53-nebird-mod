@@ -207,7 +207,7 @@ printf '%s' "$FORM_JS" | grep -Fq 'const profileKey = ref("")'
 printf '%s' "$FORM_JS" | grep -Fq 'setup_key: setupKey.value || ""'
 printf '%s' "$FORM_JS" | grep -Fq 'stockComponent(this, "su-password")'
 printf '%s' "$FORM_JS" | grep -Fq 'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link'
-printf '%s' "$FORM_JS" | grep -Fq 'return _h(SuSpin, { spinning: this.busy }, { default: () => items })'
+printf '%s' "$FORM_JS" | grep -Fq '_h(SuForm, { model: s }, { default: () => items })'
 printf '%s' "$FORM_JS" | grep -Fq 'Permitir roteamento da LAN'
 
 for forbidden in \
@@ -222,7 +222,8 @@ for forbidden in \
   'function nbDelete(' \
   'value.type === "netbirdvpn"' \
   '"label-width": { span: 10 }' \
-  'stockComponent(this, "su-form")' \
+  '"label-width": { span: 10 }' \
+  '"content-width": { span: 14 }' \
   'async function enroll()' \
   'async function afterStockSave()' \
   '__nbActiveStockVpn' \
