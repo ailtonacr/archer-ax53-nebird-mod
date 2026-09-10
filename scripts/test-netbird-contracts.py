@@ -265,7 +265,11 @@ def check_build_gates() -> None:
         'table.insert(schema, { field = { key }, canbe_empty = true })',
         'setup_key: setupKey.value || ""',
     )
-    assert 'table.insert(schema, { key = key })' not in mod012
+    # The retired invalid schema token is expected exactly once in mod012 as a
+    # fail-fast guard against packaging it into the rootfs; it must not appear
+    # as executable schema construction.
+    assert mod012.count('table.insert(schema, { key = key })') == 1, \
+        "invalid VPN_TBL schema token escaped guard-only usage in mod012"
     require(
         verifier,
         '"VPN_TBL"', '"VPN_CFG_TBL"', '"VPN_TYPE_TBL"', '"VPN_TYPE_NAME_TBL"',
