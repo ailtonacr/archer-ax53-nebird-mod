@@ -74,7 +74,7 @@ def check_native_registry() -> None:
         'TYPE = "netbirdvpn"', 'TYPE_ID = "5"', 'TYPE_NAME = "NetBird"', 'PROTO = "netbird"',
         'local vpn = require "luci.controller.admin.vpn"',
         'local schema = { proto = PROTO }',
-        'table.insert(schema, { field = { key }, canbe_empty = true })',
+        'table.insert(schema, { key = key })',
         'vpn.VPN_TBL[TYPE] = schema', 'vpn.VPN_CFG_TBL[TYPE] = netbird_config',
         'vpn.VPN_TYPE_TBL[TYPE] = TYPE_ID', 'vpn.VPN_TYPE_NAME_TBL[TYPE] = TYPE_NAME',
         'local profile_key = profile_key_from_config(cfg)',
@@ -86,7 +86,7 @@ def check_native_registry() -> None:
         'nb_model.set_internal_settings({ enrolled = "1", enable = "0" }, profile_key)',
         'setup key required for unenrolled profile',
     )
-    assert 'table.insert(schema, { key = key })' not in native, "invalid pre-stock VPN_TBL rule shape returned"
+    assert 'field = { key }' not in native and 'canbe_empty = true' not in native, "retired inferred VPN_TBL rule shape returned"
     assert '"setup_key",' not in native.split('local FIELDS = {', 1)[1].split('}', 1)[0], "setup_key must never be a persistent VPN_TBL field"
     assert 'setup_key = setup_key' not in native, "setup key leaked into returned persistent vpn config"
     assert 'key = "netbird"' not in native
@@ -305,8 +305,8 @@ def check_build_gates() -> None:
         '"add"===n.type?await Ce(i):await ne(i,n.tableItem)',
         'VpnServerNetbirdForm-NB.js?v=', 'nb_profile_gc_orphans',
         'PROFILE_GC_INIT=', 'netbird-profile-gc',
-        "grep -Fq 'table.insert(schema, { field = { key }, canbe_empty = true })'",
-        "if grep -Fq 'table.insert(schema, { key = key })'",
+        "grep -Fq 'table.insert(schema, { key = key })'",
+        "if grep -Fq 'field = { key }'",
         'setup_key: setupKey.value || ""',
     )
     require(
