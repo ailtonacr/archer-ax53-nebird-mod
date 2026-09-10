@@ -141,11 +141,14 @@ function install()
         return nil, "stock VPN registries unavailable"
     end
 
-    -- Match the vendor VPN_TBL layout exactly: named .proto plus one numeric
-    -- entry per persisted field, each represented as { key = "..." }.
+    -- Match the vendor VPN_TBL validator contract exactly. The stock controller
+    -- iterates numeric rule entries and expects rule.field (an array), optional
+    -- rule.canbe_empty and optional rule.check. NetBird performs its semantic
+    -- validation in preview_settings()/set_settings(), so the stock layer only
+    -- needs to accept these provider-specific fields as optional inputs.
     local schema = { proto = PROTO }
     for _, key in ipairs(FIELDS) do
-        table.insert(schema, { key = key })
+        table.insert(schema, { field = { key }, canbe_empty = true })
     end
 
     vpn.VPN_TBL[TYPE] = schema
