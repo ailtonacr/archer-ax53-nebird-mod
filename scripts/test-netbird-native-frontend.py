@@ -68,18 +68,21 @@ def main() -> int:
         'STOCK_LIST', 'STOCK_SAVE',
         'Generic operations must still be byte-for-byte stock at this boundary.',
         'expected clean stock model input',
+        'leaked = [token for token in forbidden if token in text]',
     )
-    for token in (
+
+    # Retired bridge strings are expected exactly once as forbidden-token guards
+    # in the patcher source. More than one occurrence means executable/custom
+    # behavior may have reappeared outside the guard.
+    for guarded in (
         'key:e.key||"netbird"',
         'function nbSettingsSet(',
         'function nbControl(',
         'function nbDelete(',
         'operation:"profile_delete"',
-        'PROVIDER_DELETE =',
-        'DELETE_HELPER =',
-        'await nbDelete(',
-        'a.value=_nb.concat(e)',
     ):
+        assert finalizer.count(guarded) == 1, f"forbidden frontend token escaped guard-only usage: {guarded!r}"
+    for token in ('PROVIDER_DELETE =', 'DELETE_HELPER =', 'await nbDelete(', 'a.value=_nb.concat(e)'):
         assert token not in finalizer, f"non-stock frontend bridge leaked into finalizer: {token!r}"
 
     # Factory-semantics stage is a pure guard, not a mutator.
