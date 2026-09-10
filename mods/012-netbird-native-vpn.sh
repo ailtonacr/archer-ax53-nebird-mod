@@ -7,7 +7,7 @@
 #   - provider-specific frontend subform/serialization
 #   - netifd proto=netbird + runtime
 #   - profile-scoped enrollment/identity/diagnostics
-#   - one-shot provider migration/maintenance for legacy identity
+#   - provider-state orphan garbage collection
 #
 # Generic list/ADD/EDIT/Save/toggle/DELETE/connected-status remain stock.
 
@@ -21,13 +21,13 @@ NATIVE_CONTROLLER="$PROJECT_ROOT/src/web-backend/controller/admin/netbird_native
 NATIVE_PATCHER="$PROJECT_ROOT/src/web/patchnetbird_native_crud.py"
 NATIVE_RUNTIME="$PROJECT_ROOT/src/init/netbird-runtime.sh"
 PROFILE_HELPER="$PROJECT_ROOT/src/init/netbird-profiles.sh"
-PROFILE_MIGRATE_INIT="$PROJECT_ROOT/src/init/netbird-profile-migrate.init"
+PROFILE_GC_INIT="$PROJECT_ROOT/src/init/netbird-profile-gc.init"
 BYTECODE_VERIFIER="$PROJECT_ROOT/scripts/verify-tplink-vpn-bytecode.py"
 VPN_CONTROLLER="$R/usr/lib/lua/luci/controller/admin/vpn.lua"
 VPN_CORE="$R/lib/vpn/vpn_core.sh"
 NB_AUX_CONTROLLER="$R/usr/lib/lua/luci/controller/admin/netbird.lua"
 
-for f in "$NATIVE_MODEL" "$NATIVE_CONTROLLER" "$NATIVE_PATCHER" "$NATIVE_RUNTIME" "$PROFILE_HELPER" "$PROFILE_MIGRATE_INIT" "$BYTECODE_VERIFIER" "$VPN_CONTROLLER" "$VPN_CORE" "$NB_AUX_CONTROLLER"; do
+for f in "$NATIVE_MODEL" "$NATIVE_CONTROLLER" "$NATIVE_PATCHER" "$NATIVE_RUNTIME" "$PROFILE_HELPER" "$PROFILE_GC_INIT" "$BYTECODE_VERIFIER" "$VPN_CONTROLLER" "$VPN_CORE" "$NB_AUX_CONTROLLER"; do
   [ -f "$f" ] || { echo "Error: missing native NetBird input: $f" >&2; exit 1; }
 done
 
@@ -37,11 +37,18 @@ mkdir -p "$R/usr/lib/lua/luci/model" "$R/usr/lib/lua/luci/controller/admin" "$R/
 cp "$NATIVE_MODEL" "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 cp "$NATIVE_CONTROLLER" "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua"
 cp "$NATIVE_RUNTIME" "$R/lib/netbird/netbird-runtime.sh"
-cp "$PROFILE_MIGRATE_INIT" "$R/etc/init.d/netbird-profile-migrate"
+cp "$PROFILE_GC_INIT" "$R/etc/init.d/netbird-profile-gc"
 chmod 0644 "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua" \
     "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua" \
     "$R/lib/netbird/netbird-runtime.sh"
-chmod 0755 "$R/etc/init.d/netbird-profile-migrate"
+chmod 0755 "$R/etc/init.d/netbird-profile-gc"
+
+# Explicitly purge artifacts from the abandoned migration implementation when a
+# developer applies mods to a previously modified rootfs. Fresh firmware builds
+# start from stock, so these paths normally do not exist.
+rm -f "$R/etc/init.d/netbird-profile-migrate" \
+      "$R/etc/rc.d/S89netbird-profile-migrate" \
+      "$R/etc/rc.d/S89netbird-profile-gc"
 
 if command -v luac >/dev/null 2>&1; then
   luac -p "$NATIVE_MODEL" "$NATIVE_CONTROLLER"
@@ -49,11 +56,10 @@ fi
 
 python3 "$NATIVE_PATCHER" "$R"
 
-# vpnc/netifd is the only normal boot/start owner. The profile maintenance
-# service only migrates/cleans persistent provider identity and never starts the
-# daemon.
+# vpnc/netifd is the only normal boot/start owner. This one-shot service only
+# garbage-collects orphaned provider state and never starts/stops the daemon.
 rm -f "$R/etc/rc.d/S99netbird"
-ln -sfn "../init.d/netbird-profile-migrate" "$R/etc/rc.d/S89netbird-profile-migrate"
+ln -sfn "../init.d/netbird-profile-gc" "$R/etc/rc.d/S89netbird-profile-gc"
 
 # Vendor acceleration hooks only know the original protocol families. Preserve
 # them untouched for stock types and skip them only for our new native provider.
@@ -112,20 +118,27 @@ grep -q 'local function op_enroll' "$NB_AUX_CONTROLLER" || {
   echo "Error: profile-scoped NetBird enrollment endpoint missing" >&2; exit 1;
 }
 
-# Profile-scoped persistence + legacy adoption/maintenance. A historical client
-# is converted into a real vpn.server row. TP-Link owns deletion; orphaned
-# provider identity is garbage-collected independently from generic CRUD.
+# Profile-scoped persistence only. There is no singleton identity and no
+# migration/adoption path. TP-Link owns deletion; orphaned provider state is
+# garbage-collected independently from generic CRUD.
 cmp -s "$PROFILE_HELPER" "$R/lib/netbird/netbird-profiles.sh" || { echo "Error: packaged profile helper drifted" >&2; exit 1; }
-cmp -s "$PROFILE_MIGRATE_INIT" "$R/etc/init.d/netbird-profile-migrate" || { echo "Error: packaged profile migration init drifted" >&2; exit 1; }
+cmp -s "$PROFILE_GC_INIT" "$R/etc/init.d/netbird-profile-gc" || { echo "Error: packaged profile GC init drifted" >&2; exit 1; }
 grep -q '^nb_profile_select()' "$R/lib/netbird/netbird-profiles.sh"
 grep -q '^nb_profile_stock_exists()' "$R/lib/netbird/netbird-profiles.sh"
 grep -q '^nb_profile_gc_orphans()' "$R/lib/netbird/netbird-profiles.sh"
-grep -q '^nb_legacy_profile_adopt()' "$R/lib/netbird/netbird-profiles.sh"
-grep -Fq 'vpn.$section.type=netbirdvpn' "$R/lib/netbird/netbird-profiles.sh"
-grep -Fq 'profile_key=$section' "$R/lib/netbird/netbird-profiles.sh"
-grep -Fq 'nb_profile_gc_orphans' "$R/etc/init.d/netbird-profile-migrate"
-[ -L "$R/etc/rc.d/S89netbird-profile-migrate" ] || { echo "Error: legacy NetBird adoption boot link missing" >&2; exit 1; }
-[ "$(readlink "$R/etc/rc.d/S89netbird-profile-migrate")" = "../init.d/netbird-profile-migrate" ] || { echo "Error: legacy NetBird adoption link target incorrect" >&2; exit 1; }
+grep -q '^nb_profile_clear_context()' "$R/lib/netbird/netbird-profiles.sh"
+grep -Fq 'NB_PROFILES_ROOT="${NB_PROFILES_ROOT:-$NB_ROOT/profiles}"' "$R/lib/netbird/netbird-profiles.sh"
+grep -Fq 'nb_profile_gc_orphans' "$R/etc/init.d/netbird-profile-gc"
+[ -L "$R/etc/rc.d/S89netbird-profile-gc" ] || { echo "Error: NetBird profile GC boot link missing" >&2; exit 1; }
+[ "$(readlink "$R/etc/rc.d/S89netbird-profile-gc")" = "../init.d/netbird-profile-gc" ] || { echo "Error: NetBird profile GC link target incorrect" >&2; exit 1; }
+for forbidden in 'NB_LEGACY' 'nb_legacy' 'legacy_identity' 'migrate-profile' 'legacy-adoption'; do
+  if grep -Fq "$forbidden" "$R/lib/netbird/netbird-profiles.sh" "$R/sbin/netbird-ctl" "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua" 2>/dev/null; then
+    echo "Error: obsolete NetBird migration token remains: $forbidden" >&2
+    exit 1
+  fi
+done
+[ ! -e "$R/etc/init.d/netbird-profile-migrate" ] || { echo "Error: obsolete NetBird migration service remains" >&2; exit 1; }
+[ ! -e "$R/etc/rc.d/S89netbird-profile-migrate" ] || { echo "Error: obsolete NetBird migration link remains" >&2; exit 1; }
 
 # Native runtime invariants.
 cmp -s "$NATIVE_RUNTIME" "$R/lib/netbird/netbird-runtime.sh" || { echo "Error: packaged native NetBird runtime drifted" >&2; exit 1; }
@@ -147,6 +160,7 @@ fi
 grep -q 'nb_runtime_connect' "$R/lib/netifd/proto/netbird.sh"
 grep -q 'proto_config_add_string "profile_key"' "$R/lib/netifd/proto/netbird.sh"
 grep -q 'nb_profile_select "$profile_key"' "$R/lib/netifd/proto/netbird.sh"
+grep -Fq 'if [ "$vpntype" != "netbirdvpn" ]; then' "$R/lib/netifd/proto/netbird.sh"
 if grep -Ev '^[[:space:]]*#' "$R/lib/netifd/proto/netbird.sh" | grep -q '/sbin/netbird-ctl'; then
   echo "Error: netifd NetBird protocol still depends on netbird-ctl" >&2
   exit 1
