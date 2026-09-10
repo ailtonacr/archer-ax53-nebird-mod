@@ -29,7 +29,7 @@ STOCK_SAVE = '"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
 # profile_key for provider-scoped runtime state. setup_key is copied explicitly
 # so the stock request always carries the transient enrollment input; the
 # backend provider callback consumes it but never returns/persists that field.
-NATIVE_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"",k=e.key||t();try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:k,profile_key:k,type:u.Netbird,server:n,management_url:e.management_url||"",setup_key:e.setup_key||""};}'
+NATIVE_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"",k=e.key||t();try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{key:k,des:e.description,type:e.type,enable:i(e.enable),server:n,profile_key:k,management_url:e.management_url||"",hostname:e.hostname||"",disable_dns:e.disable_dns,disable_firewall:e.disable_firewall,disable_client_routes:e.disable_client_routes,disable_server_routes:e.disable_server_routes,disable_ipv6:e.disable_ipv6,network_monitor:e.network_monitor,advertise_lan:e.advertise_lan,advertise_cidr:e.advertise_cidr||"",wireguard_port:e.wireguard_port||"51820",setup_key:e.setup_key||""};}'
 
 
 def read_gz(name: str) -> str:
