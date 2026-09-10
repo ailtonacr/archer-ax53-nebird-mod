@@ -7,8 +7,8 @@ This stage adds only the provider-specific serialization needed to map NetBird's
 Management URL onto the stock ``server`` field while preserving
 ``management_url`` for the NetBird registry/model.
 
-No synthetic row, fixed key, custom Save bridge, alternate CRUD path or generic
-/admin/netbird hook is permitted here.
+The input is expected to be the stock TP-Link model after provider discovery was
+added. This patcher does not translate older NetBird serializer variants.
 """
 from __future__ import annotations
 
@@ -27,13 +27,10 @@ STOCK_DELETE = 'async function J(e,n){await function(e,n){return a.remove(y,{key
 STOCK_LIST = 'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}'
 STOCK_SAVE = '"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
 
-# TP-Link's connected-status path consumes the generic ``server`` field. For a
-# NetBird profile the user edits a full management URL, so serialize ``server``
-# as its hostname while retaining all protocol-specific fields for the native
-# VPN registry. TP-Link still owns the row key, request and CRUD lifecycle.
+# Prefix inserted into TP-Link's existing R(e) serializer. The inserted brace
+# closes only the NetBird branch; the original stock function body remains the
+# fallback for every other provider and retains ownership of the generic shape.
 NATIVE_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,type:u.Netbird,server:n,management_url:e.management_url||""};}'
-SYNTHETIC_KEY_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
-OLD_HOST_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"";try{n=new URL(n).host}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"")}return{...e,key:e.key||"netbird",type:u.Netbird,server:n,management_url:e.management_url||""};}'
 
 
 def read_gz(name: str) -> str:
@@ -63,7 +60,6 @@ def check_js(name: str, text: str) -> None:
 def patch_update_store() -> None:
     name = "update-store-DQkZxaRI.js.gz"
     text = read_gz(name)
-    text = text.replace('e.Netbird="netbird"', 'e.Netbird="netbirdvpn"')
     if 'e.Netbird="netbirdvpn"' not in text:
         raise RuntimeError("native NetBird enum netbirdvpn is missing")
     check_js(name, text)
@@ -74,22 +70,18 @@ def patch_model() -> None:
     name = "model-CI6Gt3Hz.js.gz"
     text = read_gz(name)
 
-    # Generic operations must be stock before and after provider finalization.
+    # Generic operations must still be byte-for-byte stock at this boundary.
     for token in (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE):
         if token not in text:
             raise RuntimeError("TP-Link generic VPN model flow changed before NetBird finalization: " + token)
 
-    # Provider-specific serialization only; TP-Link still allocates/owns keys and
-    # performs the request through its original /admin/vpn endpoint.
-    if SYNTHETIC_KEY_SERIALIZER in text:
-        text = text.replace(SYNTHETIC_KEY_SERIALIZER, NATIVE_SERIALIZER, 1)
-    elif OLD_HOST_SERIALIZER in text:
-        text = text.replace(OLD_HOST_SERIALIZER, NATIVE_SERIALIZER, 1)
-    elif NATIVE_SERIALIZER not in text:
-        marker = 'function R(e){'
-        if text.count(marker) != 1:
-            raise RuntimeError("native serializer: stock R(e) marker not unique")
-        text = text.replace(marker, NATIVE_SERIALIZER, 1)
+    if NATIVE_SERIALIZER in text:
+        raise RuntimeError("NetBird serializer already present; expected clean stock model input")
+
+    marker = 'function R(e){'
+    if text.count(marker) != 1:
+        raise RuntimeError("native serializer: stock R(e) marker not unique")
+    text = text.replace(marker, NATIVE_SERIALIZER, 1)
 
     required = (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE, NATIVE_SERIALIZER)
     missing = [token for token in required if token not in text]
