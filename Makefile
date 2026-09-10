@@ -67,12 +67,14 @@ firmware: $(TARGET) test-netbird
 		grep -q "vpn.VPN_TYPE_TBL\[TYPE\] = TYPE_ID" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: VPN_TYPE_TBL NetBird registration missing" >&2; exit 1; }; \
 		grep -q "vpn.VPN_TYPE_NAME_TBL\[TYPE\] = TYPE_NAME" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: VPN_TYPE_NAME_TBL NetBird registration missing" >&2; exit 1; }; \
 		grep -q "vpn.VPN_TBL\[TYPE\] = schema" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: VPN_TBL NetBird schema registration missing" >&2; exit 1; }; \
-		grep -q "local setup_key = cfg.setup_key" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: stock provider callback does not consume transient setup key" >&2; exit 1; }; \
-		grep -q "local function enroll_transient(profile_key, setup_key)" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: transient stock-save enrollment handler missing" >&2; exit 1; }; \
+		grep -q "local enrollment_token = cfg.enrollment_token" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: stock callback does not consume enrollment token" >&2; exit 1; }; \
+		grep -q "local function enroll_transient(profile_key, enrollment_token)" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: token-based enrollment handler missing" >&2; exit 1; }; \
+		grep -Fq "nb_model.staged_setup_key_path(enrollment_token)" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: staged Setup Key is not resolved by opaque token" >&2; exit 1; }; \
 		if sed -n "/local FIELDS = {/,/^}/p" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua | grep -Fq "\"setup_key\""; then echo "Error: setup key leaked into persistent VPN_TBL fields" >&2; exit 1; fi; \
 		grep -q "native.install()" rootfs/usr/lib/lua/luci/controller/admin/netbird_native.lua || { echo "Error: native NetBird registry loader missing" >&2; exit 1; }; \
 		if grep -Eq "op == \"(enroll|settings_set|settings_get|profile_delete|connected_status)\"" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua; then echo "Error: auxiliary NetBird endpoint shadows stock/provider-save operations" >&2; exit 1; fi; \
-		if grep -Fq "setup_key" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua; then echo "Error: setup key leaked into auxiliary endpoint" >&2; exit 1; fi; \
+		grep -q "local function op_stage_setup_key(body)" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: transient Setup Key staging endpoint missing" >&2; exit 1; }; \
+		grep -q "model.stage_setup_key(setup_key)" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: Setup Key staging is not delegated to provider model" >&2; exit 1; }; \
 		grep -Fq "/etc/init.d/vpnc restart" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: NetBird restart bypasses native vpnc lifecycle" >&2; exit 1; }; \
 		grep -q "server routes must be enabled when LAN routing is enabled" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: backend does not reject routing with server routes disabled" >&2; exit 1; }; \
 		grep -q "NetBird firewall must be enabled when LAN routing is enabled" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: backend does not require NetBird firewall policy enforcement for LAN routing" >&2; exit 1; }; \
@@ -116,7 +118,8 @@ firmware: $(TARGET) test-netbird
 		printf "%s" "$$PAGE_JS" | grep -Fq "case it.Netbird:return VpnServerNetbirdForm" || { echo "Error: NetBird provider form mapping missing" >&2; exit 1; }; \
 		printf "%s" "$$PAGE_JS" | grep -Fq "VpnServerNetbirdForm-NB.js?v=" || { echo "Error: NetBird custom module cache-busting missing" >&2; exit 1; }; \
 		printf "%s" "$$FORM_JS" | grep -Fq "const existing = !!(value && (value.key || value.id))" || { echo "Error: NetBird Add/Edit is not keyed by persisted stock identity" >&2; exit 1; }; \
-		printf "%s" "$$FORM_JS" | grep -Fq "setup_key: setupKey.value || \"\"" || { echo "Error: Setup Key is not included in the stock Save payload" >&2; exit 1; }; \
+		printf "%s" "$FORM_JS" | grep -Fq "enrollment_token: enrollmentToken.value || \"\"" || { echo "Error: opaque enrollment token missing from stock Save payload" >&2; exit 1; }; \
+		if printf "%s" "$MODEL_JS" | grep -Fq "setup_key:e.setup_key"; then echo "Error: Setup Key leaked into stock VPN serializer" >&2; exit 1; fi; \
 		printf "%s" "$$FORM_JS" | grep -Fq "stockComponent(this, \"su-password\")" || { echo "Error: stock Setup Key control missing" >&2; exit 1; }; \
 		printf "%s" "$$FORM_JS" | grep -Fq "_h(SuForm, { model: s }, { default: () => items })" || { echo "Error: provider form context missing" >&2; exit 1; }; \
 		printf "%s" "$$FORM_JS" | grep -Fq "Permitir roteamento da LAN" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; exit 1; }; \
