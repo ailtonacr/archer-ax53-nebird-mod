@@ -116,8 +116,8 @@ def check_stock_frontend_boundary() -> None:
     )
     require(
         finalizer,
-        'NATIVE_SERIALIZER =', 'k=e.key||t()', 'key:k,profile_key:k',
-        'type:u.Netbird,server:n,management_url:e.management_url||"",setup_key:e.setup_key||""',
+        'NATIVE_SERIALIZER =', 'k=e.key||t()', 'key:k,des:e.description,type:e.type,enable:i(e.enable),server:n,profile_key:k',
+        'management_url:e.management_url||""', 'setup_key:e.setup_key||""',
         'new URL(n).hostname',
         'required = (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE, NATIVE_SERIALIZER)',
         'text = text.replace(marker, NATIVE_SERIALIZER, 1)',
