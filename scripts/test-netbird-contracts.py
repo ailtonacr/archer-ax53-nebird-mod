@@ -2,10 +2,10 @@
 """Offline structural contracts for the AX53 native NetBird integration.
 
 Architectural rule: TP-Link owns every generic VPN Client operation it already
-implements. NetBird adds only a fifth provider, its protocol fields/runtime and
-profile-scoped enrollment/diagnostics. Provider persistence maintenance must not
-intercept generic CRUD. The current firmware has no compatibility import path;
-all provider identity/state is keyed by a real stock profile.
+implements. NetBird adds only a fifth provider, protocol fields/runtime and
+profile-scoped diagnostics. Setup-key enrollment is provider-specific but runs
+inside the normal stock Save callback; setup_key is transient and never belongs
+to VPN_TBL/UCI persistence.
 """
 from __future__ import annotations
 
@@ -43,9 +43,17 @@ def check_native_registry() -> None:
         'vpn.VPN_TBL[TYPE] = schema', 'vpn.VPN_CFG_TBL[TYPE] = netbird_config',
         'vpn.VPN_TYPE_TBL[TYPE] = TYPE_ID', 'vpn.VPN_TYPE_NAME_TBL[TYPE] = TYPE_NAME',
         'local profile_key = profile_key_from_config(cfg)',
-        'if profile_key ~= "" then vpn.profile_key = profile_key end',
+        'if profile_key == "" then', 'stock VPN profile key missing',
+        'profile_key = profile_key,',
+        'local setup_key = cfg.setup_key', 'local function enroll_transient(profile_key, setup_key)',
+        'nb_model.control("enroll", profile_key, tmp)', 'nixio.fs.unlink(tmp)',
+        'nb_model.control("stop", profile_key)',
+        'nb_model.set_internal_settings({ enrolled = "1", enable = "0" }, profile_key)',
+        'setup key required for unenrolled profile',
     )
     assert 'table.insert(schema, { key = key })' not in native, "invalid pre-stock VPN_TBL rule shape returned"
+    assert '"setup_key",' not in native.split('local FIELDS = {', 1)[1].split('}', 1)[0], "setup_key must never be a persistent VPN_TBL field"
+    assert 'setup_key = setup_key' not in native, "setup key leaked into returned persistent vpn config"
     assert 'key = "netbird"' not in native
     assert "debug.getupvalue" not in native and "debug.setupvalue" not in native
 
@@ -72,27 +80,18 @@ def check_stock_frontend_boundary() -> None:
     )
     require(
         finalizer,
-        'NATIVE_SERIALIZER =',
+        'NATIVE_SERIALIZER =', 'k=e.key||t()', 'key:k,profile_key:k',
         'type:u.Netbird,server:n,management_url:e.management_url||""',
         'new URL(n).hostname',
         'required = (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE, NATIVE_SERIALIZER)',
-        'leaked = [token for token in forbidden if token in text]',
+        'setup_key travels in', 'backend provider callback',
     )
 
-    # These strings intentionally occur once in the finalizer's forbidden-token
-    # tuples. That guard-only occurrence is expected; executable occurrences are
-    # forbidden.
     for guarded in (
-        'key:e.key||"netbird"',
-        'function nbSettingsSet(',
-        'function nbControl(',
-        'function nbDelete(',
-        'operation:"profile_delete"',
-        'a.value=_nb.concat(e)',
-        'it.Netbird===i.type?await Nbs(i)',
-        'window.__netbirdSaveDraft',
-        '__netbirdSaveListener',
-        'stopImmediatePropagation',
+        'key:e.key||"netbird"', 'function nbSettingsSet(', 'function nbControl(',
+        'function nbDelete(', 'operation:"profile_delete"', 'a.value=_nb.concat(e)',
+        'it.Netbird===i.type?await Nbs(i)', 'window.__netbirdSaveDraft',
+        '__netbirdSaveListener', 'stopImmediatePropagation',
     ):
         assert finalizer.count(guarded) == 1, f"forbidden frontend token escaped guard-only usage: {guarded!r}"
     for token in ('DELETE_HELPER =', 'PROVIDER_DELETE =', 'await nbDelete('):
@@ -103,13 +102,15 @@ def check_stock_frontend_boundary() -> None:
         form,
         'const creating = ref(true)', 'const existing = !!(value && (value.key || value.id))',
         'const profileKey = ref("")', 'if (!profileKey.value || creating.value || statusRequestPending) return',
-        'Return protocol-specific fields only',
+        'setup_key: setupKey.value || ""',
+        'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
-        'stockComponent(this, "su-form")', 'stockComponent(this, "su-form-item")',
-        'stockComponent(this, "su-input")', 'stockComponent(this, "su-checkbox")',
-        'profile_key: profileKey.value',
+        'stockComponent(this, "su-form-item")', 'stockComponent(this, "su-input")',
+        'stockComponent(this, "su-password")', 'stockComponent(this, "su-checkbox")',
+        'return _h(SuSpin, { spinning: this.busy }, { default: () => items })',
     )
     for token in (
+        'stockComponent(this, "su-form")', 'async function enroll()', 'async function afterStockSave()',
         'value.type === "netbirdvpn"', 'value.type === "netbird"', 'key:e.key||"netbird"',
         'Já existe um perfil NetBird', 'a.value=_nb.concat(e)', 'operation:"settings_set"',
         'function nbSettingsSet(', 'enable: s.enable === "1" ? "on" : "off"',
@@ -126,14 +127,16 @@ def check_auxiliary_boundary() -> None:
         'local NATIVE_TYPE = "netbirdvpn"', 'local function requested_profile_key(body, required)',
         'local function native_profile(profile_key)', 'name == profile_key and section.type == NATIVE_TYPE',
         'local function native_profile_active(profile_key)', 'local function op_status(body)',
-        'local function op_enroll(body)', 'model.control("enroll", profile_key, tmp)',
         'local function op_restart(body)', 'sys.call("/etc/init.d/vpnc restart >/dev/null 2>&1")',
         'local function op_log(body)', 'model.log(profile_key, tonumber(n) or 100)',
         'local function op_payload_status()',
+        'Setup-key enrollment', 'provider callback during that same stock Save request',
     )
     dispatch = controller.split("function dispatch(body)", 1)[1]
-    for op in ("settings_set", "settings_get", "connected_status", "profile_delete", "clean"):
-        assert f'op == "{op}"' not in dispatch, f"auxiliary endpoint shadows stock/generic operation {op}"
+    for op in ("enroll", "settings_set", "settings_get", "connected_status", "profile_delete", "clean"):
+        assert f'op == "{op}"' not in dispatch, f"auxiliary endpoint shadows stock/provider-save operation {op}"
+    assert 'local function op_enroll' not in controller
+    assert 'setup_key' not in controller, "setup key must not travel through auxiliary endpoint"
 
     require(
         model,
@@ -244,8 +247,7 @@ def check_build_gates() -> None:
     verifier = text("scripts/verify-tplink-vpn-bytecode.py")
     require(
         mod010,
-        'is_stock_vpn "$VPN_CONTROLLER"',
-        'rebuild from the clean stock firmware',
+        'is_stock_vpn "$VPN_CONTROLLER"', 'rebuild from the clean stock firmware',
         'for generic_op in', "'profile_delete'", "'connected_status'", "'settings_get'",
     )
     require(
@@ -260,6 +262,7 @@ def check_build_gates() -> None:
         'VpnServerNetbirdForm-NB.js?v=', 'nb_profile_gc_orphans',
         'PROFILE_GC_INIT=', 'netbird-profile-gc', 'generic flow fully stock',
         'table.insert(schema, { field = { key }, canbe_empty = true })',
+        'setup_key: setupKey.value || ""',
     )
     assert 'table.insert(schema, { key = key })' not in mod012
     require(
