@@ -4,38 +4,12 @@ set -eu
 ROOT="${ROOT:-$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)}"
 TMP="${TMPDIR:-/tmp}/netbird-profiles-test-$$"
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
-mkdir -p "$TMP/legacy/state"
+mkdir -p "$TMP/netbird/profiles"
 
-NB_LEGACY_ROOT="$TMP/legacy"
-NB_PROFILES_ROOT="$NB_LEGACY_ROOT/profiles"
+NB_ROOT="$TMP/netbird"
+NB_PROFILES_ROOT="$NB_ROOT/profiles"
 NB_ACTIVE_PROFILE_FILE="$TMP/active-profile"
-NB_LEGACY_ADOPTION_FILE="$NB_LEGACY_ROOT/legacy-adoption"
-NB_DEFAULT_MGMT="https://netbird.example.test"
-NB_DEFAULT_PORT="51820"
 
-nb_get() {
-    file="$1" key="$2" def="${3:-}"
-    [ -f "$file" ] || { printf '%s\n' "$def"; return 0; }
-    value="$(sed -n "s/^${key}=//p" "$file" | head -n 1)"
-    [ -n "$value" ] && printf '%s\n' "$value" || printf '%s\n' "$def"
-}
-nb_set() {
-    file="$1" key="$2" value="$3"
-    if [ -f "$file" ] && grep -q "^${key}=" "$file"; then
-        sed "s/^${key}=.*/${key}=${value}/" "$file" > "$file.tmp"
-        mv "$file.tmp" "$file"
-    else
-        printf '%s=%s\n' "$key" "$value" >> "$file"
-    fi
-}
-nb_ensure_settings() {
-    mkdir -p "$NB_CONFIG_DIR" "$NB_STATE_DIR"
-    [ -f "$NB_SETTINGS_FILE" ] || printf 'enable=0\nenrolled=0\nmanagement_url=%s\nwireguard_port=%s\n' "$NB_DEFAULT_MGMT" "$NB_DEFAULT_PORT" > "$NB_SETTINGS_FILE"
-}
-
-UCI_LOG="$TMP/uci.log"
-: > "$UCI_LOG"
-UCI_LEGACY=0
 UCI_A=0
 UCI_B=0
 UCI_NON_NETBIRD=0
@@ -46,25 +20,10 @@ uci() {
     cmd="${1:-}"; shift || true
     key="${1:-}"
     case "$cmd" in
-        show)
-            printf "vpn.client=client\n"
-            if [ "$UCI_LEGACY" = "1" ]; then
-                printf "vpn.netbird_legacy=server\n"
-                printf "vpn.netbird_legacy.type='netbirdvpn'\n"
-                printf "vpn.netbird_legacy.legacy_identity='1'\n"
-            fi
-            [ "$UCI_A" = "1" ] && { printf "vpn.profile-a=server\n"; printf "vpn.profile-a.type='netbirdvpn'\n"; }
-            [ "$UCI_B" = "1" ] && { printf "vpn.profile-b=server\n"; printf "vpn.profile-b.type='netbirdvpn'\n"; }
-            [ "$UCI_NON_NETBIRD" = "1" ] && { printf "vpn.other=server\n"; printf "vpn.other.type='wireguardvpn'\n"; }
-            ;;
         get)
             case "$key" in
                 network.vpn.profile_key)
                     [ -n "$UCI_ACTIVE" ] && printf '%s\n' "$UCI_ACTIVE" || return 1 ;;
-                vpn.netbird_legacy)
-                    [ "$UCI_LEGACY" = "1" ] && printf 'server\n' || return 1 ;;
-                vpn.netbird_legacy.type)
-                    [ "$UCI_LEGACY" = "1" ] && printf 'netbirdvpn\n' || return 1 ;;
                 vpn.profile-a)
                     [ "$UCI_A" = "1" ] && printf 'server\n' || return 1 ;;
                 vpn.profile-a.type)
@@ -80,24 +39,23 @@ uci() {
                 *) return 1 ;;
             esac
             ;;
-        set)
-            printf 'set %s\n' "$key" >> "$UCI_LOG"
-            case "$key" in
-                vpn.netbird_legacy=server) UCI_LEGACY=1 ;;
-                vpn.profile-a=server) UCI_A=1 ;;
-                vpn.profile-b=server) UCI_B=1 ;;
-            esac
-            ;;
-        commit)
-            printf 'commit %s\n' "$key" >> "$UCI_LOG"
-            ;;
         *) return 1 ;;
     esac
 }
 
+# Simulate netbird.sh having supplied an unsafe root-level default context.
+# Sourcing the profile helper must erase it until a real stock key is selected.
+NB_CONFIG_DIR="$NB_ROOT"
+NB_STATE_DIR="$NB_ROOT/state"
+NB_CONFIG_FILE="$NB_ROOT/default.json"
+NB_SETTINGS_FILE="$NB_ROOT/settings"
 . "$ROOT/src/init/netbird-profiles.sh"
 
 fail() { echo "netbird profile test failed: $*" >&2; exit 1; }
+
+[ -z "$NB_CONFIG_DIR" ] || fail "root-level profile context survived helper load"
+[ -z "$NB_CONFIG_FILE" ] || fail "root-level identity path survived helper load"
+[ -z "$NB_SETTINGS_FILE" ] || fail "root-level settings path survived helper load"
 
 # Stock profile keys are the namespace boundary for provider state.
 nb_profile_key_valid "cfg123" || fail "ordinary stock key rejected"
@@ -112,8 +70,7 @@ nb_profile_select "profile-b"
 [ "$NB_CONFIG_DIR" = "$NB_PROFILES_ROOT/profile-b" ] || fail "profile B config dir wrong"
 [ "$NB_CONFIG_DIR" != "$NB_PROFILES_ROOT/profile-a" ] || fail "profiles share a directory"
 
-# Stock authority + orphan garbage collection: A/B may coexist. Removing B from
-# vpn.server must never touch A. A currently active orphan is fail-safe retained.
+# A/B may coexist. Removing B from vpn.server must never touch A.
 mkdir -p "$NB_PROFILES_ROOT/profile-a" "$NB_PROFILES_ROOT/profile-b" "$NB_PROFILES_ROOT/orphan"
 printf '{}\n' > "$NB_PROFILES_ROOT/profile-a/default.json"
 printf '{}\n' > "$NB_PROFILES_ROOT/profile-b/default.json"
@@ -130,77 +87,37 @@ nb_profile_gc_orphans || fail "GC failed after stock profile B deletion"
 [ -d "$NB_PROFILES_ROOT/profile-a" ] || fail "deleting B damaged A"
 [ ! -d "$NB_PROFILES_ROOT/profile-b" ] || fail "deleted stock B identity was not collected"
 
+# The active profile is retained fail-safe during a transient config/lifecycle race.
 mkdir -p "$NB_PROFILES_ROOT/profile-b"
 printf '{}\n' > "$NB_PROFILES_ROOT/profile-b/default.json"
 printf 'profile-b\n' > "$NB_ACTIVE_PROFILE_FILE"
 nb_profile_gc_orphans || fail "GC failed for active fail-safe case"
-[ -d "$NB_PROFILES_ROOT/profile-b" ] || fail "GC removed currently active profile during config inconsistency"
+[ -d "$NB_PROFILES_ROOT/profile-b" ] || fail "GC removed currently active profile"
 rm -f "$NB_ACTIVE_PROFILE_FILE"
 nb_profile_gc_orphans || fail "GC retry failed"
 [ ! -d "$NB_PROFILES_ROOT/profile-b" ] || fail "inactive orphan was not collected on retry"
 
 # A stock row of another provider must not authorize a NetBird identity dir.
 mkdir -p "$NB_PROFILES_ROOT/other"
+printf '{}\n' > "$NB_PROFILES_ROOT/other/default.json"
 UCI_NON_NETBIRD=1
 nb_profile_gc_orphans || fail "GC failed for non-NetBird stock row"
 [ ! -d "$NB_PROFILES_ROOT/other" ] || fail "non-NetBird row incorrectly retained NetBird identity"
 
-# Historical singleton identity is adopted exactly once into a real stock row so
-# an already-installed NetBird client becomes visible in the native list.
-cat > "$NB_LEGACY_ROOT/settings" <<'EOF'
-description=Existing NetBird
-management_url=https://netbird.example.test
-hostname=archer-legacy
-disable_dns=1
-disable_firewall=1
-disable_client_routes=1
-disable_server_routes=1
-disable_ipv6=1
-network_monitor=0
-advertise_lan=0
-advertise_cidr=
-wireguard_port=51820
-enable=1
-enrolled=1
-EOF
-printf '{}\n' > "$NB_LEGACY_ROOT/default.json"
-printf 'state\n' > "$NB_LEGACY_ROOT/state/example"
-
-nb_profile_use_legacy
-nb_legacy_profile_adopt || fail "legacy adoption failed"
-[ -f "$NB_LEGACY_ADOPTION_FILE" ] || fail "adoption marker missing"
-grep -Fxq 'completed=1' "$NB_LEGACY_ADOPTION_FILE" || fail "adoption marker incomplete"
-grep -Fxq 'profile_key=netbird_legacy' "$NB_LEGACY_ADOPTION_FILE" || fail "adopted key not recorded"
-grep -Fq 'set vpn.netbird_legacy=server' "$UCI_LOG" || fail "native stock server row not created"
-grep -Fq 'set vpn.netbird_legacy.type=netbirdvpn' "$UCI_LOG" || fail "native NetBird type not persisted"
-grep -Fq 'set vpn.netbird_legacy.profile_key=netbird_legacy' "$UCI_LOG" || fail "profile key not persisted"
-[ -s "$NB_PROFILES_ROOT/netbird_legacy/default.json" ] || fail "identity was not copied to profile-scoped storage"
-[ -f "$NB_PROFILES_ROOT/netbird_legacy/settings" ] || fail "settings were not copied to profile-scoped storage"
-[ -f "$NB_PROFILES_ROOT/netbird_legacy/state/example" ] || fail "state was not copied to profile-scoped storage"
-grep -Fxq 'enable=0' "$NB_PROFILES_ROOT/netbird_legacy/settings" || fail "adopted profile unexpectedly active"
-grep -Fxq 'enrolled=1' "$NB_PROFILES_ROOT/netbird_legacy/settings" || fail "existing identity not recognized as enrolled"
-
-before="$(wc -l < "$UCI_LOG" | tr -d ' ')"
-nb_legacy_profile_adopt || fail "second adoption returned failure"
-after="$(wc -l < "$UCI_LOG" | tr -d ' ')"
-[ "$before" = "$after" ] || fail "completed migration recreated/mutated the stock row"
-[ -s "$NB_LEGACY_ROOT/default.json" ] || fail "legacy identity source was destructively moved"
-
-# Generic DELETE is TP-Link-owned. Simulate deletion of the adopted stock row:
-# permanent migration completion must prevent its historical source from
-# resurrecting the row, and provider GC may remove only the orphan scoped copy.
-UCI_LEGACY=0
-before="$(wc -l < "$UCI_LOG" | tr -d ' ')"
-nb_legacy_profile_adopt || fail "one-shot adoption check failed after stock delete"
-after="$(wc -l < "$UCI_LOG" | tr -d ' ')"
-[ "$before" = "$after" ] || fail "stock-deleted legacy profile was resurrected"
-nb_profile_gc_orphans || fail "GC failed for stock-deleted adopted profile"
-[ ! -d "$NB_PROFILES_ROOT/netbird_legacy" ] || fail "stock-deleted adopted identity was not collected"
-[ -s "$NB_LEGACY_ROOT/default.json" ] || fail "legacy migration evidence/input was destructively removed"
-
-# Setup keys are intentionally absent from persistent provider helpers.
-if grep -R -E 'setup[_-]?key=' "$NB_LEGACY_ROOT" >/dev/null 2>&1; then
+# No profile helper may implement migration/adoption or persistent setup-key state.
+PROFILE_SOURCE="$(cat "$ROOT/src/init/netbird-profiles.sh")"
+for forbidden in NB_LEGACY nb_legacy legacy_identity migrate-profile legacy-adoption; do
+    if printf '%s' "$PROFILE_SOURCE" | grep -Fq "$forbidden"; then
+        fail "obsolete migration token remains: $forbidden"
+    fi
+done
+if grep -R -E 'setup[_-]?key=' "$NB_ROOT" >/dev/null 2>&1; then
     fail "setup key leaked into persistent profile storage"
 fi
 
-echo "netbird stock-authority/profile-isolation/one-shot-adoption/GC behavior ok"
+# Provider state is allowed only below profiles/<stock-key>/.
+[ ! -e "$NB_ROOT/default.json" ] || fail "root-level identity was created"
+[ ! -e "$NB_ROOT/settings" ] || fail "root-level settings were created"
+[ ! -e "$NB_ROOT/state" ] || fail "root-level state directory was created"
+
+echo "netbird stock-authority/profile-isolation/orphan-GC behavior ok"
