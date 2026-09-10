@@ -2,8 +2,8 @@
 """Validate CREATE/EDIT semantics authored directly in the NetBird subform.
 
 Only a persisted stock key/id switches the protocol subform to Edit mode.
-CREATE carries a transient setup_key through the stock Save; EDIT accepts a
-blank setup_key only after an identity is already enrolled.
+CREATE stages the Setup Key outside the stock payload and carries only an opaque
+enrollment_token; EDIT accepts a blank Setup Key after identity enrollment.
 """
 from __future__ import annotations
 
@@ -27,7 +27,8 @@ required = [
     'draft.value.enrolled = "0"',
     'if (!profileKey.value || creating.value || statusRequestPending) return',
     '(creating.value || s.enrolled !== "1") && !setupKey.value',
-    'setup_key: setupKey.value || ""',
+    'enrollment_token: enrollmentToken.value || ""',
+    'stage_setup_key',
     'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
     's.advertise_lan === "1" && s.disable_server_routes !== "0"',
     's.advertise_lan === "1" && s.disable_firewall !== "0"',
@@ -39,7 +40,7 @@ if missing:
     raise RuntimeError("native CREATE/EDIT/provider boundary incomplete: " + ", ".join(missing))
 
 forbidden = [
-    'async function enroll()', 'async function afterStockSave()',
+    'async function enroll()', 'async function afterStockSave()', 'setup_key: setupKey.value || ""',
     'value.type === "netbirdvpn"', 'value.type === "netbird"',
     "const creating = ref(false)", 'Anunciar rede local', 'Já existe um perfil NetBird',
     'enable: s.enable === "1" ? "on" : "off"',
