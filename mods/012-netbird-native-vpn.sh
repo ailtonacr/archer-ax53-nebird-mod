@@ -207,6 +207,8 @@ printf '%s' "$PAGE_JS" | grep -Fq 'VpnServerNetbirdForm-NB.js?v='
 printf '%s' "$FORM_JS" | grep -Fq 'const existing = !!(value && (value.key || value.id))'
 printf '%s' "$FORM_JS" | grep -Fq 'const profileKey = ref("")'
 printf '%s' "$FORM_JS" | grep -Fq 'enrollment_token: enrollmentToken.value || ""'
+printf '%s' "$FORM_JS" | grep -Fq '"onUpdate:modelValue": onSetupKey'
+printf '%s' "$FORM_JS" | grep -Fq 'onInput: onSetupKey'
 if printf '%s' "$MODEL_JS" | grep -Fq 'setup_key:e.setup_key'; then
   echo "Error: Setup Key leaked into stock VPN serializer" >&2
   exit 1
