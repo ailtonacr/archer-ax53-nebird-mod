@@ -78,6 +78,36 @@ for (const key of ["validate", "setForm", "getForm", "resetForm", "clearValidate
   assert.equal(typeof exposed[key], "function", `${key} must be exposed`);
 assert.equal(typeof context.component.render, "function");
 
+// Rendering must create the local TP-Link su-form provider required by
+// su-form-item/su-password. This protects the hardware failure where the
+// dynamic provider boundary did not forward the parent's injected form context.
+const stockComponents = {
+  "su-form": "SuForm",
+  "su-form-item": "SuFormItem",
+  "su-input": "SuInput",
+  "su-password": "SuPassword",
+  "su-checkbox": "SuCheckbox",
+  "su-form-content-item": "SuFormContentItem",
+  "su-button": "SuButton",
+  "su-alert": "SuAlert",
+  "su-spin": "SuSpin",
+  "su-space": "SuSpace",
+};
+const vmState = new Proxy({ ...state, $: { type: { components: stockComponents }, appContext: { components: {} } } }, {
+  get(target, prop) {
+    const value = target[prop];
+    return value && typeof value === "object" && Object.prototype.hasOwnProperty.call(value, "value")
+      ? value.value
+      : value;
+  },
+});
+const rendered = context.component.render.call(vmState);
+assert.equal(rendered.tag, "SuSpin");
+const localForm = rendered.children.default();
+assert.equal(localForm.tag, "SuForm");
+assert.equal(localForm.props.model, state.draft.value);
+assert.ok(Array.isArray(localForm.children.default()), "local su-form must wrap provider items");
+
 // CREATE remains stock-owned. The provider contributes protocol fields plus one
 // transient setup_key that is consumed by the backend callback during the same
 // /admin/vpn Save. It must not call /admin/netbird before the profile exists.
