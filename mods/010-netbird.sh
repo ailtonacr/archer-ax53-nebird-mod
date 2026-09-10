@@ -156,6 +156,8 @@ printf '%s' "$NB_FORM_JS" | grep -Fq 'context.expose({ isChanged: dirty, validat
 printf '%s' "$NB_FORM_JS" | grep -Fq 'enrollment_token: enrollmentToken.value || ""' || {
   echo "Error: NetBird subform does not pass opaque enrollment token into stock Save" >&2; exit 1;
 }
+printf '%s' "$NB_FORM_JS" | grep -Fq '"onUpdate:modelValue": onSetupKey' || { echo "Error: Setup Key password model binding missing" >&2; exit 1; }
+printf '%s' "$NB_FORM_JS" | grep -Fq 'onInput: onSetupKey' || { echo "Error: Setup Key native input fallback missing" >&2; exit 1; }
 if printf '%s' "$NB_FORM_JS" | grep -Fq 'setup_key: setupKey.value || ""'; then
   echo "Error: Setup Key leaked into stock Save form payload" >&2
   exit 1
