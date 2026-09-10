@@ -119,7 +119,9 @@ firmware: $(TARGET) test-netbird
 		printf "%s" "$$PAGE_JS" | grep -Fq "case it.Netbird:return VpnServerNetbirdForm" || { echo "Error: NetBird provider form mapping missing" >&2; exit 1; }; \
 		printf "%s" "$$PAGE_JS" | grep -Fq "VpnServerNetbirdForm-NB.js?v=" || { echo "Error: NetBird custom module cache-busting missing" >&2; exit 1; }; \
 		printf "%s" "$$FORM_JS" | grep -Fq "const existing = !!(value && (value.key || value.id))" || { echo "Error: NetBird Add/Edit is not keyed by persisted stock identity" >&2; exit 1; }; \
-		printf "%s" "$$FORM_JS" | grep -Fq "enrollment_token: enrollmentToken.value || \"\"" || { echo "Error: opaque enrollment token missing from stock Save payload" >&2; exit 1; }; \
+		printf "%s" "$FORM_JS" | grep -Fq "enrollment_token: enrollmentToken.value || \"\"" || { echo "Error: opaque enrollment token missing from stock Save payload" >&2; exit 1; }; \
+		printf "%s" "$FORM_JS" | grep -Fq '"onUpdate:modelValue": onSetupKey' || { echo "Error: Setup Key password model binding missing" >&2; exit 1; }; \
+		printf "%s" "$FORM_JS" | grep -Fq "onInput: onSetupKey" || { echo "Error: Setup Key input fallback missing" >&2; exit 1; }; \
 		if printf "%s" "$$MODEL_JS" | grep -Fq "setup_key:e.setup_key"; then echo "Error: Setup Key leaked into stock VPN serializer" >&2; exit 1; fi; \
 		printf "%s" "$$FORM_JS" | grep -Fq "stockComponent(this, \"su-password\")" || { echo "Error: stock Setup Key control missing" >&2; exit 1; }; \
 		printf "%s" "$$FORM_JS" | grep -Fq "_h(SuForm, { model: s }, { default: () => items })" || { echo "Error: provider form context missing" >&2; exit 1; }; \
