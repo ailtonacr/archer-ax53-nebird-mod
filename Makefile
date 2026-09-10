@@ -111,15 +111,15 @@ firmware: $(TARGET) test-netbird
 		printf "%s" "$$MODEL_JS" | grep -Fq "async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}" || { echo "Error: generic VPN toggle/update is not stock" >&2; exit 1; }; \
 		printf "%s" "$$MODEL_JS" | grep -Fq "async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}" || { echo "Error: generic VPN DELETE is not stock" >&2; exit 1; }; \
 		printf "%s" "$$MODEL_JS" | grep -Fq "k=e.key||t()" || { echo "Error: NetBird does not use the stock profile-key generator" >&2; exit 1; }; \
-		printf "%s" "$MODEL_JS" | grep -Fq "key:k,des:e.description,type:e.type,enable:i(e.enable),server:n,profile_key:k" || { echo "Error: NetBird generic serializer fields do not match stock provider shape" >&2; exit 1; }; \
-		printf "%s" "$PAGE_JS" | grep -Eq 'from"\\./model-CI6Gt3Hz\\.js\\?v=[0-9a-f]{12}"' || { echo "Error: modified VPN model import is not cache-busted" >&2; exit 1; }; \
+		printf "%s" "$$MODEL_JS" | grep -Fq "key:k,des:e.description,type:e.type,enable:i(e.enable),server:n,profile_key:k" || { echo "Error: NetBird generic serializer fields do not match stock provider shape" >&2; exit 1; }; \
+		printf "%s" "$$PAGE_JS" | grep -Eq 'from"\\./model-CI6Gt3Hz\\.js\\?v=[0-9a-f]{12}"' || { echo "Error: modified VPN model import is not cache-busted" >&2; exit 1; }; \
 		printf "%s" "$$PAGE_JS" | grep -Fq "i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}" || { echo "Error: VPN list is not stock" >&2; exit 1; }; \
 		printf "%s" "$$PAGE_JS" | grep -Fq "\"add\"===n.type?await Ce(i):await ne(i,n.tableItem)" || { echo "Error: VPN ADD/EDIT Save path is not stock" >&2; exit 1; }; \
 		printf "%s" "$$PAGE_JS" | grep -Fq "case it.Netbird:return VpnServerNetbirdForm" || { echo "Error: NetBird provider form mapping missing" >&2; exit 1; }; \
 		printf "%s" "$$PAGE_JS" | grep -Fq "VpnServerNetbirdForm-NB.js?v=" || { echo "Error: NetBird custom module cache-busting missing" >&2; exit 1; }; \
 		printf "%s" "$$FORM_JS" | grep -Fq "const existing = !!(value && (value.key || value.id))" || { echo "Error: NetBird Add/Edit is not keyed by persisted stock identity" >&2; exit 1; }; \
-		printf "%s" "$FORM_JS" | grep -Fq "enrollment_token: enrollmentToken.value || \"\"" || { echo "Error: opaque enrollment token missing from stock Save payload" >&2; exit 1; }; \
-		if printf "%s" "$MODEL_JS" | grep -Fq "setup_key:e.setup_key"; then echo "Error: Setup Key leaked into stock VPN serializer" >&2; exit 1; fi; \
+		printf "%s" "$$FORM_JS" | grep -Fq "enrollment_token: enrollmentToken.value || \"\"" || { echo "Error: opaque enrollment token missing from stock Save payload" >&2; exit 1; }; \
+		if printf "%s" "$$MODEL_JS" | grep -Fq "setup_key:e.setup_key"; then echo "Error: Setup Key leaked into stock VPN serializer" >&2; exit 1; fi; \
 		printf "%s" "$$FORM_JS" | grep -Fq "stockComponent(this, \"su-password\")" || { echo "Error: stock Setup Key control missing" >&2; exit 1; }; \
 		printf "%s" "$$FORM_JS" | grep -Fq "_h(SuForm, { model: s }, { default: () => items })" || { echo "Error: provider form context missing" >&2; exit 1; }; \
 		printf "%s" "$$FORM_JS" | grep -Fq "Permitir roteamento da LAN" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; exit 1; }; \
