@@ -1,0 +1,29 @@
+#!/bin/sh /etc/rc.common
+# One-shot provider-state garbage collection for native NetBird profiles.
+#
+# TP-Link owns generic profile DELETE. This maintenance pass only removes
+# profile-scoped NetBird identity/settings directories whose authoritative
+# vpn.server row no longer exists. It never creates profiles and never starts or
+# stops the NetBird daemon.
+
+START=89
+STOP=12
+
+start() {
+    local sysmode
+    config_load sysmode
+    config_get sysmode sysmode mode "router"
+    [ "$sysmode" = "router" ] || return 0
+
+    . /lib/netbird/netbird-profiles.sh
+
+    if ! nb_profile_gc_orphans; then
+        echo "netbird: orphan profile cleanup failed" >/dev/console 2>&1
+        return 1
+    fi
+    return 0
+}
+
+stop() {
+    return 0
+}
