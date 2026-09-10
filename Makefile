@@ -57,7 +57,6 @@ firmware: $(TARGET) test-netbird
 		STAMPED_VERSION="$$(sed -n "s/^soft_ver://p" rootfs/etc/partition_config/soft-version | head -n1)"; \
 		case "$$STAMPED_VERSION" in *"-netbird mod Build $$BUILD_NO") : ;; *) echo "Error: unexpected stamped soft version: $$STAMPED_VERSION" >&2; exit 1;; esac; \
 		echo "=== [4/6] Verifying modified rootfs before repack ==="; \
-		set -x; \
 		python3 scripts/verify-tplink-vpn-bytecode.py rootfs/usr/lib/lua/luci/controller/admin/vpn.lua; \
 		grep -q "TYPE = \"netbirdvpn\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN type registration missing" >&2; exit 1; }; \
 		grep -q "TYPE_ID = \"5\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN type id is not 5" >&2; exit 1; }; \
@@ -103,33 +102,36 @@ firmware: $(TARGET) test-netbird
 		NB_FW_CANONICAL="$$(sed -n "/# NetBird v4 CIDR-scoped\\/applied-state/,\$$p" rootfs/lib/firewall/tpcmd.sh)"; \
 		test -n "$$NB_FW_CANONICAL" || { echo "Error: ACL-safe canonical NetBird firewall source missing" >&2; exit 1; }; \
 		if printf "%s\n" "$$NB_FW_CANONICAL" | grep -Fq "fw_s_add 4 f FORWARD ACCEPT 1 {"; then echo "Error: canonical TP-Link NetBird FORWARD rules bypass Route ACL ordering" >&2; exit 1; fi; \
-		UPDATE_JS="$$(zcat rootfs/www/webpages/js/update-store-DQkZxaRI.js.gz)"; \
-		MODEL_JS="$$(zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz)"; \
-		PAGE_JS="$$(zcat rootfs/www/webpages/js/index-DTNtPvwx.js.gz)"; \
-		FORM_JS="$$(zcat rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz)"; \
-		printf "%s" "$$UPDATE_JS" | grep -Fq "e.Netbird=\"netbirdvpn\"" || { echo "Error: frontend NetBird enum is not netbirdvpn" >&2; exit 1; }; \
-		printf "%s" "$$MODEL_JS" | grep -Fq "function f(e){return a.request(y,{operation:\"connected_status\",key:e},{preventSuccess:!0})}" || { echo "Error: connected-status is not stock" >&2; exit 1; }; \
-		printf "%s" "$$MODEL_JS" | grep -Fq "async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}" || { echo "Error: generic VPN toggle/update is not stock" >&2; exit 1; }; \
-		printf "%s" "$$MODEL_JS" | grep -Fq "async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}" || { echo "Error: generic VPN DELETE is not stock" >&2; exit 1; }; \
-		printf "%s" "$$MODEL_JS" | grep -Fq "k=e.key||t()" || { echo "Error: NetBird does not use the stock profile-key generator" >&2; exit 1; }; \
-		printf "%s" "$$MODEL_JS" | grep -Fq "key:k,des:e.description,type:e.type,enable:i(e.enable),server:n,profile_key:k" || { echo "Error: NetBird generic serializer fields do not match stock provider shape" >&2; exit 1; }; \
-		MODEL_CACHE_KEY="$$(zcat rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz | sha256sum | cut -c1-12)"; \
-		printf "%s" "$$PAGE_JS" | grep -Fq "from\"./model-CI6Gt3Hz.js?v=$$MODEL_CACHE_KEY\"" || { echo "Error: modified VPN model import cache key does not match model digest" >&2; exit 1; }; \
-		printf "%s" "$$PAGE_JS" | grep -Fq "i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}" || { echo "Error: VPN list is not stock" >&2; exit 1; }; \
-		printf "%s" "$$PAGE_JS" | grep -Fq "\"add\"===n.type?await Ce(i):await ne(i,n.tableItem)" || { echo "Error: VPN ADD/EDIT Save path is not stock" >&2; exit 1; }; \
-		printf "%s" "$$PAGE_JS" | grep -Fq "case it.Netbird:return VpnServerNetbirdForm" || { echo "Error: NetBird provider form mapping missing" >&2; exit 1; }; \
-		printf "%s" "$$PAGE_JS" | grep -Fq "VpnServerNetbirdForm-NB.js?v=" || { echo "Error: NetBird custom module cache-busting missing" >&2; exit 1; }; \
-		printf "%s" "$$FORM_JS" | grep -Fq "const existing = !!(value && (value.key || value.id))" || { echo "Error: NetBird Add/Edit is not keyed by persisted stock identity" >&2; exit 1; }; \
-		printf "%s" "$$FORM_JS" | grep -Fq "enrollment_token: enrollmentToken.value || \"\"" || { echo "Error: opaque enrollment token missing from stock Save payload" >&2; exit 1; }; \
-		printf "%s" "$$FORM_JS" | grep -Fq '"onUpdate:modelValue": onSetupKey' || { echo "Error: Setup Key password model binding missing" >&2; exit 1; }; \
-		printf "%s" "$$FORM_JS" | grep -Fq "onInput: onSetupKey" || { echo "Error: Setup Key input fallback missing" >&2; exit 1; }; \
-		if printf "%s" "$$MODEL_JS" | grep -Fq "setup_key:e.setup_key"; then echo "Error: Setup Key leaked into stock VPN serializer" >&2; exit 1; fi; \
-		printf "%s" "$$FORM_JS" | grep -Fq "stockComponent(this, \"su-password\")" || { echo "Error: stock Setup Key control missing" >&2; exit 1; }; \
-		printf "%s" "$$FORM_JS" | grep -Fq "_h(SuForm, { model: s }, { default: () => items })" || { echo "Error: provider form context missing" >&2; exit 1; }; \
-		printf "%s" "$$FORM_JS" | grep -Fq "Permitir roteamento da LAN" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; exit 1; }; \
+		VERIFY_JS_DIR="$$(mktemp -d)"; \
+		gzip -cd rootfs/www/webpages/js/update-store-DQkZxaRI.js.gz > "$$VERIFY_JS_DIR/update.js"; \
+		gzip -cd rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz > "$$VERIFY_JS_DIR/model.js"; \
+		gzip -cd rootfs/www/webpages/js/index-DTNtPvwx.js.gz > "$$VERIFY_JS_DIR/page.js"; \
+		gzip -cd rootfs/www/webpages/js/VpnServerNetbirdForm-NB.js.gz > "$$VERIFY_JS_DIR/form.js"; \
+		grep -Fq "e.Netbird=\"netbirdvpn\"" "$$VERIFY_JS_DIR/update.js" || { echo "Error: frontend NetBird enum is not netbirdvpn" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "function f(e){return a.request(y,{operation:\"connected_status\",key:e},{preventSuccess:!0})}" "$$VERIFY_JS_DIR/model.js" || { echo "Error: connected-status is not stock" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "async function W(e,n){await function(e,n,t){return a.update(y,{key:e},n,t,{preventSuccess:!0})}(e.key,R(e),R(n))}" "$$VERIFY_JS_DIR/model.js" || { echo "Error: generic VPN toggle/update is not stock" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "async function J(e,n){await function(e,n){return a.remove(y,{key:e,index:n},{preventSuccess:!0})}(e,n)}" "$$VERIFY_JS_DIR/model.js" || { echo "Error: generic VPN DELETE is not stock" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "k=e.key||t()" "$$VERIFY_JS_DIR/model.js" || { echo "Error: NetBird does not use the stock profile-key generator" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "key:k,des:e.description,type:e.type,enable:i(e.enable),server:n,profile_key:k" "$$VERIFY_JS_DIR/model.js" || { echo "Error: NetBird generic serializer fields do not match stock provider shape" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		MODEL_CACHE_KEY="$$(sha256sum "$$VERIFY_JS_DIR/model.js" | cut -c1-12)"; \
+		grep -Fq "from\"./model-CI6Gt3Hz.js?v=$$MODEL_CACHE_KEY\"" "$$VERIFY_JS_DIR/page.js" || { echo "Error: modified VPN model import cache key does not match model digest" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}" "$$VERIFY_JS_DIR/page.js" || { echo "Error: VPN list is not stock" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "\"add\"===n.type?await Ce(i):await ne(i,n.tableItem)" "$$VERIFY_JS_DIR/page.js" || { echo "Error: VPN ADD/EDIT Save path is not stock" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "case it.Netbird:return VpnServerNetbirdForm" "$$VERIFY_JS_DIR/page.js" || { echo "Error: NetBird provider form mapping missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "VpnServerNetbirdForm-NB.js?v=" "$$VERIFY_JS_DIR/page.js" || { echo "Error: NetBird custom module cache-busting missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "const existing = !!(value && (value.key || value.id))" "$$VERIFY_JS_DIR/form.js" || { echo "Error: NetBird Add/Edit is not keyed by persisted stock identity" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "enrollment_token: enrollmentToken.value || \"\"" "$$VERIFY_JS_DIR/form.js" || { echo "Error: opaque enrollment token missing from stock Save payload" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq '"onUpdate:modelValue": onSetupKey' "$$VERIFY_JS_DIR/form.js" || { echo "Error: Setup Key password model binding missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "onInput: onSetupKey" "$$VERIFY_JS_DIR/form.js" || { echo "Error: Setup Key input fallback missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		if grep -Fq "setup_key:e.setup_key" "$$VERIFY_JS_DIR/model.js"; then echo "Error: Setup Key leaked into stock VPN serializer" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; fi; \
+		grep -Fq "stockComponent(this, \"su-password\")" "$$VERIFY_JS_DIR/form.js" || { echo "Error: stock Setup Key control missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "_h(SuForm, { model: s }, { default: () => items })" "$$VERIFY_JS_DIR/form.js" || { echo "Error: provider form context missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "Permitir roteamento da LAN" "$$VERIFY_JS_DIR/form.js" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		cat "$$VERIFY_JS_DIR/model.js" "$$VERIFY_JS_DIR/page.js" "$$VERIFY_JS_DIR/form.js" > "$$VERIFY_JS_DIR/all.js"; \
 		for FORBIDDEN in "key:e.key||\"netbird\"" "a.value=_nb.concat(e)" "operation:\"settings_set\"" "function nbSettingsSet(" "function nbControl(" "function nbDelete(" "\"label-width\": { span: 10 }" "\"content-width\": { span: 14 }" "async function enroll()" "async function afterStockSave()" "__nbActiveStockVpn" "window.__netbirdSaveDraft" "__netbirdSaveListener"; do \
-			if printf "%s\n%s\n%s\n" "$$MODEL_JS" "$$PAGE_JS" "$$FORM_JS" | grep -Fq "$$FORBIDDEN"; then echo "Error: custom generic VPN interception remains: $$FORBIDDEN" >&2; exit 1; fi; \
+			if grep -Fq "$$FORBIDDEN" "$$VERIFY_JS_DIR/all.js"; then echo "Error: custom generic VPN interception remains: $$FORBIDDEN" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; fi; \
 		done; \
+		rm -rf "$$VERIFY_JS_DIR"; \
 		if grep -q "NetBird adapter for TP-Link\|patch_dispatch_upvalues\|request_context" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua 2>/dev/null; then echo "Error: non-stock adapter leaked into TP-Link VPN controller" >&2; exit 1; fi; \
 		grep -Fxq "build=$$BUILD_NO" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong build number" >&2; exit 1; }; \
 		grep -Fxq "display_version=$$STAMPED_VERSION" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong display version" >&2; exit 1; }; \
@@ -141,7 +143,6 @@ firmware: $(TARGET) test-netbird
 		echo "    ok vpnc/netifd sole normal lifecycle owner + rollback"; \
 		echo "    ok routing-peer invariants + NetBird Route ACL ordering"; \
 		echo "    ok build identity: $STAMPED_VERSION"; \
-		set +x; \
 		echo "=== [5/6] Repacking firmware ==="; \
 		rm -f "$(FIRMWARE_OUTPUT)"; \
 		bash 02-repack-ubi.sh "$(FIRMWARE_OUTPUT)" 2>&1 | tail -5; \
