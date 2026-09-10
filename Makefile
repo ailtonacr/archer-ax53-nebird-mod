@@ -39,7 +39,7 @@ test-netbird:
 	python3 -m py_compile src/web/patchnetbird_web.py src/web/patchnetbird_native_crud.py src/web/patchnetbird_factory_semantics.py src/web/patchnetbird_form_state.py src/web/patchnetbird_native_contract.py scripts/verify-tplink-vpn-bytecode.py scripts/test-netbird-contracts.py scripts/test-netbird-native-frontend.py
 
 firmware: $(TARGET) test-netbird
-	@bash -o pipefail -c 'set -eE; trap '\''rc=$?; echo "Error: firmware command failed (rc=$rc): $BASH_COMMAND" >&2'\'' ERR; \
+	@bash -o pipefail -c 'set -e; \
 		BUILD_NO="$$(tr -d "[:space:]" < BUILD)"; \
 		case "$$BUILD_NO" in ""|*[!0-9]*) echo "Error: BUILD must contain a positive integer" >&2; exit 1;; esac; \
 		test "$$BUILD_NO" -ge 1 || { echo "Error: BUILD must be >= 1" >&2; exit 1; }; \
