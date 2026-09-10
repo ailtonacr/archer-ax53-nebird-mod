@@ -154,7 +154,10 @@ local function netbird_config(cfg, vpn_type)
     local vpn = {
         proto = PROTO,
         auto = "1",
-        connectable = cfg.enable or "1",
+        des = cfg.des or cfg.description or "NetBird",
+        ifname = "wt0",
+        mtu = tonumber(cfg.mtu) or 1280,
+        kill_switch = cfg.kill_switch or "off",
         management_url = updated.management_url,
         hostname = updated.hostname,
         wireguard_port = updated.wireguard_port,
