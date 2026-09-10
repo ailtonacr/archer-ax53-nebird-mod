@@ -260,6 +260,12 @@ local function op_stage_setup_key(body)
     return reply({ enrollment_token = token })
 end
 
+local function op_discard_setup_key(body)
+    local token = request_value(body, "enrollment_token")
+    if token and token ~= "" then model.discard_staged_setup_key(token) end
+    return reply({ discarded = true })
+end
+
 function dispatch(body)
     local op = request_value(body, "operation") or "status"
     local ok_dispatch, result = pcall(function()
@@ -268,6 +274,7 @@ function dispatch(body)
         elseif op == "log" then return op_log(body)
         elseif op == "payload_status" then return op_payload_status()
         elseif op == "stage_setup_key" then return op_stage_setup_key(body)
+        elseif op == "discard_setup_key" then return op_discard_setup_key(body)
         else return error_reply("bad_request", "unknown operation") end
     end)
     if ok_dispatch then return result end
