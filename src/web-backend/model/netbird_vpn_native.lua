@@ -35,6 +35,7 @@ local FIELDS = {
     "wireguard_port",
     "server",
     "profile_key",
+    "enrollment_token",
     "kill_switch",
 }
 
@@ -99,17 +100,33 @@ local function settings_from_config(cfg, profile_key)
     }
 end
 
-local function enroll_transient(profile_key, setup_key)
-    setup_key = tostring(setup_key or "")
-    if setup_key == "" then return true end
-    if #setup_key > 4096 or setup_key:find("%z") then return nil, "invalid setup key" end
+local function clear_enrollment_token(profile_key)
+    local uci = require("luci.model.uci").cursor()
+    uci:foreach("vpn", "server", function(section)
+        if section.key == profile_key and section.type == TYPE then
+            uci:delete("vpn", section[".name"], "enrollment_token")
+            return false
+        end
+    end)
+    uci:delete("protocol", TYPE, "enrollment_token")
+    uci:commit("vpn")
+    uci:commit("protocol")
+end
 
-    local tmp = "/tmp/nb-setup-key-" .. tostring(os.time()) .. "-" .. tostring(math.random(0x7fffffff))
-    if not fs.writefile(tmp, setup_key) then return nil, "failed to stage setup key" end
-    nixio.fs.chmod(tmp, "0600")
+local function enroll_transient(profile_key, enrollment_token)
+    enrollment_token = tostring(enrollment_token or "")
+    if enrollment_token == "" then return true end
 
-    local out, rc = nb_model.control("enroll", profile_key, tmp)
-    nixio.fs.unlink(tmp)
+    local keyfile, path_err = nb_model.staged_setup_key_path(enrollment_token)
+    if not keyfile then
+        clear_enrollment_token(profile_key)
+        return nil, path_err or "staged setup key unavailable"
+    end
+
+    local out, rc = nb_model.control("enroll", profile_key, keyfile)
+    nb_model.discard_staged_setup_key(enrollment_token)
+    clear_enrollment_token(profile_key)
+
     if rc ~= 0 then
         return nil, (out or "enrollment failed"):gsub("%s+$", "")
     end
@@ -137,15 +154,15 @@ local function netbird_config(cfg, vpn_type)
         return {}
     end
 
-    local setup_key = cfg.setup_key
-    if setup_key ~= nil and tostring(setup_key) ~= "" then
-        local ok, enroll_err = enroll_transient(profile_key, setup_key)
+    local enrollment_token = cfg.enrollment_token
+    if enrollment_token ~= nil and tostring(enrollment_token) ~= "" then
+        local ok, enroll_err = enroll_transient(profile_key, enrollment_token)
         if not ok then
             io.stderr:write("netbird: enrollment failed for profile " .. profile_key .. ": " .. tostring(enroll_err or "unknown error") .. "\n")
             return {}
         end
     elseif not nb_model.identity_present(profile_key) then
-        io.stderr:write("netbird: setup key required for unenrolled profile " .. profile_key .. "\n")
+        io.stderr:write("netbird: enrollment token required for unenrolled profile " .. profile_key .. "\n")
         return {}
     end
 
