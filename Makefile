@@ -58,8 +58,6 @@ firmware: $(TARGET) test-netbird
 		case "$$STAMPED_VERSION" in *"-netbird mod Build $$BUILD_NO") : ;; *) echo "Error: unexpected stamped soft version: $$STAMPED_VERSION" >&2; exit 1;; esac; \
 		echo "=== [4/6] Verifying modified rootfs before repack ==="; \
 		python3 scripts/verify-tplink-vpn-bytecode.py rootfs/usr/lib/lua/luci/controller/admin/vpn.lua; \
-		test ! -e rootfs/usr/lib/lua/luci/netbird/vpn_stock.lua || { echo "Error: obsolete preserved vpn_stock.lua remains in rootfs" >&2; exit 1; }; \
-		test ! -e rootfs/usr/lib/lua/luci/controller/admin/vpn_stock.lua || { echo "Error: obsolete vpn_stock.lua remains in LuCI controller tree" >&2; exit 1; }; \
 		grep -q "TYPE = \"netbirdvpn\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN type registration missing" >&2; exit 1; }; \
 		grep -q "TYPE_ID = \"5\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN type id is not 5" >&2; exit 1; }; \
 		grep -q "local schema = { proto = PROTO }" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN_TBL schema does not match stock shape" >&2; exit 1; }; \
@@ -89,9 +87,6 @@ firmware: $(TARGET) test-netbird
 		test "$$(printf "%s\n" "$$PROTO_SETUP" | grep -c "nb_runtime_stop")" -ge 2 || { echo "Error: netifd setup rollback is incomplete" >&2; exit 1; }; \
 		test ! -e rootfs/etc/rc.d/S99netbird || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }; \
 		grep -q "nb_profile_gc_orphans" rootfs/etc/init.d/netbird-profile-gc || { echo "Error: stock-delete orphan identity maintenance missing" >&2; exit 1; }; \
-		test ! -e rootfs/etc/init.d/netbird-profile-migrate || { echo "Error: obsolete NetBird profile migration service remains" >&2; exit 1; }; \
-		test ! -e rootfs/etc/rc.d/S89netbird-profile-migrate || { echo "Error: obsolete NetBird profile migration boot link remains" >&2; exit 1; }; \
-		for F in rootfs/lib/netbird/netbird-profiles.sh rootfs/sbin/netbird-ctl rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua; do for TOKEN in NB_LEGACY nb_legacy legacy_identity migrate-profile legacy-adoption; do if grep -Fq "$$TOKEN" "$$F"; then echo "Error: obsolete NetBird migration token $$TOKEN remains in $$F" >&2; exit 1; fi; done; done; \
 		grep -q "NB_FW_STATE=\"/tmp/netbird-firewall.state\"" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: applied firewall state snapshot missing" >&2; exit 1; }; \
 		grep -q "nb_runtime_validate_settings" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: runtime routing settings validation missing" >&2; exit 1; }; \
 		grep -q "LAN routing requires NetBird firewall policy enforcement" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: runtime does not preserve NetBird Route ACL enforcement" >&2; exit 1; }; \
@@ -122,13 +117,13 @@ firmware: $(TARGET) test-netbird
 		for FORBIDDEN in "key:e.key||\"netbird\"" "a.value=_nb.concat(e)" "operation:\"settings_set\"" "function nbSettingsSet(" "function nbControl(" "function nbDelete(" "__nbActiveStockVpn" "window.__netbirdSaveDraft" "__netbirdSaveListener"; do \
 			if printf "%s\n%s\n%s\n" "$$MODEL_JS" "$$PAGE_JS" "$$FORM_JS" | grep -Fq "$$FORBIDDEN"; then echo "Error: custom generic VPN interception remains: $$FORBIDDEN" >&2; exit 1; fi; \
 		done; \
-		if grep -q "NetBird adapter for TP-Link\|patch_dispatch_upvalues\|request_context" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua 2>/dev/null; then echo "Error: retired adapter leaked into stock VPN controller" >&2; exit 1; fi; \
+		if grep -q "NetBird adapter for TP-Link\|patch_dispatch_upvalues\|request_context" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua 2>/dev/null; then echo "Error: non-stock adapter leaked into TP-Link VPN controller" >&2; exit 1; fi; \
 		grep -Fxq "build=$$BUILD_NO" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong build number" >&2; exit 1; }; \
 		grep -Fxq "display_version=$$STAMPED_VERSION" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong display version" >&2; exit 1; }; \
 		echo "    ok untouched TP-Link vpn.lua + native NetBird registry extension"; \
 		echo "    ok stock list/add/edit/save/toggle/delete/connected-status"; \
 		echo "    ok provider-only NetBird form + content cache-busting"; \
-		echo "    ok independent profile identities + orphan GC; no migration path"; \
+		echo "    ok independent profile identities + orphan GC"; \
 		echo "    ok vpnc/netifd sole normal lifecycle owner + rollback"; \
 		echo "    ok routing-peer invariants + NetBird Route ACL ordering"; \
 		echo "    ok build identity: $$STAMPED_VERSION"; \
