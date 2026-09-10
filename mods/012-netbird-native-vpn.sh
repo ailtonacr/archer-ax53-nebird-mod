@@ -43,13 +43,6 @@ chmod 0644 "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua" \
     "$R/lib/netbird/netbird-runtime.sh"
 chmod 0755 "$R/etc/init.d/netbird-profile-gc"
 
-# Explicitly purge artifacts from the abandoned migration implementation when a
-# developer applies mods to a previously modified rootfs. Fresh firmware builds
-# start from stock, so these paths normally do not exist.
-rm -f "$R/etc/init.d/netbird-profile-migrate" \
-      "$R/etc/rc.d/S89netbird-profile-migrate" \
-      "$R/etc/rc.d/S89netbird-profile-gc"
-
 if command -v luac >/dev/null 2>&1; then
   luac -p "$NATIVE_MODEL" "$NATIVE_CONTROLLER"
 fi
@@ -118,9 +111,8 @@ grep -q 'local function op_enroll' "$NB_AUX_CONTROLLER" || {
   echo "Error: profile-scoped NetBird enrollment endpoint missing" >&2; exit 1;
 }
 
-# Profile-scoped persistence only. There is no singleton identity and no
-# migration/adoption path. TP-Link owns deletion; orphaned provider state is
-# garbage-collected independently from generic CRUD.
+# Profile-scoped persistence only. There is no singleton identity. TP-Link owns
+# deletion; orphaned provider state is garbage-collected independently.
 cmp -s "$PROFILE_HELPER" "$R/lib/netbird/netbird-profiles.sh" || { echo "Error: packaged profile helper drifted" >&2; exit 1; }
 cmp -s "$PROFILE_GC_INIT" "$R/etc/init.d/netbird-profile-gc" || { echo "Error: packaged profile GC init drifted" >&2; exit 1; }
 grep -q '^nb_profile_select()' "$R/lib/netbird/netbird-profiles.sh"
@@ -131,14 +123,6 @@ grep -Fq 'NB_PROFILES_ROOT="${NB_PROFILES_ROOT:-$NB_ROOT/profiles}"' "$R/lib/net
 grep -Fq 'nb_profile_gc_orphans' "$R/etc/init.d/netbird-profile-gc"
 [ -L "$R/etc/rc.d/S89netbird-profile-gc" ] || { echo "Error: NetBird profile GC boot link missing" >&2; exit 1; }
 [ "$(readlink "$R/etc/rc.d/S89netbird-profile-gc")" = "../init.d/netbird-profile-gc" ] || { echo "Error: NetBird profile GC link target incorrect" >&2; exit 1; }
-for forbidden in 'NB_LEGACY' 'nb_legacy' 'legacy_identity' 'migrate-profile' 'legacy-adoption'; do
-  if grep -Fq "$forbidden" "$R/lib/netbird/netbird-profiles.sh" "$R/sbin/netbird-ctl" "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua" 2>/dev/null; then
-    echo "Error: obsolete NetBird migration token remains: $forbidden" >&2
-    exit 1
-  fi
-done
-[ ! -e "$R/etc/init.d/netbird-profile-migrate" ] || { echo "Error: obsolete NetBird migration service remains" >&2; exit 1; }
-[ ! -e "$R/etc/rc.d/S89netbird-profile-migrate" ] || { echo "Error: obsolete NetBird migration link remains" >&2; exit 1; }
 
 # Native runtime invariants.
 cmp -s "$NATIVE_RUNTIME" "$R/lib/netbird/netbird-runtime.sh" || { echo "Error: packaged native NetBird runtime drifted" >&2; exit 1; }
