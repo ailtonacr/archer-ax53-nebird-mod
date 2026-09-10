@@ -151,12 +151,12 @@ def check_stock_frontend_boundary() -> None:
         'setup_key: setupKey.value || ""',
         'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
-        'stockComponent(this, "su-form-item")', 'stockComponent(this, "su-input")',
+        'stockComponent(this, "su-form")', 'stockComponent(this, "su-form-item")', 'stockComponent(this, "su-input")',
         'stockComponent(this, "su-password")', 'stockComponent(this, "su-checkbox")',
-        'return _h(SuSpin, { spinning: this.busy }, { default: () => items })',
+        '_h(SuForm, { model: s }, { default: () => items })',
     )
     for token in (
-        'stockComponent(this, "su-form")', 'async function enroll()', 'async function afterStockSave()',
+        '"label-width": { span: 10 }', '"content-width": { span: 14 }', 'async function enroll()', 'async function afterStockSave()',
         'value.type === "netbirdvpn"', 'value.type === "netbird"', 'key:e.key||"netbird"',
         'Já existe um perfil NetBird', 'a.value=_nb.concat(e)', 'operation:"settings_set"',
         'function nbSettingsSet(', 'enable: s.enable === "1" ? "on" : "off"',
