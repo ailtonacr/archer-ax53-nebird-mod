@@ -28,7 +28,7 @@ $(TARGET): $(SRCS)
 # local firmware build and can also be invoked explicitly during development.
 # Generated rootfs bundles are checked again after unpack/apply-mods.
 test-netbird:
-	sh -n src/init/netbird.sh src/init/netbird-profiles.sh src/init/netbird-runtime.sh src/init/netbird-ctl src/init/netbird-proto.sh src/init/netbird.init src/init/netbird-profile-migrate.init src/init/netbird-recovery src/init/netbird-recovery.init src/init/netbird_firewall.inc scripts/test-netbird-runtime.sh scripts/test-netbird-profiles.sh scripts/test-netbird-recovery.sh
+	sh -n src/init/netbird.sh src/init/netbird-profiles.sh src/init/netbird-runtime.sh src/init/netbird-ctl src/init/netbird-proto.sh src/init/netbird.init src/init/netbird-profile-gc.init src/init/netbird-recovery src/init/netbird-recovery.init src/init/netbird_firewall.inc scripts/test-netbird-runtime.sh scripts/test-netbird-profiles.sh scripts/test-netbird-recovery.sh
 	bash -n mods/010-netbird.sh mods/012-netbird-native-vpn.sh mods/013-netbird-recovery.sh
 	sh scripts/test-netbird-runtime.sh
 	sh scripts/test-netbird-profiles.sh
@@ -59,7 +59,7 @@ firmware: $(TARGET) test-netbird
 		echo "=== [4/6] Verifying modified rootfs before repack ==="; \
 		python3 scripts/verify-tplink-vpn-bytecode.py rootfs/usr/lib/lua/luci/controller/admin/vpn.lua; \
 		test ! -e rootfs/usr/lib/lua/luci/netbird/vpn_stock.lua || { echo "Error: obsolete preserved vpn_stock.lua remains in rootfs" >&2; exit 1; }; \
-		test ! -e rootfs/usr/lib/lua/luci/controller/admin/vpn_stock.lua || { echo "Error: legacy vpn_stock.lua remains in LuCI controller tree" >&2; exit 1; }; \
+		test ! -e rootfs/usr/lib/lua/luci/controller/admin/vpn_stock.lua || { echo "Error: obsolete vpn_stock.lua remains in LuCI controller tree" >&2; exit 1; }; \
 		grep -q "TYPE = \"netbirdvpn\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN type registration missing" >&2; exit 1; }; \
 		grep -q "TYPE_ID = \"5\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN type id is not 5" >&2; exit 1; }; \
 		grep -q "local schema = { proto = PROTO }" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: native NetBird VPN_TBL schema does not match stock shape" >&2; exit 1; }; \
@@ -80,7 +80,7 @@ firmware: $(TARGET) test-netbird
 		cmp -s src/init/netbird-ctl rootfs/sbin/netbird-ctl || { echo "Error: packaged netbird-ctl drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird.init rootfs/etc/init.d/netbird || { echo "Error: packaged netbird init drifted from canonical source" >&2; exit 1; }; \
 		cmp -s src/init/netbird-proto.sh rootfs/lib/netifd/proto/netbird.sh || { echo "Error: packaged netbird netifd handler drifted from canonical source" >&2; exit 1; }; \
-		cmp -s src/init/netbird-profile-migrate.init rootfs/etc/init.d/netbird-profile-migrate || { echo "Error: packaged NetBird profile maintenance drifted from canonical source" >&2; exit 1; }; \
+		cmp -s src/init/netbird-profile-gc.init rootfs/etc/init.d/netbird-profile-gc || { echo "Error: packaged NetBird profile GC drifted from canonical source" >&2; exit 1; }; \
 		grep -q "add_protocol netbird" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd NetBird protocol registration missing" >&2; exit 1; }; \
 		grep -q "proto_config_add_string \"profile_key\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: profile key is not carried through netifd" >&2; exit 1; }; \
 		grep -q "nb_runtime_connect" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not call shared native runtime" >&2; exit 1; }; \
@@ -89,7 +89,10 @@ firmware: $(TARGET) test-netbird
 		PROTO_SETUP="$$(sed -n "/^proto_netbird_setup()/,/^proto_netbird_teardown()/p" rootfs/lib/netifd/proto/netbird.sh)"; \
 		test "$$(printf "%s\n" "$$PROTO_SETUP" | grep -c "nb_runtime_stop")" -ge 2 || { echo "Error: netifd setup rollback is incomplete" >&2; exit 1; }; \
 		test ! -e rootfs/etc/rc.d/S99netbird || { echo "Error: standalone NetBird boot lifecycle still enabled" >&2; exit 1; }; \
-		grep -q "nb_profile_gc_orphans" rootfs/etc/init.d/netbird-profile-migrate || { echo "Error: stock-delete orphan identity maintenance missing" >&2; exit 1; }; \
+		grep -q "nb_profile_gc_orphans" rootfs/etc/init.d/netbird-profile-gc || { echo "Error: stock-delete orphan identity maintenance missing" >&2; exit 1; }; \
+		test ! -e rootfs/etc/init.d/netbird-profile-migrate || { echo "Error: obsolete NetBird profile migration service remains" >&2; exit 1; }; \
+		test ! -e rootfs/etc/rc.d/S89netbird-profile-migrate || { echo "Error: obsolete NetBird profile migration boot link remains" >&2; exit 1; }; \
+		for F in rootfs/lib/netbird/netbird-profiles.sh rootfs/sbin/netbird-ctl rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua; do for TOKEN in NB_LEGACY nb_legacy legacy_identity migrate-profile legacy-adoption; do if grep -Fq "$$TOKEN" "$$F"; then echo "Error: obsolete NetBird migration token $$TOKEN remains in $$F" >&2; exit 1; fi; done; done; \
 		grep -q "NB_FW_STATE=\"/tmp/netbird-firewall.state\"" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: applied firewall state snapshot missing" >&2; exit 1; }; \
 		grep -q "nb_runtime_validate_settings" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: runtime routing settings validation missing" >&2; exit 1; }; \
 		grep -q "LAN routing requires NetBird firewall policy enforcement" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: runtime does not preserve NetBird Route ACL enforcement" >&2; exit 1; }; \
@@ -126,7 +129,7 @@ firmware: $(TARGET) test-netbird
 		echo "    ok untouched TP-Link vpn.lua + native NetBird registry extension"; \
 		echo "    ok stock list/add/edit/save/toggle/delete/connected-status"; \
 		echo "    ok provider-only NetBird form + content cache-busting"; \
-		echo "    ok independent profile identities + legacy adoption + orphan GC"; \
+		echo "    ok independent profile identities + orphan GC; no migration path"; \
 		echo "    ok vpnc/netifd sole normal lifecycle owner + rollback"; \
 		echo "    ok routing-peer invariants + NetBird Route ACL ordering"; \
 		echo "    ok build identity: $$STAMPED_VERSION"; \
