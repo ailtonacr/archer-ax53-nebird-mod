@@ -24,6 +24,8 @@ required = [
     'management_url: s.management_url || ""',
     'wireguard_port: s.wireguard_port || "51820"',
     'setup_key: setupKey.value || ""',
+    '"label-width": { span: 10 }',
+    '"content-width": { span: 14 }',
     'stockComponent(this, "su-form-item")',
     'stockComponent(this, "su-input")',
     'stockComponent(this, "su-password")',
@@ -33,7 +35,7 @@ required = [
     's.advertise_lan === "1" && s.disable_firewall !== "0"',
     'draft.value.disable_firewall = "0"',
     'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
-    'return _h(SuSpin, { spinning: this.busy }, { default: () => items })',
+    '_h(SuForm, { model: s }, { default: () => items })',
     'Permitir roteamento da LAN',
 ]
 missing = [token for token in required if token not in text]
