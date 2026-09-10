@@ -3,12 +3,9 @@
 
 TP-Link remains the owner of every generic VPN Client operation it already
 implements: list, ADD, EDIT, Save/Cancel, toggle, DELETE and connected-status.
-This stage adds only the provider-specific serialization needed to map NetBird's
-Management URL onto the stock ``server`` field while preserving
-``management_url`` for the NetBird registry/model.
-
-The input is expected to be the stock TP-Link model after provider discovery was
-added. This patcher does not translate older NetBird serializer variants.
+This stage adds only provider serialization. The transient setup_key travels in
+the normal stock Save payload and is consumed by the backend provider callback;
+it is never part of VPN_TBL/UCI persistence.
 """
 from __future__ import annotations
 
@@ -27,11 +24,11 @@ STOCK_DELETE = 'async function J(e,n){await function(e,n){return a.remove(y,{key
 STOCK_LIST = 'i=async()=>{const{data:e,maxRules:t}=await J();a.value=e,l.value=t}'
 STOCK_SAVE = '"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
 
-# Prefix inserted into TP-Link's existing R(e) serializer. Stock serializers use
-# the vendor key generator t() as `key:e.key||t()`. NetBird must follow that same
-# identity convention so initial ADD receives a real stock key and multiple
-# NetBird rows remain independent. profile_key intentionally equals that stock
-# key; there is no synthetic/singleton provider identity.
+# Stock serializers use the vendor key generator t() as `key:e.key||t()`.
+# NetBird follows exactly that convention and mirrors the generated key into
+# profile_key for provider-scoped runtime state. The object spread intentionally
+# carries transient setup_key to the same stock Save request; the backend never
+# returns/persists that field.
 NATIVE_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"",k=e.key||t();try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:k,profile_key:k,type:u.Netbird,server:n,management_url:e.management_url||""};}'
 
 
@@ -71,12 +68,9 @@ def patch_update_store() -> None:
 def patch_model() -> None:
     name = "model-CI6Gt3Hz.js.gz"
     text = read_gz(name)
-
-    # Generic operations must still be byte-for-byte stock at this boundary.
     for token in (STOCK_CONNECTED_STATUS, STOCK_UPDATE, STOCK_DELETE):
         if token not in text:
             raise RuntimeError("TP-Link generic VPN model flow changed before NetBird finalization: " + token)
-
     if NATIVE_SERIALIZER in text:
         raise RuntimeError("NetBird serializer already present; expected clean stock model input")
 
@@ -90,16 +84,10 @@ def patch_model() -> None:
     if missing:
         raise RuntimeError("final native provider model incomplete: " + ", ".join(missing))
 
-    # No custom list/save/toggle/status/delete path and no fixed profile identity.
     forbidden = (
-        'const nb="/admin/netbird"',
-        'function nbStatus(',
-        'function nbSettingsSet(',
-        'function nbControl(',
-        'function nbDelete(',
-        'operation:"settings_set"',
-        'operation:"profile_delete"',
-        'e==="netbird"?a.request("/admin/netbird"',
+        'const nb="/admin/netbird"', 'function nbStatus(', 'function nbSettingsSet(',
+        'function nbControl(', 'function nbDelete(', 'operation:"settings_set"',
+        'operation:"profile_delete"', 'e==="netbird"?a.request("/admin/netbird"',
         'key:e.key||"netbird"',
     )
     leaked = [token for token in forbidden if token in text]
@@ -122,7 +110,6 @@ def assert_page_and_form() -> None:
         'e===it.Netbird||ut.supportVpnClientType(e)',
         'case it.Netbird:return VpnServerNetbirdForm',
         'VpnServerNetbirdForm-NB.js?v=',
-        'afterStockSave',
     )
     missing_page = [token for token in required_page if token not in page]
     if missing_page:
@@ -132,16 +119,16 @@ def assert_page_and_form() -> None:
         'const existing = !!(value && (value.key || value.id))',
         'const creating = ref(true)',
         'const profileKey = ref("")',
-        'stockProfileKey()',
-        'async function afterStockSave()',
-        'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate, afterStockSave })',
-        'stockComponent(this, "su-form")',
+        'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
         'stockComponent(this, "su-form-item")',
         'stockComponent(this, "su-input")',
+        'stockComponent(this, "su-password")',
         'stockComponent(this, "su-checkbox")',
-        'profile_key: profileKey.value',
+        'setup_key: setupKey.value || ""',
         'Setup Key',
+        'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
         'Permitir roteamento da LAN',
+        'return _h(SuSpin, { spinning: this.busy }, { default: () => items })',
     )
     missing_form = [token for token in required_form if token not in form]
     if missing_form:
@@ -149,18 +136,15 @@ def assert_page_and_form() -> None:
 
     combined = page + "\n" + form
     forbidden = (
-        'a.value=_nb.concat(e)',
-        'it.Netbird===i.type?await Nbs(i)',
-        'window.__netbirdSaveDraft',
-        '__netbirdSaveListener',
-        'stopImmediatePropagation',
-        'Já existe um perfil NetBird',
-        'value.type === "netbirdvpn"',
-        '"label-width": { span: 10 }',
+        'a.value=_nb.concat(e)', 'it.Netbird===i.type?await Nbs(i)',
+        'window.__netbirdSaveDraft', '__netbirdSaveListener', 'stopImmediatePropagation',
+        'Já existe um perfil NetBird', 'value.type === "netbirdvpn"',
+        '"label-width": { span: 10 }', 'stockComponent(this, "su-form")',
+        'async function afterStockSave()', 'async function enroll()',
     )
     leaked = [token for token in forbidden if token in combined]
     if leaked:
-        raise RuntimeError("singleton/hybrid NetBird frontend path remains: " + ", ".join(leaked))
+        raise RuntimeError("non-stock/singleton NetBird frontend path remains: " + ", ".join(leaked))
 
     check_js("index-DTNtPvwx.js.gz", page)
     check_js("VpnServerNetbirdForm-NB.js.gz", form)
@@ -170,7 +154,7 @@ def main() -> None:
     patch_update_store()
     patch_model()
     assert_page_and_form()
-    print("Native NetBird finalized: TP-Link generic CRUD/status untouched; provider serializer only")
+    print("Native NetBird finalized: stock CRUD + one-step transient setup-key enrollment")
 
 
 if __name__ == "__main__":
