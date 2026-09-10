@@ -65,15 +65,24 @@ def main() -> int:
         finalizer,
         'NATIVE_SERIALIZER =', 'type:u.Netbird,server:n,management_url:e.management_url||""',
         'new URL(n).hostname', 'STOCK_CONNECTED_STATUS', 'STOCK_UPDATE', 'STOCK_DELETE',
-        'STOCK_LIST', 'STOCK_SAVE', 'Generic operations must be stock before and after provider finalization.',
-        'key:e.key||"netbird"', 'function nbSettingsSet(', 'function nbControl(', 'function nbDelete(',
-        'operation:"profile_delete"',
+        'STOCK_LIST', 'STOCK_SAVE',
+        'Generic operations must still be byte-for-byte stock at this boundary.',
+        'expected clean stock model input',
     )
-    for token in ('PROVIDER_DELETE =', 'DELETE_HELPER =', 'await nbDelete('):
-        assert token not in finalizer, f"generic delete hook leaked into finalizer: {token!r}"
-    assert 'a.value=_nb.concat(e)' not in finalizer
+    for token in (
+        'key:e.key||"netbird"',
+        'function nbSettingsSet(',
+        'function nbControl(',
+        'function nbDelete(',
+        'operation:"profile_delete"',
+        'PROVIDER_DELETE =',
+        'DELETE_HELPER =',
+        'await nbDelete(',
+        'a.value=_nb.concat(e)',
+    ):
+        assert token not in finalizer, f"non-stock frontend bridge leaked into finalizer: {token!r}"
 
-    # Historical factory-semantics stage is a pure guard, not a mutator.
+    # Factory-semantics stage is a pure guard, not a mutator.
     require(
         factory,
         'TP-Link generic VPN list/add/edit/save/toggle/delete/status semantics remain stock',
