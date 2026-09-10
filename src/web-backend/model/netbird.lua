@@ -19,6 +19,7 @@ end
 ROOT     = "/tp_data/netbird"
 PROFILES = ROOT .. "/profiles"
 CTL      = "/sbin/netbird-ctl"
+SETUP_STAGE_PREFIX = "/tmp/netbird-setup-stage-"
 
 KEYS = {
     enable                = { kind = "bool", default = "0" },
@@ -214,6 +215,46 @@ function identity_present(profile_key)
     if not path then return false end
     local raw = fs.readfile(path) or ""
     return raw:match("%S") ~= nil
+end
+
+local function valid_stage_token(token)
+    return type(token) == "string" and token:match("^[0-9a-f][0-9a-f]+$") ~= nil and #token == 32
+end
+
+local function new_stage_token()
+    local raw = fs.readfile("/proc/sys/kernel/random/uuid") or ""
+    local token = raw:gsub("[^0-9A-Fa-f]", ""):lower()
+    if #token >= 32 then return token:sub(1, 32) end
+    return nil
+end
+
+function stage_setup_key(setup_key)
+    setup_key = tostring(setup_key or "")
+    if setup_key == "" or #setup_key > 4096 or setup_key:find("%z") then
+        return nil, "invalid setup key"
+    end
+    local token = new_stage_token()
+    if not token then return nil, "failed to allocate setup-key token" end
+    local path = SETUP_STAGE_PREFIX .. token
+    if not fs.writefile(path, setup_key) then return nil, "failed to stage setup key" end
+    nixio.fs.chmod(path, "0600")
+    return token
+end
+
+function staged_setup_key_path(token)
+    token = tostring(token or ""):lower()
+    if not valid_stage_token(token) then return nil, "invalid enrollment token" end
+    local path = SETUP_STAGE_PREFIX .. token
+    local raw = fs.readfile(path)
+    if not raw or raw == "" then return nil, "staged setup key not found" end
+    return path
+end
+
+function discard_staged_setup_key(token)
+    token = tostring(token or ""):lower()
+    if not valid_stage_token(token) then return false end
+    nixio.fs.unlink(SETUP_STAGE_PREFIX .. token)
+    return true
 end
 
 local function run(...)
