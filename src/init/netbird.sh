@@ -1,19 +1,21 @@
 #!/bin/sh
 # NetBird base library for TP-Link Archer AX53 V1 (QSDK/OpenWrt, Linux 4.4.60).
 #
-# This file owns persistent settings, R2 payload materialization, daemon process
-# primitives and TP-Link firewall entrypoints. Connection lifecycle, status
-# interpretation and canonical `netbird up` flags live in netbird-runtime.sh.
-# Dependency direction is deliberately one-way: the base library never calls
-# the netbird-ctl CLI facade.
+# This file owns R2 payload materialization, daemon process primitives and
+# TP-Link firewall entrypoints. Profile-specific paths are deliberately unset
+# here and are supplied only by netbird-profiles.sh after a real stock profile
+# key is selected. Connection lifecycle, status interpretation and canonical
+# `netbird up` flags live in netbird-runtime.sh.
 
 . /lib/functions.sh
 . /lib/functions/service.sh 2>/dev/null || true
 
-NB_CONFIG_DIR="/tp_data/netbird"
-NB_STATE_DIR="$NB_CONFIG_DIR/state"
-NB_CONFIG_FILE="$NB_CONFIG_DIR/default.json"
-NB_SETTINGS_FILE="$NB_CONFIG_DIR/settings"
+# Never default to /tp_data/netbird/{settings,default.json,state}. Provider state
+# must always be selected explicitly as /tp_data/netbird/profiles/<stock-key>/.
+NB_CONFIG_DIR=""
+NB_STATE_DIR=""
+NB_CONFIG_FILE=""
+NB_SETTINGS_FILE=""
 
 NB_BIN="/tmp/netbird"
 NB_BIN_NEW="/tmp/netbird.new"
@@ -57,6 +59,7 @@ nb_get() {
 
 nb_set() {
     local file="$1" key="$2" value="$3" tmp
+    [ -n "$file" ] || { echo "netbird: profile context required" >&2; return 1; }
     [ -f "$file" ] || { echo "${key}=${value}" > "$file"; return 0; }
     tmp="$file.tmp"
     if grep -q "^${key}=" "$file" 2>/dev/null; then
@@ -68,7 +71,20 @@ nb_set() {
     mv -f "$tmp" "$file"
 }
 
+nb_require_profile_context() {
+    [ -n "$NB_CONFIG_DIR" ] && [ -n "$NB_STATE_DIR" ] && \
+    [ -n "$NB_CONFIG_FILE" ] && [ -n "$NB_SETTINGS_FILE" ] || {
+        echo "netbird: native profile context required" >&2
+        return 1
+    }
+    case "$NB_CONFIG_DIR" in
+        /tp_data/netbird/profiles/*) return 0 ;;
+        *) echo "netbird: invalid profile context" >&2; return 1 ;;
+    esac
+}
+
 nb_ensure_settings() {
+    nb_require_profile_context || return 1
     mkdir -p "$NB_CONFIG_DIR"
     [ -d "$NB_CONFIG_DIR" ] && chmod 0700 "$NB_CONFIG_DIR"
     if [ ! -f "$NB_SETTINGS_FILE" ]; then
@@ -97,9 +113,9 @@ EOF
 nb_payload_mark_valid() {
     local ver size sha
     [ -x "$NB_BIN" ] && [ -f "$NB_VALID" ] || return 1
-    ver=$(sed -n 's/^version=//p' "$NB_VALID" 2>/dev/null | head -n 1)
-    size=$(sed -n 's/^size=//p' "$NB_VALID" 2>/dev/null | head -n 1)
-    sha=$(sed -n 's/^sha256=//p' "$NB_VALID" 2>/dev/null | head -n 1)
+    ver=$(sed -n 's/^version=//p' "$NB_VALID" 2>/dev/null | head -n1)
+    size=$(sed -n 's/^size=//p' "$NB_VALID" 2>/dev/null | head -n1)
+    sha=$(sed -n 's/^sha256=//p' "$NB_VALID" 2>/dev/null | head -n1)
     [ "$ver" = "$NB_VERSION" ] && [ "$size" = "$NB_EXPECTED_SIZE" ] && \
         [ "$sha" = "$NB_EXPECTED_SHA256" ] || return 1
     [ "$(ls -ln "$NB_BIN" 2>/dev/null | awk '{print $5}')" = "$NB_EXPECTED_SIZE" ]
@@ -239,13 +255,15 @@ nb_state_name() {
 }
 
 nb_mgmt_url() {
+    nb_require_profile_context || return 1
     nb_get "$NB_SETTINGS_FILE" management_url "$NB_DEFAULT_MGMT"
 }
 
 # Process primitives only. Connection semantics are in netbird-runtime.sh.
 nb_daemon_start() {
+    nb_require_profile_context || return 1
     nb_materialize || return $?
-    nb_ensure_settings
+    nb_ensure_settings || return 1
     mkdir -p /var/run
     rm -f "$NB_PID" "$NB_SOCK"
     local hostname args
