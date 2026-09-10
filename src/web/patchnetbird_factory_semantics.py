@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Fail-fast guard that NetBird did not replace TP-Link VPN Client semantics.
 
-Historical revisions of this stage rewrote generic toggle/save/list behavior to
-special-case NetBird. That is intentionally retired. The native architecture
-keeps TP-Link as the owner of generic profile semantics and this stage now only
-verifies that those stock paths are still present after provider injection.
+Historical revisions rewrote generic toggle/save/list behavior to special-case
+NetBird. That is retired. The native architecture keeps TP-Link as owner of
+generic profile semantics; this stage only verifies those stock paths plus the
+provider-only subform contract.
 """
 from __future__ import annotations
 
@@ -54,15 +54,9 @@ def main() -> None:
         raise RuntimeError("TP-Link generic VPN page flow was intercepted: " + ", ".join(missing_page))
 
     forbidden = (
-        'a.value=_nb.concat(e)',
-        'operation:"settings_set"',
-        'function nbSettingsSet(',
-        'function nbControl(',
-        'function nbDelete(',
-        'it.Netbird===i.type?await Nbs(i)',
-        'window.__netbirdSaveDraft',
-        '__netbirdSaveListener',
-        'stopImmediatePropagation',
+        'a.value=_nb.concat(e)', 'operation:"settings_set"', 'function nbSettingsSet(',
+        'function nbControl(', 'function nbDelete(', 'it.Netbird===i.type?await Nbs(i)',
+        'window.__netbirdSaveDraft', '__netbirdSaveListener', 'stopImmediatePropagation',
         '__nbActiveStockVpn',
     )
     combined = model + "\n" + page
@@ -72,17 +66,26 @@ def main() -> None:
 
     required_form = (
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
-        'stockComponent(this, "su-form")',
         'stockComponent(this, "su-form-item")',
         'stockComponent(this, "su-input")',
+        'stockComponent(this, "su-password")',
         'stockComponent(this, "su-checkbox")',
         'const creating = ref(true)',
         'const existing = !!(value && (value.key || value.id))',
+        'setup_key: setupKey.value || ""',
+        'return _h(SuSpin, { spinning: this.busy }, { default: () => items })',
         'Permitir roteamento da LAN',
     )
     missing_form = [token for token in required_form if token not in form]
     if missing_form:
         raise RuntimeError("native NetBird provider form contract incomplete: " + ", ".join(missing_form))
+
+    for token in (
+        'stockComponent(this, "su-form")', 'async function enroll()',
+        'async function afterStockSave()', 'Já existe um perfil NetBird',
+    ):
+        if token in form:
+            raise RuntimeError("provider form escaped stock outer-form boundary: " + token)
 
     check_js("model-CI6Gt3Hz.js.gz", model)
     check_js("index-DTNtPvwx.js.gz", page)
