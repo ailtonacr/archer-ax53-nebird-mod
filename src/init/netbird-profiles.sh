@@ -96,11 +96,21 @@ nb_profile_identity_present() {
 
 # The stock vpn.server row is authoritative for whether provider state is valid.
 nb_profile_stock_exists() {
-    local key="${1:-}" section_type profile_type
+    local key="${1:-}" idx row_key row_type
     nb_profile_key_valid "$key" || return 1
-    section_type="$(uci -q get "vpn.$key" 2>/dev/null || true)"
-    profile_type="$(uci -q get "vpn.$key.type" 2>/dev/null || true)"
-    [ "$section_type" = "server" ] && [ "$profile_type" = "netbirdvpn" ]
+
+    # TP-Link stores the public profile identity in the server option "key";
+    # the UCI section itself is anonymous (@server[N]) and is not named by key.
+    idx=0
+    while :; do
+        row_key="$(uci -q get "vpn.@server[$idx].key" 2>/dev/null)" || break
+        row_type="$(uci -q get "vpn.@server[$idx].type" 2>/dev/null || true)"
+        if [ "$row_key" = "$key" ] && [ "$row_type" = "netbirdvpn" ]; then
+            return 0
+        fi
+        idx=$((idx + 1))
+    done
+    return 1
 }
 
 # Generic DELETE remains TP-Link-owned. Provider state whose authoritative stock
