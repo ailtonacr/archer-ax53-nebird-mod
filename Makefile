@@ -117,9 +117,9 @@ firmware: $(TARGET) test-netbird
 		printf "%s" "$$FORM_JS" | grep -Fq "const existing = !!(value && (value.key || value.id))" || { echo "Error: NetBird Add/Edit is not keyed by persisted stock identity" >&2; exit 1; }; \
 		printf "%s" "$$FORM_JS" | grep -Fq "setup_key: setupKey.value || \"\"" || { echo "Error: Setup Key is not included in the stock Save payload" >&2; exit 1; }; \
 		printf "%s" "$$FORM_JS" | grep -Fq "stockComponent(this, \"su-password\")" || { echo "Error: stock Setup Key control missing" >&2; exit 1; }; \
-		printf "%s" "$$FORM_JS" | grep -Fq "return _h(SuSpin, { spinning: this.busy }, { default: () => items })" || { echo "Error: provider still nests its own stock form/grid" >&2; exit 1; }; \
+		printf "%s" "$FORM_JS" | grep -Fq "_h(SuForm, { model: s }, { default: () => items })" || { echo "Error: provider form context missing" >&2; exit 1; }; \
 		printf "%s" "$$FORM_JS" | grep -Fq "Permitir roteamento da LAN" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; exit 1; }; \
-		for FORBIDDEN in "key:e.key||\"netbird\"" "a.value=_nb.concat(e)" "operation:\"settings_set\"" "function nbSettingsSet(" "function nbControl(" "function nbDelete(" "stockComponent(this, \"su-form\")" "async function enroll()" "async function afterStockSave()" "__nbActiveStockVpn" "window.__netbirdSaveDraft" "__netbirdSaveListener"; do \
+		for FORBIDDEN in "key:e.key||\"netbird\"" "a.value=_nb.concat(e)" "operation:\"settings_set\"" "function nbSettingsSet(" "function nbControl(" "function nbDelete(" "\"label-width\": { span: 10 }" "\"content-width\": { span: 14 }" "async function enroll()" "async function afterStockSave()" "__nbActiveStockVpn" "window.__netbirdSaveDraft" "__netbirdSaveListener"; do \
 			if printf "%s\n%s\n%s\n" "$$MODEL_JS" "$$PAGE_JS" "$$FORM_JS" | grep -Fq "$$FORBIDDEN"; then echo "Error: custom generic VPN interception remains: $$FORBIDDEN" >&2; exit 1; fi; \
 		done; \
 		if grep -q "NetBird adapter for TP-Link\|patch_dispatch_upvalues\|request_context" rootfs/usr/lib/lua/luci/controller/admin/vpn.lua 2>/dev/null; then echo "Error: non-stock adapter leaked into TP-Link VPN controller" >&2; exit 1; fi; \
