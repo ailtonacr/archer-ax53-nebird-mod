@@ -26,10 +26,10 @@ STOCK_SAVE = '"add"===n.type?await Ce(i):await ne(i,n.tableItem)'
 
 # Stock serializers use the vendor key generator t() as `key:e.key||t()`.
 # NetBird follows exactly that convention and mirrors the generated key into
-# profile_key for provider-scoped runtime state. The object spread intentionally
-# carries transient setup_key to the same stock Save request; the backend never
-# returns/persists that field.
-NATIVE_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"",k=e.key||t();try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:k,profile_key:k,type:u.Netbird,server:n,management_url:e.management_url||""};}'
+# profile_key for provider-scoped runtime state. setup_key is copied explicitly
+# so the stock request always carries the transient enrollment input; the
+# backend provider callback consumes it but never returns/persists that field.
+NATIVE_SERIALIZER = 'function R(e){if(e&&e.type===u.Netbird){let n=e.management_url||e.server||"",k=e.key||t();try{n=new URL(n).hostname}catch(t){n=n.replace(/^https?:\\/\\//,"").replace(/\\/.*$/,"").replace(/:\\d+$/,"")}return{...e,key:k,profile_key:k,type:u.Netbird,server:n,management_url:e.management_url||"",setup_key:e.setup_key||""};}'
 
 
 def read_gz(name: str) -> str:
