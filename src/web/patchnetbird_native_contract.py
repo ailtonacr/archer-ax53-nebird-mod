@@ -28,7 +28,7 @@ required = [
     'stockComponent(this, "su-form")',
     'stockComponent(this, "su-form-item")',
     'stockComponent(this, "su-input")',
-    'stockComponent(this, "su-password")',
+    'stockComponent(this, "su-password")', '"onUpdate:modelValue": onSetupKey', 'onInput: onSetupKey',
     'stockComponent(this, "su-checkbox")',
     'stockComponent(this, "su-button")',
     's.advertise_lan === "1" && s.disable_server_routes !== "0"',
