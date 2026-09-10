@@ -24,8 +24,7 @@ required = [
     'management_url: s.management_url || ""',
     'wireguard_port: s.wireguard_port || "51820"',
     'setup_key: setupKey.value || ""',
-    '"label-width": { span: 10 }',
-    '"content-width": { span: 14 }',
+    'stockComponent(this, "su-form")',
     'stockComponent(this, "su-form-item")',
     'stockComponent(this, "su-input")',
     'stockComponent(this, "su-password")',
@@ -43,7 +42,8 @@ if missing:
     raise RuntimeError("native form contract incomplete: " + ", ".join(missing))
 
 forbidden = [
-    'stockComponent(this, "su-form")',
+    '"label-width": { span: 10 }',
+    '"content-width": { span: 14 }',
     'async function enroll()',
     'async function afterStockSave()',
     "syncNativeSaveButton",
