@@ -5,6 +5,7 @@ import vm from "node:vm";
 const original = fs.readFileSync(new URL("./VpnServerNetbirdForm-NB.js", import.meta.url), "utf8");
 
 for (const token of [
+  'stockComponent(this, "su-form")',
   'stockComponent(this, "su-form-item")',
   'stockComponent(this, "su-input")',
   'stockComponent(this, "su-password")',
@@ -20,11 +21,10 @@ for (const token of [
   's.advertise_lan === "1" && s.disable_server_routes !== "0"',
   's.advertise_lan === "1" && s.disable_firewall !== "0"',
   'Permitir roteamento da LAN',
-  'return _h(SuSpin, { spinning: this.busy }, { default: () => items })',
+  '_h(SuForm, { model: s }, { default: () => items })',
 ]) assert.ok(original.includes(token), `missing authored token ${token}`);
 
 for (const token of [
-  'stockComponent(this, "su-form")',
   "NETBIRD_CSS", 'type: "checkbox"', 'class: "netbird-input"', "syncNativeSaveButton", "unknown error",
   'value.type === "netbirdvpn"', 'value.type === "netbird"', "const creating = ref(false)",
   'Anunciar rede local', 'Já existe um perfil NetBird', 'async function enroll()', 'async function afterStockSave()',
