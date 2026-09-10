@@ -157,7 +157,7 @@ def check_stock_frontend_boundary() -> None:
         'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
         'stockComponent(this, "su-form")', 'stockComponent(this, "su-form-item")', 'stockComponent(this, "su-input")',
-        'stockComponent(this, "su-password")', 'stockComponent(this, "su-checkbox")',
+        'stockComponent(this, "su-password")', '"onUpdate:modelValue": onSetupKey', 'onInput: onSetupKey', 'stockComponent(this, "su-checkbox")',
         '_h(SuForm, { model: s }, { default: () => items })',
     )
     for token in (
