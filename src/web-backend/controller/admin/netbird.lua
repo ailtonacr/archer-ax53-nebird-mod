@@ -250,6 +250,16 @@ local function op_payload_status()
     return reply({ version = model.payload_version(), provisioned = model.payload_ok(), state = model.payload_state() })
 end
 
+local function op_stage_setup_key(body)
+    local setup_key = request_value(body, "setup_key")
+    if not setup_key or setup_key == "" then
+        return error_reply("bad_request", "setup key required")
+    end
+    local token, err = model.stage_setup_key(setup_key)
+    if not token then return error_reply("stage_failed", err or "failed to stage setup key") end
+    return reply({ enrollment_token = token })
+end
+
 function dispatch(body)
     local op = request_value(body, "operation") or "status"
     local ok_dispatch, result = pcall(function()
@@ -257,6 +267,7 @@ function dispatch(body)
         elseif op == "restart" then return op_restart(body)
         elseif op == "log" then return op_log(body)
         elseif op == "payload_status" then return op_payload_status()
+        elseif op == "stage_setup_key" then return op_stage_setup_key(body)
         else return error_reply("bad_request", "unknown operation") end
     end)
     if ok_dispatch then return result end
