@@ -175,8 +175,7 @@ def check_auxiliary_boundary() -> None:
         'local function native_profile_active(profile_key)', 'local function op_status(body)',
         'local function op_restart(body)', 'sys.call("/etc/init.d/vpnc restart >/dev/null 2>&1")',
         'local function op_log(body)', 'model.log(profile_key, tonumber(n) or 100)',
-        'local function op_payload_status()',
-        'Setup-key enrollment', 'provider callback during that same stock Save request',
+        'local function op_payload_status()', 'function dispatch(body)',
     )
     dispatch = controller.split("function dispatch(body)", 1)[1]
     for op in ("enroll", "settings_set", "settings_get", "connected_status", "profile_delete", "clean"):
@@ -209,9 +208,9 @@ def check_profile_authority() -> None:
         'nb_profile_select()', 'nb_profile_stock_exists()', 'vpn.$key.type',
         '[ "$section_type" = "server" ] && [ "$profile_type" = "netbirdvpn" ]',
         'nb_profile_gc_orphans()', 'NB_CONFIG_DIR=""', 'NB_SETTINGS_FILE=""',
-        'there is intentionally no singleton/default profile context',
+        'nb_profile_clear_context',
     )
-    require(gc_init, 'nb_profile_gc_orphans', 'never creates profiles', 'never starts or')
+    require(gc_init, '. /lib/netbird/netbird-profiles.sh', 'nb_profile_gc_orphans')
     gc_code = shell_code(gc_init)
     for token in ('nb_runtime_connect', 'netbird-ctl up', 'service_start', 'uci set'):
         assert token not in gc_code, f"profile GC exceeded maintenance boundary: {token}"
@@ -319,7 +318,8 @@ def check_build_gates() -> None:
     require(
         makefile,
         'test-netbird:', 'src/init/netbird-profile-gc.init', 'scripts/test-netbird-profiles.sh',
-        'scripts/test-netbird-recovery.sh', 'independent profile identities + orphan GC',
+        'scripts/test-netbird-recovery.sh', 'python3 scripts/test-netbird-contracts.py .',
+        'python3 scripts/test-netbird-native-frontend.py',
     )
 
 
