@@ -3,9 +3,9 @@
 
 TP-Link remains the owner of every generic VPN Client operation it already
 implements: list, ADD, EDIT, Save/Cancel, toggle, DELETE and connected-status.
-This stage adds only provider serialization. The transient setup_key travels in
-the normal stock Save payload and is consumed by the backend provider callback;
-it is never part of VPN_TBL/UCI persistence.
+This stage adds only provider serialization. The Setup Key is staged through
+the provider endpoint and the normal stock Save carries only an opaque,
+short-lived enrollment token.
 """
 from __future__ import annotations
 
