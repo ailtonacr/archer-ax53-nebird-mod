@@ -256,6 +256,7 @@ export default defineComponent({
   },
 
   render() {
+    const SuForm = stockComponent(this, "su-form");
     const SuFormItem = stockComponent(this, "su-form-item");
     const SuInput = stockComponent(this, "su-input");
     const SuPassword = stockComponent(this, "su-password");
@@ -315,9 +316,12 @@ export default defineComponent({
     else if (this.message) items.push(_h(SuAlert, { closable: "" }, textSlot(this.message)));
     if (edit && this.showLog && this.log) items.push(_h(SuFormItem, { label: "Logs" }, { default: () => _h(SuInput, { value: this.log, disabled: true, type: "textarea" }) }));
 
-    // Do not nest a second su-form inside TP-Link's outer VPN form. The provider
-    // items inherit the stock form context directly, preventing the duplicate
-    // grid that pushed inputs outside the modal.
-    return _h(SuSpin, { spinning: this.busy }, { default: () => items });
+    // TP-Link's dynamic provider boundary does not forward the parent su-form
+    // injection context. su-form-item/su-password therefore need a local su-form
+    // provider. Keep it minimal: model only, with no custom label/content widths,
+    // so we get the required form context without reintroducing the old overflow.
+    return _h(SuSpin, { spinning: this.busy }, {
+      default: () => _h(SuForm, { model: s }, { default: () => items }),
+    });
   },
 });
