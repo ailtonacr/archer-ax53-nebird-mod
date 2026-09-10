@@ -90,9 +90,9 @@ grep -q 'TYPE = "netbirdvpn"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'TYPE_ID = "5"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q '"profile_key"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'local schema = { proto = PROTO }' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
-grep -Fq 'table.insert(schema, { field = { key }, canbe_empty = true })' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
-if grep -Fq 'table.insert(schema, { key = key })' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"; then
-  echo "Error: NetBird VPN_TBL still uses the invalid pre-stock rule shape" >&2
+grep -Fq 'table.insert(schema, { key = key })' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+if grep -Fq 'field = { key }' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua" || grep -Fq 'canbe_empty = true' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"; then
+  echo "Error: NetBird VPN_TBL does not match hardware-observed stock { key = field } rules" >&2
   exit 1
 fi
 grep -q 'vpn.VPN_CFG_TBL\[TYPE\] = netbird_config' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
