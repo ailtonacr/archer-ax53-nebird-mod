@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Validate the authored TP-Link native subform contract.
+"""Validate the authored TP-Link native NetBird subform contract.
 
-The form does not rely on DOM Save interception or post-build structural
-rewrites. This stage is a fail-fast check that the source exposes exactly what
-VpnServerFormDialog consumes while leaving the TP-Link dialog/button untouched.
+The form does not intercept TP-Link Save. setup_key is a transient provider
+field included in the normal stock Save payload and consumed by VPN_CFG_TBL;
+it is never persisted by the stock profile schema.
 """
 from __future__ import annotations
 
@@ -23,14 +23,17 @@ required = [
     "throw new Error(error.value)",
     'management_url: s.management_url || ""',
     'wireguard_port: s.wireguard_port || "51820"',
-    'stockComponent(this, "su-form")',
+    'setup_key: setupKey.value || ""',
     'stockComponent(this, "su-form-item")',
     'stockComponent(this, "su-input")',
+    'stockComponent(this, "su-password")',
     'stockComponent(this, "su-checkbox")',
     'stockComponent(this, "su-button")',
     's.advertise_lan === "1" && s.disable_server_routes !== "0"',
     's.advertise_lan === "1" && s.disable_firewall !== "0"',
     'draft.value.disable_firewall = "0"',
+    'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
+    'return _h(SuSpin, { spinning: this.busy }, { default: () => items })',
     'Permitir roteamento da LAN',
 ]
 missing = [token for token in required if token not in text]
@@ -38,6 +41,9 @@ if missing:
     raise RuntimeError("native form contract incomplete: " + ", ".join(missing))
 
 forbidden = [
+    'stockComponent(this, "su-form")',
+    'async function enroll()',
+    'async function afterStockSave()',
     "syncNativeSaveButton",
     "netbirdSaveSyncTimer",
     "data-netbird-dirty",
@@ -56,4 +62,4 @@ check = subprocess.run(["node", "--input-type=module", "--check"], input=text.en
 if check.returncode:
     raise RuntimeError("node --check failed for NetBird form:\n" + check.stderr.decode()[:2000])
 
-print("NetBird TP-Link native form + policy-safe routing contract verified")
+print("NetBird TP-Link stock-save/transient-setup-key form contract verified")
