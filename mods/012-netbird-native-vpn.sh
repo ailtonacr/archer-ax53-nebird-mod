@@ -5,7 +5,7 @@
 # Allowed custom surface:
 #   - register type=netbirdvpn in the stock controller registries
 #   - provider-specific frontend subform/serialization
-#   - transient setup-key handoff from stock Save to the native netifd lifecycle
+#   - provider-side Setup Key staging + opaque token handoff through stock Save
 #   - netifd proto=netbird + runtime
 #   - profile-scoped identity/diagnostics
 #   - provider-state orphan garbage collection
@@ -113,8 +113,8 @@ fi
 grep -q 'native.install()' "$R/usr/lib/lua/luci/controller/admin/netbird_native.lua"
 grep -Fq 'if [ "$vpntype" != "netbirdvpn" ]; then' "$VPN_CORE"
 
-# /admin/netbird is diagnostics/control only. Enrollment is not a second Save
-# path: it is consumed by VPN_CFG_TBL[netbirdvpn] during the stock Save request.
+# /admin/netbird is diagnostics/control only. The secret is staged provider-side;
+# stock Save carries only the opaque token, and netifd performs enrollment later.
 if grep -Eq 'op == "(enroll|settings_set|settings_get|profile_delete|connected_status)"' "$NB_AUX_CONTROLLER"; then
   echo "Error: auxiliary /admin/netbird shadows stock/provider-save operations" >&2
   exit 1
