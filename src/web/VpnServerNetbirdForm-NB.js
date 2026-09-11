@@ -126,6 +126,7 @@ export default defineComponent({
     const payload = ref({});
     const traffic = ref({ uploadSpeed: 0, downloadSpeed: 0 });
     const profileExists = ref(false);
+    const identityPresent = ref(null);
     const profileKey = ref("");
     const setupKey = ref("");
     const enrollmentToken = ref("");
@@ -173,6 +174,7 @@ export default defineComponent({
         const r = await nbReq("status", { profile_key: profileKey.value });
         settings.value = r.settings || settings.value || {};
         profileExists.value = !!r.profileExists;
+        identityPresent.value = !!r.identityPresent;
         if (!dirty.value) {
           draft.value = normalizeForm(draft.value, settings.value);
           draft.value.enrolled = settings.value.enrolled || draft.value.enrolled || "0";
@@ -210,7 +212,14 @@ export default defineComponent({
       if (!validHostname(s.hostname)) { error.value = "Hostname inválido. Use letras, números, ponto, hífen ou sublinhado (máx. 64 caracteres)."; throw new Error(error.value); }
       if (!validWireGuardPort(s.wireguard_port)) { error.value = "Informe uma porta WireGuard entre 1 e 65535."; throw new Error(error.value); }
       if (!validManagementUrl(s.management_url)) { error.value = "Informe uma URL de gerenciamento válida (http:// ou https://)."; throw new Error(error.value); }
-      if ((creating.value || s.enrolled !== "1") && !setupKey.value) { error.value = "Informe a Setup Key do NetBird para concluir o enrollment neste salvamento."; throw new Error(error.value); }
+      let hasIdentity = identityPresent.value;
+      if (!creating.value && hasIdentity === null && profileKey.value) {
+        const r = await nbReq("status", { profile_key: profileKey.value });
+        profileExists.value = !!r.profileExists;
+        identityPresent.value = !!r.identityPresent;
+        hasIdentity = identityPresent.value;
+      }
+      if ((creating.value || !hasIdentity) && !setupKey.value) { error.value = "Informe a Setup Key do NetBird para concluir o enrollment neste salvamento."; throw new Error(error.value); }
       if (setupKey.value.length > 4096) { error.value = "Setup Key inválida."; throw new Error(error.value); }
       if (setupKey.value && !enrollmentToken.value) {
         const staged = await nbReq("stage_setup_key", { setup_key: setupKey.value });
@@ -231,6 +240,7 @@ export default defineComponent({
       creating.value = !existing;
       profileKey.value = existing ? String(value.key || value.id) : "";
       profileExists.value = existing;
+      identityPresent.value = existing ? null : false;
       draft.value = normalizeForm(value || {}, {});
       if (creating.value) { draft.value.enable = "0"; draft.value.enrolled = "0"; }
       setupKey.value = "";
@@ -277,7 +287,7 @@ export default defineComponent({
       if (staleToken) nbReq("discard_setup_key", { enrollment_token: staleToken }).catch(() => {});
     });
 
-    return { props, settings, draft, status, netbird, payload, traffic, profileExists, profileKey, setupKey, enrollmentToken, log, busy, message, error, showLog, dirty, creating, updateDraft, updateSetupKey, restart, fetchLog };
+    return { props, settings, draft, status, netbird, payload, traffic, profileExists, identityPresent, profileKey, setupKey, enrollmentToken, log, busy, message, error, showLog, dirty, creating, updateDraft, updateSetupKey, restart, fetchLog };
   },
 
   render() {
@@ -310,16 +320,16 @@ export default defineComponent({
     items.push(_h(SuFormItem, { label: "Hostname", name: "hostname", optional: "" }, { default: () => _h(SuInput, { value: s.hostname || "", "onUpdate:value": value => this.updateDraft("hostname", value), disabled, placeholder: "archer-ax53" }) }));
     items.push(_h(SuFormItem, { label: "Porta WireGuard", name: "wireguard_port" }, { default: () => _h(SuInput, { value: s.wireguard_port || "51820", "onUpdate:value": value => this.updateDraft("wireguard_port", value), disabled }) }));
     const onSetupKey = value => this.updateSetupKey(value);
-    items.push(_h(SuFormItem, { label: "Setup Key", name: "setup_key", optional: edit && s.enrolled === "1" ? "" : undefined }, { default: () => _h(SuPassword, {
+    items.push(_h(SuFormItem, { label: "Setup Key", name: "setup_key", optional: edit && this.identityPresent === true ? "" : undefined }, { default: () => _h(SuPassword, {
       value: this.setupKey || "",
       modelValue: this.setupKey || "",
       "onUpdate:value": onSetupKey,
       "onUpdate:modelValue": onSetupKey,
       onInput: onSetupKey,
       disabled,
-      placeholder: edit && s.enrolled === "1" ? "Deixe em branco para manter a identidade atual" : "Setup Key do NetBird",
+      placeholder: edit && this.identityPresent === true ? "Deixe em branco para manter a identidade atual" : "Setup Key do NetBird",
     }) }));
-    items.push(_h(SuAlert, null, textSlot(edit ? "A Setup Key só é usada se preenchida durante SALVAR; ela nunca é armazenada no perfil." : "A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link e não será armazenada.")));
+    items.push(_h(SuAlert, null, textSlot(edit && this.identityPresent === true ? "A identidade deste perfil já existe. Deixe a Setup Key em branco para mantê-la; informe outra apenas para substituir a identidade." : "A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.")));
 
     const flags = [
       ["Habilitar DNS do NetBird", "disable_dns", s.disable_dns === "0", true],
