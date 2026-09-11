@@ -27,8 +27,10 @@ nb_bool_arg() {
 # Canonical flags for every `netbird up` invocation. There must be exactly one
 # builder so enrollment and ordinary connection cannot drift or duplicate flags.
 nb_up_flags() {
-    local wg_port
+    local wg_port hostname
     wg_port="$(nb_get "$NB_SETTINGS_FILE" wireguard_port "$NB_DEFAULT_PORT")"
+    hostname="$(nb_get "$NB_SETTINGS_FILE" hostname "")"
+
     printf '%s ' \
         "$(nb_bool_arg disable_dns --disable-dns 1)" \
         "$(nb_bool_arg disable_firewall --disable-firewall 1)" \
@@ -37,6 +39,7 @@ nb_up_flags() {
         "$(nb_bool_arg disable_ipv6 --disable-ipv6 1)" \
         "$(nb_bool_arg network_monitor --network-monitor 0)" \
         "--wireguard-port=${wg_port}"
+    [ -n "$hostname" ] && printf '%s ' "--hostname=${hostname}"
 }
 
 # Routing-peer mode must preserve NetBird's own route ACL enforcement. NetBird
