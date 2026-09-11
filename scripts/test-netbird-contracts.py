@@ -338,13 +338,13 @@ def check_build_gates() -> None:
     )
 
     # Make recipes are parsed once by make and again by bash -c. Literal shell
-    # variables in grep contracts therefore need \$ in the Makefile source so
-    # make emits \$ and bash does not expand them before grep sees the pattern.
+    # variables in grep contracts therefore need \\$$ in the Makefile source:
+    # make turns $$ into $, leaving \\$ for bash so the variable is not expanded.
     require(
         makefile,
-        'nb_staged_setup_key_path \\"\\$enrollment_token\\"',
-        'nb_runtime_connect \\"\\$keyfile\\"',
-        'nb_profile_clear_enrollment_token \\"\\$NB_PROFILE_KEY\\"',
+        'nb_staged_setup_key_path \\"\\$$enrollment_token\\"',
+        'nb_runtime_connect \\"\\$$keyfile\\"',
+        'nb_profile_clear_enrollment_token \\"\\$$NB_PROFILE_KEY\\"',
     )
     for stale in (
         '[$]enrollment_token', '[$]keyfile', '[$]NB_PROFILE_KEY',
