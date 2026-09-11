@@ -20,6 +20,7 @@ NB_CONNECT_TIMEOUT=30
 
 proto_netbird_init_config() {
     proto_config_add_string "profile_key"
+    proto_config_add_string "enrollment_token"
     proto_config_add_string "management_url"
     proto_config_add_string "hostname"
     proto_config_add_int "wireguard_port"
@@ -62,6 +63,9 @@ proto_netbird_setup() {
     local config="$1"
     local enabled="off"
     local vpntype="none"
+    local enrollment_token=""
+    local keyfile=""
+    local runtime_rc=0
     local tries="$NB_CONNECT_TIMEOUT"
 
     echo "netbird: netifd setup start ($config)" >/dev/console
@@ -88,7 +92,37 @@ proto_netbird_setup() {
         return 1
     fi
 
-    if ! nb_runtime_connect >/dev/null 2>&1; then
+    json_get_vars enrollment_token
+    if [ -n "$enrollment_token" ]; then
+        keyfile="$(nb_staged_setup_key_path "$enrollment_token" 2>/dev/null)" || {
+            nb_discard_staged_setup_key "$enrollment_token"
+            nb_profile_clear_enrollment_token "$NB_PROFILE_KEY" >/dev/null 2>&1 || true
+            echo "netbird: staged enrollment token is unavailable" >/dev/console
+            proto_notify_error "$config" ENROLLMENT_TOKEN_INVALID
+            proto_setup_failed "$config"
+            return 1
+        }
+    elif ! nb_profile_identity_present; then
+        echo "netbird: enrollment required for profile $NB_PROFILE_KEY" >/dev/console
+        proto_notify_error "$config" ENROLLMENT_REQUIRED
+        proto_setup_failed "$config"
+        return 1
+    fi
+
+    nb_runtime_connect "$keyfile" >/dev/null 2>&1 || runtime_rc=$?
+
+    if [ -n "$enrollment_token" ]; then
+        # The setup key is single-use. Identity creation may have succeeded even
+        # if a later runtime/firewall step failed, so derive enrolled from the
+        # actual profile identity before dropping all transient token state.
+        if nb_profile_identity_present; then
+            nb_set "$NB_SETTINGS_FILE" enrolled 1
+        fi
+        nb_discard_staged_setup_key "$enrollment_token"
+        nb_profile_clear_enrollment_token "$NB_PROFILE_KEY" >/dev/null 2>&1 || true
+    fi
+
+    if [ "$runtime_rc" -ne 0 ]; then
         # nb_runtime_connect may fail after the daemon or wt0 already exists
         # (for example, while installing firewall state). Always rollback the
         # shared runtime before reporting setup failure to netifd.
