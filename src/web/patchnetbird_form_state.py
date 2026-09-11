@@ -3,7 +3,9 @@
 
 Only a persisted stock key/id switches the protocol subform to Edit mode.
 CREATE stages the Setup Key outside the stock payload and carries only an opaque
-enrollment_token; EDIT accepts a blank Setup Key after identity enrollment.
+enrollment_token. EDIT asks the backend whether profile identity really exists,
+so an enrolled profile saves with no Setup Key. Enrollment itself is deferred
+to the native netifd lifecycle after stock Save returns.
 """
 from __future__ import annotations
 
@@ -26,10 +28,16 @@ required = [
     'draft.value.enable = "0"',
     'draft.value.enrolled = "0"',
     'if (!profileKey.value || creating.value || statusRequestPending) return',
-    '(creating.value || s.enrolled !== "1") && !setupKey.value',
+    'const identityPresent = ref(null)',
+    'identityPresent.value = !!r.identityPresent',
+    'if (existing && hasIdentity === null)',
+    '(creating.value || !hasIdentity) && !setupKey.value',
+    'const enrollmentHandedOff = ref(false)',
+    'if (enrollmentToken.value) enrollmentHandedOff.value = true',
+    'staleToken && !enrollmentHandedOff.value',
     'enrollment_token: enrollmentToken.value || ""',
     'stage_setup_key',
-    'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
+    'A identidade deste perfil já existe. Nenhuma Setup Key é necessária para editar estas configurações.',
     's.advertise_lan === "1" && s.disable_server_routes !== "0"',
     's.advertise_lan === "1" && s.disable_firewall !== "0"',
     'draft.value.disable_firewall = "0"',
@@ -53,4 +61,4 @@ check = subprocess.run(["node", "--input-type=module", "--check"], input=text.en
 if check.returncode:
     raise RuntimeError("node --check failed for NetBird form:\n" + check.stderr.decode()[:2000])
 
-print("NetBird stock-owned CREATE/EDIT + one-step setup-key contract verified")
+print("NetBird stock-owned CREATE/EDIT + identity-aware deferred-enrollment contract verified")
