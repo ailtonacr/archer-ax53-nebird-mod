@@ -328,17 +328,20 @@ export default defineComponent({
     items.push(_h(SuFormItem, { label: "Management URL", name: "management_url" }, { default: () => _h(SuInput, { value: s.management_url || "", "onUpdate:value": value => this.updateDraft("management_url", value), disabled, placeholder: "https://netbird.example.com" }) }));
     items.push(_h(SuFormItem, { label: "Hostname", name: "hostname", optional: "" }, { default: () => _h(SuInput, { value: s.hostname || "", "onUpdate:value": value => this.updateDraft("hostname", value), disabled, placeholder: "archer-ax53" }) }));
     items.push(_h(SuFormItem, { label: "Porta WireGuard", name: "wireguard_port" }, { default: () => _h(SuInput, { value: s.wireguard_port || "51820", "onUpdate:value": value => this.updateDraft("wireguard_port", value), disabled }) }));
-    const onSetupKey = value => this.updateSetupKey(value);
-    items.push(_h(SuFormItem, { label: "Setup Key", name: "setup_key", optional: edit && this.identityPresent === true ? "" : undefined }, { default: () => _h(SuPassword, {
-      value: this.setupKey || "",
-      modelValue: this.setupKey || "",
-      "onUpdate:value": onSetupKey,
-      "onUpdate:modelValue": onSetupKey,
-      onInput: onSetupKey,
-      disabled,
-      placeholder: edit && this.identityPresent === true ? "Deixe em branco para manter a identidade atual" : "Setup Key do NetBird",
-    }) }));
-    items.push(_h(SuAlert, null, textSlot(edit && this.identityPresent === true ? "A identidade deste perfil já existe. Nenhuma Setup Key é necessária para editar estas configurações." : "A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.")));
+    const showSetupKey = this.creating || this.identityPresent === false;
+    if (showSetupKey) {
+      const onSetupKey = value => this.updateSetupKey(value);
+      items.push(_h(SuFormItem, { label: "Setup Key", name: "setup_key" }, { default: () => _h(SuPassword, {
+        value: this.setupKey || "",
+        modelValue: this.setupKey || "",
+        "onUpdate:value": onSetupKey,
+        "onUpdate:modelValue": onSetupKey,
+        onInput: onSetupKey,
+        disabled,
+        placeholder: "Setup Key do NetBird",
+      }) }));
+      items.push(_h(SuAlert, null, textSlot("A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.")));
+    }
 
     const flags = [
       ["Habilitar DNS do NetBird", "disable_dns", s.disable_dns === "0", true],
