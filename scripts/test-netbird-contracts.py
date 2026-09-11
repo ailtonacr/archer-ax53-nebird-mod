@@ -337,6 +337,24 @@ def check_build_gates() -> None:
         'python3 scripts/test-netbird-native-frontend.py',
     )
 
+    # Make recipes are parsed once by make and again by bash -c. Literal shell
+    # variables in grep contracts therefore need \$ in the Makefile source so
+    # make emits \$ and bash does not expand them before grep sees the pattern.
+    require(
+        makefile,
+        'nb_staged_setup_key_path \\"\\$enrollment_token\\"',
+        'nb_runtime_connect \\"\\$keyfile\\"',
+        'nb_profile_clear_enrollment_token \\"\\$NB_PROFILE_KEY\\"',
+    )
+    for stale in (
+        '[$]enrollment_token', '[$]keyfile', '[$]NB_PROFILE_KEY',
+        'if (existing && hasIdentity === null)',
+        'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
+    ):
+        assert stale not in makefile + "\n" + mod010 + "\n" + mod012, (
+            f"stale/mis-escaped build gate remains: {stale!r}"
+        )
+
 
 def main() -> None:
     check_native_registry()
