@@ -75,7 +75,7 @@ def main() -> int:
         'const identityPresent = ref(null)',
         'identityPresent.value = !!r.identityPresent',
         'edit && this.identityPresent === true',
-        'A identidade deste perfil já existe. Deixe a Setup Key em branco para mantê-la',
+        'A identidade deste perfil já existe. Nenhuma Setup Key é necessária para editar estas configurações.',
         '_h(SuForm, { model: s }, { default: () => items })',
         'Permitir roteamento da LAN',
     )
