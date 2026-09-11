@@ -266,7 +266,7 @@ def check_runtime_library() -> None:
     )
     require(
         runtime,
-        'nb_up_flags()', '"--wireguard-port=${wg_port}"', 'nb_runtime_validate_settings()',
+        'nb_up_flags()', '"--wireguard-port=${wg_port}"', '"--hostname=${hostname}"', 'nb_runtime_validate_settings()',
         'LAN routing requires server routes to be enabled', 'LAN routing requires NetBird firewall policy enforcement',
         'NB_FW_STATE="/tmp/netbird-firewall.state"',
         'nb_runtime_connect()', '[ "$rc" -eq 0 ] && [ -n "$keyfile" ]',
