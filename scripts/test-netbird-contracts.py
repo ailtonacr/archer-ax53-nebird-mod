@@ -79,11 +79,9 @@ def check_native_registry() -> None:
         'local profile_key = profile_key_from_config(cfg)',
         'if profile_key == "" then', 'stock VPN profile key missing',
         'profile_key = profile_key,',
-        'local enrollment_token = cfg.enrollment_token', 'local function enroll_transient(profile_key, enrollment_token)',
-        'nb_model.staged_setup_key_path(enrollment_token)', 'nb_model.control("enroll", profile_key, keyfile)',
-        'nb_model.discard_staged_setup_key(enrollment_token)', 'clear_enrollment_token(profile_key)',
-        'nb_model.control("stop", profile_key)',
-        'nb_model.set_internal_settings({ enrolled = "1", enable = "0" }, profile_key)',
+        'local enrollment_token = tostring(cfg.enrollment_token or "")',
+        'nb_model.staged_setup_key_path(enrollment_token)',
+        'if enrollment_token ~= "" then vpn.enrollment_token = enrollment_token end',
         'enrollment token required for unenrolled profile',
     )
     assert 'field = { key }' not in native and 'canbe_empty = true' not in native, "retired inferred VPN_TBL rule shape returned"
@@ -91,6 +89,8 @@ def check_native_registry() -> None:
     assert '"setup_key",' not in fields, "setup_key must never be a VPN_TBL field"
     assert '"enrollment_token",' in fields, "opaque enrollment token must reach protocol staging"
     assert 'cfg.setup_key' not in native, "native stock callback must never receive the secret"
+    assert 'nb_model.control("enroll"' not in native, "stock Save callback must never block on enrollment"
+    assert 'enroll_transient(' not in native, "enrollment must be owned by netifd lifecycle"
     assert 'key = "netbird"' not in native
     assert "debug.getupvalue" not in native and "debug.setupvalue" not in native
 
@@ -212,6 +212,8 @@ def check_profile_authority() -> None:
     require(
         profiles,
         'NB_ROOT=', 'NB_PROFILES_ROOT=', 'nb_profile_clear_context()', 'nb_profile_key_valid()',
+        'nb_enrollment_token_valid()', 'nb_staged_setup_key_path()', 'nb_discard_staged_setup_key()',
+        'nb_profile_clear_enrollment_token()',
         'nb_profile_select()', 'nb_profile_stock_exists()', 'vpn.@server[$idx].key',
         '[ "$row_key" = "$key" ] && [ "$row_type" = "netbirdvpn" ]',
         'nb_profile_gc_orphans()', 'NB_CONFIG_DIR=""', 'NB_SETTINGS_FILE=""',
@@ -266,7 +268,11 @@ def check_runtime_library() -> None:
     require(
         proto,
         '. /lib/netbird/netbird-profiles.sh', 'proto_config_add_string "profile_key"',
-        'nb_profile_select "$profile_key"', 'nb_runtime_connect', 'nb_runtime_is_connected', 'nb_runtime_stop',
+        'proto_config_add_string "enrollment_token"', 'nb_profile_select "$profile_key"',
+        'nb_staged_setup_key_path "$enrollment_token"', 'nb_profile_identity_present',
+        'nb_runtime_connect "$keyfile"', 'nb_discard_staged_setup_key "$enrollment_token"',
+        'nb_profile_clear_enrollment_token "$NB_PROFILE_KEY"',
+        'nb_runtime_is_connected', 'nb_runtime_stop',
         'if [ "$vpntype" != "netbirdvpn" ]; then', 'add_protocol netbird',
     )
     assert 'netbirdvpn|netbird' not in proto
