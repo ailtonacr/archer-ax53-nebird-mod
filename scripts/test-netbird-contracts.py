@@ -181,6 +181,9 @@ def check_auxiliary_boundary() -> None:
         'local NATIVE_TYPE = "netbirdvpn"', 'local function requested_profile_key(body, required)',
         'local function native_profile(profile_key)', 'section.key == profile_key and section.type == NATIVE_TYPE',
         'local function native_profile_active(profile_key)', 'local function op_status(body)',
+        'local function auth_requires_enrollment(status)',
+        'no peer auth method provided',
+        'ds == "Connected" and mgmt.connected == true',
         'local function op_restart(body)', 'sys.call("/etc/init.d/vpnc restart >/dev/null 2>&1")',
         'local function op_log(body)', 'model.log(profile_key, tonumber(n) or 100)',
         'local function op_payload_status()', 'function dispatch(body)',
@@ -189,6 +192,9 @@ def check_auxiliary_boundary() -> None:
     for op in ("enroll", "settings_set", "settings_get", "connected_status", "profile_delete", "clean"):
         assert f'op == "{op}"' not in dispatch, f"auxiliary endpoint shadows stock/provider-save operation {op}"
     assert 'local function op_enroll' not in controller
+    assert 'ds == "Connected" or ds == "Connecting" or ds == "Restarting" then patch.enrolled = "1"' not in controller, (
+        "connecting/restarting must never be treated as proof of enrollment"
+    )
     require(controller, 'local function op_stage_setup_key(body)', 'model.stage_setup_key(setup_key)', 'op == "stage_setup_key"')
     require(model, 'SETUP_STAGE_PREFIX = "/tmp/netbird-setup-stage-"', 'function stage_setup_key(setup_key)',
             'function staged_setup_key_path(token)', 'function discard_staged_setup_key(token)')
