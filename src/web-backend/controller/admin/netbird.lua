@@ -1,9 +1,10 @@
 -- NetBird provider-specific controller for TP-Link Archer AX53 V1.
 --
 -- Generic profile list/CRUD/toggle/connected-status is owned exclusively by the
--- stock /admin/vpn?form=server endpoint for type=netbirdvpn. Setup-key enrollment
--- is consumed by the provider callback during that same stock Save request. This
--- endpoint exposes only runtime diagnostics/logs/payload state and an explicit
+-- stock /admin/vpn?form=server endpoint for type=netbirdvpn. Setup-key staging
+-- is provider-specific, but enrollment is consumed later by the native
+-- vpnc/netifd lifecycle so the stock Save request stays bounded. This endpoint
+-- exposes only runtime diagnostics/logs/payload state and an explicit
 -- restart delegated back to the native vpnc/netifd lifecycle.
 module("luci.controller.admin.netbird", package.seeall)
 
@@ -188,6 +189,7 @@ local function op_status(body)
             settings = model.get_settings(profile_key),
             netbird = empty_netbird_status(),
             profileExists = false,
+            identityPresent = false,
             profileKey = profile_key,
             traffic = traffic_sample(false),
             payload = { version = model.payload_version(), state = model.payload_state(), provisioned = model.payload_ok() },
@@ -218,6 +220,7 @@ local function op_status(body)
         settings = settings,
         netbird = nb,
         profileExists = true,
+        identityPresent = model.identity_present(profile_key),
         profileKey = profile_key,
         traffic = traffic_sample(active),
         payload = { version = model.payload_version(), state = model.payload_state(), provisioned = model.payload_ok() },
