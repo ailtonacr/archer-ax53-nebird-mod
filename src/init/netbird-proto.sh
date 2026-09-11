@@ -112,12 +112,9 @@ proto_netbird_setup() {
     nb_runtime_connect "$keyfile" >/dev/null 2>&1 || runtime_rc=$?
 
     if [ -n "$enrollment_token" ]; then
-        # The setup key is single-use. Identity creation may have succeeded even
-        # if a later runtime/firewall step failed, so derive enrolled from the
-        # actual profile identity before dropping all transient token state.
-        if nb_profile_identity_present; then
-            nb_set "$NB_SETTINGS_FILE" enrolled 1
-        fi
+        # nb_runtime_connect marks enrolled immediately after the authenticated
+        # netbird up succeeds. A later firewall failure must not turn mere
+        # default.json existence into false proof of enrollment.
         nb_discard_staged_setup_key "$enrollment_token"
         nb_profile_clear_enrollment_token "$NB_PROFILE_KEY" >/dev/null 2>&1 || true
     fi
