@@ -153,7 +153,7 @@ def assert_page_and_form() -> None:
         'enrollment_token: enrollmentToken.value || ""',
         'stage_setup_key',
         'Setup Key',
-        'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
+        'A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.',
         'Permitir roteamento da LAN',
         '_h(SuForm, { model: s }, { default: () => items })',
     )
