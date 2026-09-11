@@ -11,8 +11,8 @@ TP-Link VPN Client UI
   -> /admin/vpn?form=server
   -> netbirdvpn = type 5
   -> stock key generator
-  -> VPN_CFG_TBL[netbirdvpn]
-  -> transient Setup Key enrollment
+  -> provider-side Setup Key staging
+  -> opaque enrollment_token through VPN_CFG_TBL[netbirdvpn]
   -> vpn.server = authoritative profile row
   -> network.vpn.proto = netbird
   -> network.vpn.profile_key = stock row key
@@ -39,15 +39,14 @@ VPN_TBL[netbirdvpn]           = stock-shaped validator schema
 VPN_CFG_TBL[netbirdvpn]       = NetBird provider callback
 ```
 
-The validator rule shape must be:
+The validator rule shape used by the current hardware-observed contract is:
 
 ```lua
-{ field = { key }, canbe_empty = true }
+{ key = key }
 ```
 
-The older `{ key = key }` implementation is forbidden because the stock
-controller expects `rule.field`; the hardware ADD path returned HTTP 500 while
-that invalid schema was installed.
+The previously inferred `{ field = { key }, canbe_empty = true }` shape is
+forbidden by the current build gates.
 
 The final frontend must retain the original stock functions for list,
 ADD/EDIT Save, toggle/update, DELETE and connected status. Forbidden regressions
@@ -56,31 +55,38 @@ include synthetic rows, fixed `key=netbird`, custom Save/DELETE bridges,
 
 ## Setup Key contract
 
-The initial profile is created and enrolled in a **single stock Save**:
+The UI still uses one normal TP-Link Save, but the Setup Key itself stays outside
+generic CRUD:
 
 ```text
-Add -> NetBird -> provider fields + Setup Key -> stock SALVAR
+Add -> NetBird -> provider fields + Setup Key
+    -> validate() calls /admin/netbird stage_setup_key
+    -> /tmp/netbird-setup-stage-<token> mode 0600
+    -> opaque enrollment_token returned
+    -> stock SALVAR
     -> stock key generated
     -> /admin/vpn?form=server
-    -> VPN_CFG_TBL[netbirdvpn]
-    -> profile-scoped enrollment
-    -> row visible in stock list
-    -> stock toggle activates it
+    -> VPN_CFG_TBL[netbirdvpn] validates token
+    -> enrollment_token reaches network.vpn
+    -> native netifd setup resolves staged key
+    -> profile-scoped enrollment/runtime connection
+    -> staged key + token state are cleared
 ```
 
 Required properties:
 
 - the Setup Key control is visible in CREATE;
 - CREATE validation requires Setup Key;
-- provider `getForm()` supplies `setup_key` only as transient Save input;
-- the serializer explicitly carries `setup_key` in the stock Save request;
-- `setup_key` is not a `VPN_TBL` persistent field;
-- the returned persistent `vpn` object contains no Setup Key;
-- the provider callback stages the key under `/tmp/nb-setup-key-*` mode 0600;
-- the temporary key file is unlinked after the enrollment call;
-- the enrollment daemon is stopped after enrollment so the stock toggle remains
-the sole normal activation owner;
-- `/admin/netbird` does not accept Setup Key or expose an enrollment operation.
+- provider `validate()` stages the secret through `/admin/netbird`;
+- provider `getForm()` supplies only `enrollment_token`;
+- the serializer carries only `enrollment_token`, never `setup_key`;
+- `setup_key` is not a `VPN_TBL` field or persistent profile value;
+- staged key files use `/tmp/netbird-setup-stage-*` mode 0600;
+- `VPN_CFG_TBL[netbirdvpn]` validates the staged token before handoff;
+- `proto_netbird` resolves the staged key and owns enrollment/runtime connect;
+- staged key/token state is cleared after consumption or invalidation;
+- `/admin/netbird` stages/discards the secret but exposes no enrollment or
+generic writable profile operation.
 
 An already enrolled profile may be saved with blank Setup Key. No secret may be
 printed into logs, tests, repository docs or Notion.
@@ -229,7 +235,7 @@ Before repack the build verifies:
 - `netbirdvpn=5` registry extension;
 - stock `VPN_TBL` validator rule shape;
 - stock profile-key generation and `profile_key` mapping;
-- transient Setup Key provider callback without persistence;
+- provider-side Setup Key staging + opaque enrollment token without persistence;
 - stock list/ADD/EDIT/Save/toggle/DELETE/connected-status functions;
 - no auxiliary enrollment or generic CRUD bridge;
 - no nested provider `su-form`;
@@ -258,7 +264,7 @@ uci show vpn.client
 uci show network.vpn
 uci show vpn | grep -E "=server|type='netbirdvpn'|profile_key="
 find /tp_data/netbird/profiles -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null
-find /tmp -maxdepth 1 -name 'nb-setup-key-*' -print
+find /tmp -maxdepth 1 -name 'netbird-setup-stage-*' -print
 ubus call network.interface.vpn status
 /sbin/netbird-ctl status
 /sbin/netbird-ctl payload-status
@@ -314,7 +320,7 @@ From a real remote peer test:
 3. Proxmox/VMs/local Coolify as applicable;
 4. DNS without dependency on `10.8.0.1`.
 
-## Current validation status — 2026-09-10
+## Current validation status — 2026-09-11
 
 ```text
 clean native provider architecture: IMPLEMENTED IN CODE
@@ -322,7 +328,7 @@ multi-profile stock-keyed persistence: IMPLEMENTED IN CODE
 no root-level profile fallback: IMPLEMENTED IN CODE
 stock generic CRUD/list/toggle/delete/status boundary: ENFORCED BY SOURCE/BUILD GATES
 Setup Key visible during CREATE: IMPLEMENTED IN CODE; HARDWARE PENDING
-one-step Setup Key via stock Save provider callback: IMPLEMENTED IN CODE; HARDWARE PENDING
+staged Setup Key + opaque stock Save token + deferred netifd enrollment: IMPLEMENTED IN CODE; HARDWARE PENDING
 stock VPN_TBL rule shape fix for observed HTTP 500: IMPLEMENTED IN CODE; HARDWARE PENDING
 nested su-form/layout fix: IMPLEMENTED IN CODE; HARDWARE PENDING
 LuCI index-cache upvalue fix: IMPLEMENTED
