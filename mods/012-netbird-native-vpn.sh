@@ -219,9 +219,13 @@ if printf '%s' "$MODEL_JS" | grep -Fq 'setup_key:e.setup_key'; then
   exit 1
 fi
 printf '%s' "$FORM_JS" | grep -Fq 'stockComponent(this, "su-password")'
-printf '%s' "$FORM_JS" | grep -Fq 'A identidade deste perfil já existe. Deixe a Setup Key em branco para mantê-la'
+printf '%s' "$FORM_JS" | grep -Fq 'A identidade deste perfil já existe. Nenhuma Setup Key é necessária para editar estas configurações.'
 printf '%s' "$FORM_JS" | grep -Fq 'const identityPresent = ref(null)'
 printf '%s' "$FORM_JS" | grep -Fq 'identityPresent.value = !!r.identityPresent'
+printf '%s' "$FORM_JS" | grep -Fq 'if (existing && hasIdentity === null)'
+printf '%s' "$FORM_JS" | grep -Fq 'const enrollmentHandedOff = ref(false)'
+printf '%s' "$FORM_JS" | grep -Fq 'if (enrollmentToken.value) enrollmentHandedOff.value = true'
+printf '%s' "$FORM_JS" | grep -Fq 'staleToken && !enrollmentHandedOff.value'
 printf '%s' "$FORM_JS" | grep -Fq '_h(SuForm, { model: s }, { default: () => items })'
 printf '%s' "$FORM_JS" | grep -Fq 'Permitir roteamento da LAN'
 
