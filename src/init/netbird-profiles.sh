@@ -90,7 +90,8 @@ nb_profile_clear_active() {
 
 nb_profile_identity_present() {
     nb_profile_key_valid "$NB_PROFILE_KEY" || return 1
-    [ -s "$NB_CONFIG_FILE" ] || return 1
+    [ -f "$NB_SETTINGS_FILE" ] || return 1
+    [ "$(nb_get "$NB_SETTINGS_FILE" enrolled "0")" = "1" ] || return 1
     return 0
 }
 
