@@ -88,9 +88,9 @@ firmware: $(TARGET) test-netbird
 		grep -q "add_protocol netbird" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd NetBird protocol registration missing" >&2; exit 1; }; \
 		grep -q "proto_config_add_string \"profile_key\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: profile key is not carried through netifd" >&2; exit 1; }; \
 		grep -Fq "proto_config_add_string \"enrollment_token\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not receive enrollment token" >&2; exit 1; }; \
-		grep -q "nb_staged_setup_key_path \"[$]enrollment_token\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not resolve staged Setup Key" >&2; exit 1; }; \
-		grep -q "nb_runtime_connect \"[$]keyfile\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not own enrollment/runtime connect" >&2; exit 1; }; \
-		grep -q "nb_profile_clear_enrollment_token \"[$]NB_PROFILE_KEY\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd enrollment token cleanup missing" >&2; exit 1; }; \
+		grep -Fq "nb_staged_setup_key_path \"\$enrollment_token\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not resolve staged Setup Key" >&2; exit 1; }; \
+		grep -Fq "nb_runtime_connect \"\$keyfile\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not own enrollment/runtime connect" >&2; exit 1; }; \
+		grep -Fq "nb_profile_clear_enrollment_token \"\$NB_PROFILE_KEY\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd enrollment token cleanup missing" >&2; exit 1; }; \
 		if grep -Ev "^[[:space:]]*#" rootfs/lib/netifd/proto/netbird.sh | grep -q "/sbin/netbird-ctl"; then echo "Error: netifd still depends on netbird-ctl" >&2; exit 1; fi; \
 		if grep -q "proto_set_available" rootfs/lib/netifd/proto/netbird.sh; then echo "Error: transient NetBird failure changes protocol availability" >&2; exit 1; fi; \
 		PROTO_SETUP="$$(sed -n "/^proto_netbird_setup()/,/^proto_netbird_teardown()/p" rootfs/lib/netifd/proto/netbird.sh)"; \
