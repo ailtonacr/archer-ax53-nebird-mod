@@ -202,6 +202,17 @@ nb_runtime_connect() {
     nb_materialize 1 >/dev/null 2>&1 || return $?
     nb_is_running || nb_daemon_start || return 1
 
+    # NetBird v0.77.1 daemon mode returns early from `netbird up` when the
+    # daemon is already Connected, before SetConfig() is called. service run
+    # may auto-connect from the persisted NetBird profile before we can apply
+    # the TP-Link profile flags, leaving stale values such as
+    # disableClientRoutes=true even when our settings say 0. Force the engine
+    # down first so the following canonical `up` always applies every explicit
+    # true/false flag through SetConfig before reconnecting.
+    if [ -S "$NB_SOCK" ]; then
+        "$NB_BIN" down --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1 || true
+    fi
+
     if [ -n "$keyfile" ]; then
         "$NB_BIN" up --daemon-addr "unix://$NB_SOCK" \
             --management-url "$(nb_mgmt_url)" $(nb_up_flags) \
