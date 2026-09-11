@@ -26,7 +26,8 @@ for (const token of [
   'stage_setup_key',
   '"onUpdate:modelValue": onSetupKey',
   'onInput: onSetupKey',
-  'A identidade deste perfil já existe. Nenhuma Setup Key é necessária para editar estas configurações.',
+  'const showSetupKey = this.creating || this.identityPresent === false;',
+  'if (showSetupKey) {',
   'A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.',
   's.advertise_lan === "1" && s.disable_server_routes !== "0"',
   's.advertise_lan === "1" && s.disable_firewall !== "0"',
@@ -121,17 +122,11 @@ assert.equal(localForm.props.model, state.draft.value);
 assert.ok(Array.isArray(localForm.children.default()), "local su-form must wrap provider items");
 
 const renderedItems = localForm.children.default();
-const setupItem = renderedItems.find(node => node && node.props && node.props.name === "setup_key");
-assert.ok(setupItem, "Setup Key form item must render");
-const setupPassword = setupItem.children.default();
-assert.equal(setupPassword.tag, "SuPassword");
-assert.equal(typeof setupPassword.props["onUpdate:value"], "function");
-assert.equal(typeof setupPassword.props["onUpdate:modelValue"], "function");
-assert.equal(typeof setupPassword.props.onInput, "function");
-setupPassword.props["onUpdate:modelValue"]("bound-from-password-component");
-assert.equal(state.setupKey.value, "bound-from-password-component");
-setupPassword.props.onInput({ target: { value: "bound-from-native-input" } });
-assert.equal(state.setupKey.value, "bound-from-native-input");
+assert.equal(
+  renderedItems.some(node => node && node.props && node.props.name === "setup_key"),
+  false,
+  "enrolled EDIT must hide Setup Key",
+);
 
 // CREATE remains stock-owned. validate() stages the secret through the provider
 // endpoint and getForm() contributes only the opaque enrollment token to the
@@ -142,6 +137,21 @@ assert.equal(exposed.setForm({
 }), true);
 assert.equal(state.creating.value, true);
 assert.equal(state.profileKey.value, "");
+
+const createRendered = context.component.render.call(vmState);
+const createItems = createRendered.children.default().children.default();
+const createSetupItem = createItems.find(node => node && node.props && node.props.name === "setup_key");
+assert.ok(createSetupItem, "CREATE must show Setup Key");
+const createSetupPassword = createSetupItem.children.default();
+assert.equal(createSetupPassword.tag, "SuPassword");
+assert.equal(typeof createSetupPassword.props["onUpdate:value"], "function");
+assert.equal(typeof createSetupPassword.props["onUpdate:modelValue"], "function");
+assert.equal(typeof createSetupPassword.props.onInput, "function");
+createSetupPassword.props["onUpdate:modelValue"]("bound-from-password-component");
+assert.equal(state.setupKey.value, "bound-from-password-component");
+createSetupPassword.props.onInput({ target: { value: "" } });
+assert.equal(state.setupKey.value, "");
+
 await assert.rejects(() => exposed.validate(), /Setup Key/);
 state.updateSetupKey("setup-key-only-for-save");
 assert.equal(await exposed.validate(), true);
@@ -172,6 +182,13 @@ await new Promise(resolve => setTimeout(resolve, 0));
 assert.ok(requests.some(r => r.operation === "status" && r.profile_key === "arbitrary-stock-key"));
 assert.equal(await exposed.validate(), true);
 assert.equal(state.identityPresent.value, true);
+const enrolledRendered = context.component.render.call(vmState);
+const enrolledItems = enrolledRendered.children.default().children.default();
+assert.equal(
+  enrolledItems.some(node => node && node.props && node.props.name === "setup_key"),
+  false,
+  "enrolled EDIT must keep Setup Key hidden after status load",
+);
 
 const editForm = exposed.getForm();
 assert.equal(editForm.management_url, "https://netbird.example");
@@ -191,6 +208,12 @@ assert.equal(exposed.setForm({
 }), true);
 await new Promise(resolve => setTimeout(resolve, 0));
 assert.equal(state.identityPresent.value, false);
+const unenrolledRendered = context.component.render.call(vmState);
+const unenrolledItems = unenrolledRendered.children.default().children.default();
+assert.ok(
+  unenrolledItems.some(node => node && node.props && node.props.name === "setup_key"),
+  "unenrolled EDIT must show Setup Key again",
+);
 await assert.rejects(() => exposed.validate(), /Setup Key/);
 
 // Return to an enrolled profile for the remaining edit/routing assertions.
