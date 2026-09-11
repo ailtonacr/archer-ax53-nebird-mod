@@ -75,6 +75,7 @@ def main() -> None:
         'const existing = !!(value && (value.key || value.id))',
         'enrollment_token: enrollmentToken.value || ""', 'stage_setup_key',
         'if (!creating.value && hasIdentity === null && profileKey.value)',
+        'const showSetupKey = this.creating || this.identityPresent === false;',
         'A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.',
         '_h(SuForm, { model: s }, { default: () => items })',
         'Permitir roteamento da LAN',
