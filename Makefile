@@ -67,9 +67,10 @@ firmware: $(TARGET) test-netbird
 		grep -q "vpn.VPN_TYPE_TBL\[TYPE\] = TYPE_ID" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: VPN_TYPE_TBL NetBird registration missing" >&2; exit 1; }; \
 		grep -q "vpn.VPN_TYPE_NAME_TBL\[TYPE\] = TYPE_NAME" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: VPN_TYPE_NAME_TBL NetBird registration missing" >&2; exit 1; }; \
 		grep -q "vpn.VPN_TBL\[TYPE\] = schema" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: VPN_TBL NetBird schema registration missing" >&2; exit 1; }; \
-		grep -q "local enrollment_token = cfg.enrollment_token" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: stock callback does not consume enrollment token" >&2; exit 1; }; \
-		grep -q "local function enroll_transient(profile_key, enrollment_token)" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: token-based enrollment handler missing" >&2; exit 1; }; \
-		grep -Fq "nb_model.staged_setup_key_path(enrollment_token)" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: staged Setup Key is not resolved by opaque token" >&2; exit 1; }; \
+		grep -Fq "local enrollment_token = tostring(cfg.enrollment_token or \"\")" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: stock callback does not carry enrollment token" >&2; exit 1; }; \
+		grep -Fq "nb_model.staged_setup_key_path(enrollment_token)" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: staged Setup Key token is not validated before handoff" >&2; exit 1; }; \
+		grep -Fq "if enrollment_token ~= \"\" then vpn.enrollment_token = enrollment_token end" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || { echo "Error: enrollment token is not handed to netifd" >&2; exit 1; }; \
+		if grep -Fq "nb_model.control(\"enroll\"" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua || grep -Fq "enroll_transient(" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua; then echo "Error: stock Save callback still performs synchronous enrollment" >&2; exit 1; fi; \
 		if sed -n "/local FIELDS = {/,/^}/p" rootfs/usr/lib/lua/luci/model/netbird_vpn_native.lua | grep -Fq "\"setup_key\""; then echo "Error: setup key leaked into persistent VPN_TBL fields" >&2; exit 1; fi; \
 		grep -q "native.install()" rootfs/usr/lib/lua/luci/controller/admin/netbird_native.lua || { echo "Error: native NetBird registry loader missing" >&2; exit 1; }; \
 		if grep -Eq "op == \"(enroll|settings_set|settings_get|profile_delete|connected_status)\"" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua; then echo "Error: auxiliary NetBird endpoint shadows stock/provider-save operations" >&2; exit 1; fi; \
@@ -86,7 +87,10 @@ firmware: $(TARGET) test-netbird
 		cmp -s src/init/netbird-profile-gc.init rootfs/etc/init.d/netbird-profile-gc || { echo "Error: packaged NetBird profile GC drifted from canonical source" >&2; exit 1; }; \
 		grep -q "add_protocol netbird" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd NetBird protocol registration missing" >&2; exit 1; }; \
 		grep -q "proto_config_add_string \"profile_key\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: profile key is not carried through netifd" >&2; exit 1; }; \
-		grep -q "nb_runtime_connect" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not call shared native runtime" >&2; exit 1; }; \
+		grep -Fq "proto_config_add_string \"enrollment_token\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not receive enrollment token" >&2; exit 1; }; \
+		grep -Fq "nb_staged_setup_key_path \"$enrollment_token\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not resolve staged Setup Key" >&2; exit 1; }; \
+		grep -Fq "nb_runtime_connect \"$keyfile\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not own enrollment/runtime connect" >&2; exit 1; }; \
+		grep -Fq "nb_profile_clear_enrollment_token \"$NB_PROFILE_KEY\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd enrollment token cleanup missing" >&2; exit 1; }; \
 		if grep -Ev "^[[:space:]]*#" rootfs/lib/netifd/proto/netbird.sh | grep -q "/sbin/netbird-ctl"; then echo "Error: netifd still depends on netbird-ctl" >&2; exit 1; fi; \
 		if grep -q "proto_set_available" rootfs/lib/netifd/proto/netbird.sh; then echo "Error: transient NetBird failure changes protocol availability" >&2; exit 1; fi; \
 		PROTO_SETUP="$$(sed -n "/^proto_netbird_setup()/,/^proto_netbird_teardown()/p" rootfs/lib/netifd/proto/netbird.sh)"; \
@@ -126,7 +130,9 @@ firmware: $(TARGET) test-netbird
 		if grep -Fq "setup_key:e.setup_key" "$$VERIFY_JS_DIR/model.js"; then echo "Error: Setup Key leaked into stock VPN serializer" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; fi; \
 		grep -Fq "stockComponent(this, \"su-password\")" "$$VERIFY_JS_DIR/form.js" || { echo "Error: stock Setup Key control missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		grep -Fq "_h(SuForm, { model: s }, { default: () => items })" "$$VERIFY_JS_DIR/form.js" || { echo "Error: provider form context missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
-		grep -Fq "Permitir roteamento da LAN" "$$VERIFY_JS_DIR/form.js" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "Permitir roteamento da LAN" "$VERIFY_JS_DIR/form.js" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "const identityPresent = ref(null)" "$VERIFY_JS_DIR/form.js" || { echo "Error: identity-aware Edit state missing" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "identityPresent.value = !!r.identityPresent" "$VERIFY_JS_DIR/form.js" || { echo "Error: backend identity state is not authoritative in Edit" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
 		cat "$$VERIFY_JS_DIR/model.js" "$$VERIFY_JS_DIR/page.js" "$$VERIFY_JS_DIR/form.js" > "$$VERIFY_JS_DIR/all.js"; \
 		for FORBIDDEN in "key:e.key||\"netbird\"" "a.value=_nb.concat(e)" "operation:\"settings_set\"" "function nbSettingsSet(" "function nbControl(" "function nbDelete(" "\"label-width\": { span: 10 }" "\"content-width\": { span: 14 }" "async function enroll()" "async function afterStockSave()" "__nbActiveStockVpn" "window.__netbirdSaveDraft" "__netbirdSaveListener"; do \
 			if grep -Fq "$$FORBIDDEN" "$$VERIFY_JS_DIR/all.js"; then echo "Error: custom generic VPN interception remains: $$FORBIDDEN" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; fi; \
@@ -137,7 +143,7 @@ firmware: $(TARGET) test-netbird
 		grep -Fxq "display_version=$$STAMPED_VERSION" rootfs/etc/netbird-build || { echo "Error: /etc/netbird-build has wrong display version" >&2; exit 1; }; \
 		echo "    ok untouched TP-Link vpn.lua + native NetBird registry extension"; \
 		echo "    ok stock list/add/edit/save/toggle/delete/connected-status"; \
-		echo "    ok one-step stock Save + transient Setup Key enrollment"; \
+		echo "    ok stock Save handoff + deferred netifd Setup Key enrollment"; \
 		echo "    ok provider-only NetBird form + content cache-busting"; \
 		echo "    ok independent profile identities + orphan GC"; \
 		echo "    ok vpnc/netifd sole normal lifecycle owner + rollback"; \
