@@ -115,26 +115,40 @@ local function sync_settings_from_native_profile(profile_key)
     return updated or settings
 end
 
+local function auth_requires_enrollment(status)
+    if not status then return false end
+    local ds = tostring(status.daemonStatus or "")
+    if ds == "NeedsLogin" or ds == "LoginFailed" then return true end
+    local mgmt = status.management or {}
+    local err = tostring(mgmt.error or "")
+    return err:find("no peer auth method provided", 1, true) ~= nil
+end
+
 local function classify(settings, status, active)
     if not active then return "disabled" end
     if not model.payload_ok() then return "payload_missing" end
+    if auth_requires_enrollment(status) then return "enrollment_required" end
     local ds = status and status.daemonStatus or ""
-    if ds == "NeedsLogin" then return "enrollment_required"
-    elseif ds == "Connected" then return "connected"
+    if ds == "Connected" then return "connected"
     elseif ds == "Connecting" or ds == "Restarting" then return "connecting"
     elseif ds == "Idle" or ds == "Disconnected" or ds == "Down" then return "disconnected" end
     return settings.enable == "1" and "stopped" or "disabled"
 end
 
 local function reconcile_runtime(profile_key, settings, status, active)
-    local patch = { enable = active and "1" or "0" }
-    local identity = model.identity_present(profile_key)
-    patch.enrolled = identity and "1" or "0"
+    local patch = {
+        enable = active and "1" or "0",
+        enrolled = settings.enrolled or "0",
+    }
 
     if status then
-        local ds = status.daemonStatus or ""
-        if ds == "NeedsLogin" then patch.enrolled = "0"
-        elseif ds == "Connected" or ds == "Connecting" or ds == "Restarting" then patch.enrolled = "1" end
+        local ds = tostring(status.daemonStatus or "")
+        local mgmt = status.management or {}
+        if auth_requires_enrollment(status) then
+            patch.enrolled = "0"
+        elseif ds == "Connected" and mgmt.connected == true then
+            patch.enrolled = "1"
+        end
     end
 
     local changed = settings.enable ~= patch.enable or settings.enrolled ~= patch.enrolled
