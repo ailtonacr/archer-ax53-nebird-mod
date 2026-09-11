@@ -30,7 +30,7 @@ required = [
     'if (!profileKey.value || creating.value || statusRequestPending) return',
     'const identityPresent = ref(null)',
     'identityPresent.value = !!r.identityPresent',
-    'if (existing && hasIdentity === null)',
+    'if (!creating.value && hasIdentity === null && profileKey.value)',
     '(creating.value || !hasIdentity) && !setupKey.value',
     'const enrollmentHandedOff = ref(false)',
     'if (enrollmentToken.value) enrollmentHandedOff.value = true',
