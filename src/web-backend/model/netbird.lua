@@ -211,10 +211,9 @@ function set_internal_settings(cand, profile_key)
 end
 
 function identity_present(profile_key)
-    local path = profile_config_path(profile_key)
-    if not path then return false end
-    local raw = fs.readfile(path) or ""
-    return raw:match("%S") ~= nil
+    if not valid_profile_key(profile_key) then return false end
+    local settings = read_settings(profile_key)
+    return settings.enrolled == "1"
 end
 
 local function valid_stage_token(token)
