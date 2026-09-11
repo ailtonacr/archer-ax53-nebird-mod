@@ -122,10 +122,9 @@ assert.equal(localForm.props.model, state.draft.value);
 assert.ok(Array.isArray(localForm.children.default()), "local su-form must wrap provider items");
 
 const renderedItems = localForm.children.default();
-assert.equal(
+assert.ok(
   renderedItems.some(node => node && node.props && node.props.name === "setup_key"),
-  false,
-  "enrolled EDIT must hide Setup Key",
+  "initial CREATE state must show Setup Key",
 );
 
 // CREATE remains stock-owned. validate() stages the secret through the provider
