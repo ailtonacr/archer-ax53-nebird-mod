@@ -94,6 +94,52 @@ nb_profile_identity_present() {
     return 0
 }
 
+nb_enrollment_token_valid() {
+    local token="${1:-}"
+    [ "${#token}" -eq 32 ] || return 1
+    case "$token" in
+        *[!0-9a-f]*) return 1 ;;
+    esac
+    return 0
+}
+
+nb_staged_setup_key_path() {
+    local token="${1:-}" path
+    nb_enrollment_token_valid "$token" || return 1
+    path="/tmp/netbird-setup-stage-$token"
+    [ -s "$path" ] || return 1
+    printf '%s\n' "$path"
+}
+
+nb_discard_staged_setup_key() {
+    local token="${1:-}"
+    nb_enrollment_token_valid "$token" || return 0
+    rm -f "/tmp/netbird-setup-stage-$token"
+}
+
+nb_profile_clear_enrollment_token() {
+    local key="${1:-$NB_PROFILE_KEY}" idx row_key row_type
+    nb_profile_key_valid "$key" || return 1
+
+    idx=0
+    while :; do
+        row_key="$(uci -q get "vpn.@server[$idx].key" 2>/dev/null)" || break
+        row_type="$(uci -q get "vpn.@server[$idx].type" 2>/dev/null || true)"
+        if [ "$row_key" = "$key" ] && [ "$row_type" = "netbirdvpn" ]; then
+            uci -q delete "vpn.@server[$idx].enrollment_token" 2>/dev/null || true
+            break
+        fi
+        idx=$((idx + 1))
+    done
+
+    uci -q delete protocol.netbirdvpn.enrollment_token 2>/dev/null || true
+    uci -q delete network.vpn.enrollment_token 2>/dev/null || true
+    uci commit vpn >/dev/null 2>&1 || return 1
+    uci commit protocol >/dev/null 2>&1 || return 1
+    uci commit network >/dev/null 2>&1 || return 1
+    return 0
+}
+
 # The stock vpn.server row is authoritative for whether provider state is valid.
 nb_profile_stock_exists() {
     local key="${1:-}" idx row_key row_type
