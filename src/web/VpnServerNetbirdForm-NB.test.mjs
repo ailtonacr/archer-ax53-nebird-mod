@@ -25,7 +25,7 @@ for (const token of [
   'stage_setup_key',
   '"onUpdate:modelValue": onSetupKey',
   'onInput: onSetupKey',
-  'A identidade deste perfil já existe. Deixe a Setup Key em branco para mantê-la',
+  'A identidade deste perfil já existe. Nenhuma Setup Key é necessária para editar estas configurações.',
   's.advertise_lan === "1" && s.disable_server_routes !== "0"',
   's.advertise_lan === "1" && s.disable_firewall !== "0"',
   'Permitir roteamento da LAN',
