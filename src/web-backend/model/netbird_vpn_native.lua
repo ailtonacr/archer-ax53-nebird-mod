@@ -100,45 +100,6 @@ local function settings_from_config(cfg, profile_key)
     }
 end
 
-local function clear_enrollment_token(profile_key)
-    local uci = require("luci.model.uci").cursor()
-    uci:foreach("vpn", "server", function(section)
-        if section.key == profile_key and section.type == TYPE then
-            uci:delete("vpn", section[".name"], "enrollment_token")
-            return false
-        end
-    end)
-    uci:delete("protocol", TYPE, "enrollment_token")
-    uci:commit("vpn")
-    uci:commit("protocol")
-end
-
-local function enroll_transient(profile_key, enrollment_token)
-    enrollment_token = tostring(enrollment_token or "")
-    if enrollment_token == "" then return true end
-
-    local keyfile, path_err = nb_model.staged_setup_key_path(enrollment_token)
-    if not keyfile then
-        clear_enrollment_token(profile_key)
-        return nil, path_err or "staged setup key unavailable"
-    end
-
-    local out, rc = nb_model.control("enroll", profile_key, keyfile)
-    nb_model.discard_staged_setup_key(enrollment_token)
-    clear_enrollment_token(profile_key)
-
-    if rc ~= 0 then
-        return nil, (out or "enrollment failed"):gsub("%s+$", "")
-    end
-
-    -- Enrollment temporarily starts the daemon. The stock VPN Client toggle is
-    -- the only owner of normal runtime activation, so leave the profile stopped.
-    nb_model.control("stop", profile_key)
-    local updated, err = nb_model.set_internal_settings({ enrolled = "1", enable = "0" }, profile_key)
-    if not updated then return nil, err or "failed to persist enrollment state" end
-    return true
-end
-
 local function netbird_config(cfg, vpn_type)
     cfg = cfg or {}
     local profile_key = profile_key_from_config(cfg)
@@ -154,14 +115,15 @@ local function netbird_config(cfg, vpn_type)
         return {}
     end
 
-    local enrollment_token = cfg.enrollment_token
-    if enrollment_token ~= nil and tostring(enrollment_token) ~= "" then
-        local ok, enroll_err = enroll_transient(profile_key, enrollment_token)
-        if not ok then
-            io.stderr:write("netbird: enrollment failed for profile " .. profile_key .. ": " .. tostring(enroll_err or "unknown error") .. "\n")
+    local enrollment_token = tostring(cfg.enrollment_token or "")
+    local identity_present = nb_model.identity_present(profile_key)
+    if enrollment_token ~= "" then
+        local keyfile, token_err = nb_model.staged_setup_key_path(enrollment_token)
+        if not keyfile then
+            io.stderr:write("netbird: staged enrollment token invalid for profile " .. profile_key .. ": " .. tostring(token_err or "unavailable") .. "\n")
             return {}
         end
-    elseif not nb_model.identity_present(profile_key) then
+    elseif not identity_present then
         io.stderr:write("netbird: enrollment token required for unenrolled profile " .. profile_key .. "\n")
         return {}
     end
@@ -179,6 +141,7 @@ local function netbird_config(cfg, vpn_type)
         parent = cfg.parent or "wan",
         profile_key = profile_key,
     }
+    if enrollment_token ~= "" then vpn.enrollment_token = enrollment_token end
     if cfg.kill_switch ~= nil then vpn.kill_switch = cfg.kill_switch end
     return { vpn = vpn }
 end
