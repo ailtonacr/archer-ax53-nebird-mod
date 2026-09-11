@@ -59,6 +59,7 @@ network_monitor=0
 advertise_lan=0
 advertise_cidr=
 wireguard_port=51999
+hostname=teste-casa
 EOF
 flags="$(nb_up_flags)"
 for token in \
@@ -68,7 +69,8 @@ for token in \
     '--disable-server-routes=false' \
     '--disable-ipv6=true' \
     '--network-monitor=false' \
-    '--wireguard-port=51999'
+    '--wireguard-port=51999' \
+    '--hostname=teste-casa'
 do
     printf '%s' "$flags" | grep -Fq -- "$token" || {
         echo "canonical up flags missing $token: $flags" >&2
@@ -78,7 +80,7 @@ done
 
 # Each logical flag must occur exactly once so enrollment and normal connect
 # cannot accidentally stack duplicate options.
-for name in disable-dns disable-firewall disable-client-routes disable-server-routes disable-ipv6 network-monitor wireguard-port
+for name in disable-dns disable-firewall disable-client-routes disable-server-routes disable-ipv6 network-monitor wireguard-port hostname
 do
     count="$(printf '%s' "$flags" | grep -o -- "--$name" | wc -l | tr -d ' ')"
     [ "$count" = "1" ] || {
