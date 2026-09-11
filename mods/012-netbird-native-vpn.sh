@@ -219,7 +219,11 @@ if printf '%s' "$MODEL_JS" | grep -Fq 'setup_key:e.setup_key'; then
   exit 1
 fi
 printf '%s' "$FORM_JS" | grep -Fq 'stockComponent(this, "su-password")'
-printf '%s' "$FORM_JS" | grep -Fq 'A identidade deste perfil já existe. Nenhuma Setup Key é necessária para editar estas configurações.'
+printf '%s' "$FORM_JS" | grep -Fq 'const showSetupKey = this.creating || this.identityPresent === false;'
+if printf '%s' "$FORM_JS" | grep -Fq 'A identidade deste perfil já existe. Nenhuma Setup Key é necessária para editar estas configurações.'; then
+  echo "Error: enrolled EDIT still renders the retired Setup Key identity notice" >&2
+  exit 1
+fi
 printf '%s' "$FORM_JS" | grep -Fq 'const identityPresent = ref(null)'
 printf '%s' "$FORM_JS" | grep -Fq 'identityPresent.value = !!r.identityPresent'
 printf '%s' "$FORM_JS" | grep -Fq 'if (!creating.value && hasIdentity === null && profileKey.value)'
