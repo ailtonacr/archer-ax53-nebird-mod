@@ -203,6 +203,68 @@ grep -Fq 'access port=52000 mode=lan cidr=172.24.20.0/24 homeif=br-lan' "$TMP/fw
 grep -Fxq 'port=52000' "$NB_FW_STATE"
 grep -Fxq 'cidr=172.24.20.0/24' "$NB_FW_STATE"
 
+# Enrollment metadata is proof of successful authentication, not config-file
+# existence. A setup-key login that succeeds marks enrolled before any later
+# firewall step can fail independently.
+NB_CONFIG_FILE="$TMP/default.json"
+NB_STATE_DIR="$TMP/state"
+NB_BIN="$TMP/netbird-mock"
+NB_SOCK="$TMP/netbird.sock"
+NB_CONFIG_DIR="$TMP/profile"
+mkdir -p "$NB_CONFIG_DIR" "$NB_STATE_DIR"
+printf '{}\n' > "$NB_CONFIG_FILE"
+cat > "$NB_BIN" <<'EOF'
+#!/bin/sh
+case "$1" in
+    up) exit "${MOCK_UP_RC:-0}" ;;
+    down|status) exit 0 ;;
+    *) exit 0 ;;
+esac
+EOF
+chmod +x "$NB_BIN"
+cat > "$NB_SETTINGS_FILE" <<'EOF'
+enable=1
+enrolled=0
+management_url=https://netbird.example
+hostname=test
+disable_dns=1
+disable_firewall=1
+disable_client_routes=1
+disable_server_routes=1
+disable_ipv6=1
+network_monitor=0
+advertise_lan=0
+advertise_cidr=
+wireguard_port=51820
+EOF
+nb_materialize() { :; }
+nb_is_running() { return 0; }
+nb_runtime_apply_firewall() { return 0; }
+nb_runtime_remove_firewall() { return 0; }
+nb_set() {
+    file="$1" key="$2" value="$3"
+    if grep -q "^${key}=" "$file"; then
+        sed "s/^${key}=.*/${key}=${value}/" "$file" > "$file.tmp"
+        mv "$file.tmp" "$file"
+    else
+        printf '%s=%s\n' "$key" "$value" >> "$file"
+    fi
+}
+keyfile="$TMP/setup-key"
+printf 'secret-for-test-only\n' > "$keyfile"
+export MOCK_UP_RC=0
+nb_runtime_connect "$keyfile"
+grep -Fxq 'enrolled=1' "$NB_SETTINGS_FILE" || { echo "successful setup-key login did not mark enrolled" >&2; exit 1; }
+
+sed -i 's/^enrolled=1$/enrolled=0/' "$NB_SETTINGS_FILE"
+export MOCK_UP_RC=1
+if nb_runtime_connect "$keyfile" >/dev/null 2>&1; then
+    echo "failed setup-key login unexpectedly succeeded" >&2
+    exit 1
+fi
+grep -Fxq 'enrolled=0' "$NB_SETTINGS_FILE" || { echo "failed setup-key login marked enrolled" >&2; exit 1; }
+unset MOCK_UP_RC
+
 # Identity cleanup must not recreate state/ after deleting it.
 NB_CONFIG_FILE="$TMP/default.json"
 NB_STATE_DIR="$TMP/state"
