@@ -237,6 +237,8 @@ advertise_lan=0
 advertise_cidr=
 wireguard_port=51820
 EOF
+nb_ensure_settings() { :; }
+nb_mgmt_url() { printf '%s\n' "https://netbird.example"; }
 nb_materialize() { :; }
 nb_is_running() { return 0; }
 nb_runtime_apply_firewall() { return 0; }
