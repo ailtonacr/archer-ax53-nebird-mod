@@ -16,11 +16,13 @@ for (const token of [
   'const creating = ref(true)',
   'const existing = !!(value && (value.key || value.id))',
   'const profileKey = ref("")',
+  'const identityPresent = ref(null)',
+  'identityPresent.value = !!r.identityPresent',
   'enrollment_token: enrollmentToken.value || ""',
   'stage_setup_key',
   '"onUpdate:modelValue": onSetupKey',
   'onInput: onSetupKey',
-  'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
+  'A identidade deste perfil já existe. Deixe a Setup Key em branco para mantê-la',
   's.advertise_lan === "1" && s.disable_server_routes !== "0"',
   's.advertise_lan === "1" && s.disable_firewall !== "0"',
   'Permitir roteamento da LAN',
@@ -44,6 +46,7 @@ let exposed = null;
 let response = {
   code: "connected",
   profileExists: true,
+  identityPresent: true,
   settings: {
     enrolled: "1", management_url: "https://netbird.example", advertise_cidr: "192.168.10.0/24",
     disable_dns: "1", disable_firewall: "0", disable_client_routes: "1",
@@ -162,6 +165,7 @@ assert.equal(state.profileKey.value, "arbitrary-stock-key");
 await new Promise(resolve => setTimeout(resolve, 0));
 assert.ok(requests.some(r => r.operation === "status" && r.profile_key === "arbitrary-stock-key"));
 assert.equal(await exposed.validate(), true);
+assert.equal(state.identityPresent.value, true);
 
 const editForm = exposed.getForm();
 assert.equal(editForm.management_url, "https://netbird.example");
@@ -170,6 +174,29 @@ assert.equal(editForm.enrollment_token, "");
 assert.equal("setup_key" in editForm, false);
 for (const field of ["key", "id", "type", "description", "enable", "enabled", "enrolled"])
   assert.equal(field in editForm, false, `protocol subform must not own TP-Link field ${field}`);
+
+// An existing stock row without identity must still require a Setup Key. The
+// authority is backend identityPresent, not a stale/enrolled field in the row.
+response = { ...response, identityPresent: false, settings: { ...response.settings, enrolled: "0" } };
+assert.equal(exposed.setForm({
+  key: "existing-without-identity", type: "netbirdvpn", server: "https://netbird.example",
+  management_url: "https://netbird.example", enable: "on", enrolled: "1",
+  advertise_lan: "0", disable_server_routes: "1", disable_firewall: "1", wireguard_port: "51820",
+}), true);
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(state.identityPresent.value, false);
+await assert.rejects(() => exposed.validate(), /Setup Key/);
+
+// Return to an enrolled profile for the remaining edit/routing assertions.
+response = { ...response, identityPresent: true, settings: { ...response.settings, enrolled: "1" } };
+assert.equal(exposed.setForm({
+  key: "arbitrary-stock-key", type: "netbirdvpn", server: "https://netbird.example",
+  management_url: "https://netbird.example", enable: "on", enrolled: "1",
+  advertise_lan: "1", advertise_cidr: "192.168.10.0/24", disable_server_routes: "0",
+  disable_firewall: "0", wireguard_port: "51820",
+}), true);
+await new Promise(resolve => setTimeout(resolve, 0));
+assert.equal(state.identityPresent.value, true);
 
 // Routing peer invariants remain provider-specific validation.
 state.updateDraft("advertise_lan", "0");
