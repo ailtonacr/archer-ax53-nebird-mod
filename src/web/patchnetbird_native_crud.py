@@ -153,6 +153,7 @@ def assert_page_and_form() -> None:
         'enrollment_token: enrollmentToken.value || ""',
         'stage_setup_key',
         'Setup Key',
+        'if (!creating.value && hasIdentity === null && profileKey.value)',
         'A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.',
         'Permitir roteamento da LAN',
         '_h(SuForm, { model: s }, { default: () => items })',
