@@ -88,9 +88,9 @@ firmware: $(TARGET) test-netbird
 		grep -q "add_protocol netbird" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd NetBird protocol registration missing" >&2; exit 1; }; \
 		grep -q "proto_config_add_string \"profile_key\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: profile key is not carried through netifd" >&2; exit 1; }; \
 		grep -Fq "proto_config_add_string \"enrollment_token\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not receive enrollment token" >&2; exit 1; }; \
-		grep -Fq "nb_staged_setup_key_path \"$enrollment_token\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not resolve staged Setup Key" >&2; exit 1; }; \
-		grep -Fq "nb_runtime_connect \"$keyfile\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not own enrollment/runtime connect" >&2; exit 1; }; \
-		grep -Fq "nb_profile_clear_enrollment_token \"$NB_PROFILE_KEY\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd enrollment token cleanup missing" >&2; exit 1; }; \
+		grep -Fq "nb_staged_setup_key_path \"$$enrollment_token\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not resolve staged Setup Key" >&2; exit 1; }; \
+		grep -Fq "nb_runtime_connect \"$$keyfile\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd does not own enrollment/runtime connect" >&2; exit 1; }; \
+		grep -Fq "nb_profile_clear_enrollment_token \"$$NB_PROFILE_KEY\"" rootfs/lib/netifd/proto/netbird.sh || { echo "Error: netifd enrollment token cleanup missing" >&2; exit 1; }; \
 		if grep -Ev "^[[:space:]]*#" rootfs/lib/netifd/proto/netbird.sh | grep -q "/sbin/netbird-ctl"; then echo "Error: netifd still depends on netbird-ctl" >&2; exit 1; fi; \
 		if grep -q "proto_set_available" rootfs/lib/netifd/proto/netbird.sh; then echo "Error: transient NetBird failure changes protocol availability" >&2; exit 1; fi; \
 		PROTO_SETUP="$$(sed -n "/^proto_netbird_setup()/,/^proto_netbird_teardown()/p" rootfs/lib/netifd/proto/netbird.sh)"; \
@@ -103,7 +103,7 @@ firmware: $(TARGET) test-netbird
 		if grep -Eq "iptables[[:space:]].*(-I|--insert)[[:space:]]+FORWARD" rootfs/lib/netbird/netbird-runtime.sh; then echo "Error: runtime contains a priority FORWARD bypass" >&2; exit 1; fi; \
 		if grep -q "nb_fw_prioritize_lan" rootfs/lib/netbird/netbird-runtime.sh; then echo "Error: retired Route ACL bypass helper remains" >&2; exit 1; fi; \
 		grep -q -- "--wireguard-port" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: WireGuard port is not applied by canonical NetBird flag builder" >&2; exit 1; }; \
-		grep -Fq 'NB_DL_MAX_TIME="300"' rootfs/lib/netbird/netbird.sh || { echo "Error: hardware-proven payload download window missing" >&2; exit 1; }; \
+		grep -Fq "NB_DL_MAX_TIME=\"300\"" rootfs/lib/netbird/netbird.sh || { echo "Error: hardware-proven payload download window missing" >&2; exit 1; }; \
 		NB_FW_CANONICAL="$$(sed -n "/# NetBird v4 CIDR-scoped\\/applied-state/,\$$p" rootfs/lib/firewall/tpcmd.sh)"; \
 		test -n "$$NB_FW_CANONICAL" || { echo "Error: ACL-safe canonical NetBird firewall source missing" >&2; exit 1; }; \
 		if printf "%s\n" "$$NB_FW_CANONICAL" | grep -Fq "fw_s_add 4 f FORWARD ACCEPT 1 {"; then echo "Error: canonical TP-Link NetBird FORWARD rules bypass Route ACL ordering" >&2; exit 1; fi; \
@@ -131,9 +131,9 @@ firmware: $(TARGET) test-netbird
 		if grep -Fq "setup_key:e.setup_key" "$$VERIFY_JS_DIR/model.js"; then echo "Error: Setup Key leaked into stock VPN serializer" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; fi; \
 		grep -Fq "stockComponent(this, \"su-password\")" "$$VERIFY_JS_DIR/form.js" || { echo "Error: stock Setup Key control missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		grep -Fq "_h(SuForm, { model: s }, { default: () => items })" "$$VERIFY_JS_DIR/form.js" || { echo "Error: provider form context missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
-		grep -Fq "Permitir roteamento da LAN" "$VERIFY_JS_DIR/form.js" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
-		grep -Fq "const identityPresent = ref(null)" "$VERIFY_JS_DIR/form.js" || { echo "Error: identity-aware Edit state missing" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
-		grep -Fq "identityPresent.value = !!r.identityPresent" "$VERIFY_JS_DIR/form.js" || { echo "Error: backend identity state is not authoritative in Edit" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "Permitir roteamento da LAN" "$$VERIFY_JS_DIR/form.js" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "const identityPresent = ref(null)" "$$VERIFY_JS_DIR/form.js" || { echo "Error: identity-aware Edit state missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "identityPresent.value = !!r.identityPresent" "$$VERIFY_JS_DIR/form.js" || { echo "Error: backend identity state is not authoritative in Edit" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		cat "$$VERIFY_JS_DIR/model.js" "$$VERIFY_JS_DIR/page.js" "$$VERIFY_JS_DIR/form.js" > "$$VERIFY_JS_DIR/all.js"; \
 		for FORBIDDEN in "key:e.key||\"netbird\"" "a.value=_nb.concat(e)" "operation:\"settings_set\"" "function nbSettingsSet(" "function nbControl(" "function nbDelete(" "\"label-width\": { span: 10 }" "\"content-width\": { span: 14 }" "async function enroll()" "async function afterStockSave()" "__nbActiveStockVpn" "window.__netbirdSaveDraft" "__netbirdSaveListener"; do \
 			if grep -Fq "$$FORBIDDEN" "$$VERIFY_JS_DIR/all.js"; then echo "Error: custom generic VPN interception remains: $$FORBIDDEN" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; fi; \
