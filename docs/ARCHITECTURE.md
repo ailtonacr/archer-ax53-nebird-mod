@@ -25,8 +25,8 @@ NetBird-specific code is limited to:
 ```text
 provider registration: netbirdvpn = type 5
 provider-specific form fields and serialization
-transient Setup Key enrollment inside the stock Save provider callback
-proto=netbird for netifd
+provider-side Setup Key staging + opaque enrollment_token handoff through stock Save
+proto=netbird for netifd, which performs enrollment/runtime connection
 NetBird runtime / R2 payload materialization
 profile-scoped identity/settings/state
 runtime / payload / log diagnostics
@@ -85,18 +85,18 @@ the stock controller:
 VPN_TYPE_TBL[netbirdvpn]      = 5
 VPN_TYPE_NAME_TBL[netbirdvpn] = NetBird
 VPN_TBL[netbirdvpn]           = stock-shaped validator schema, proto=netbird
-VPN_CFG_TBL[netbirdvpn]       = NetBird provider config/enrollment callback
+VPN_CFG_TBL[netbirdvpn]       = NetBird provider config/token-handoff callback
 ```
 
-The `VPN_TBL` rule entries follow the vendor validator contract:
+The `VPN_TBL` rule entries follow the hardware-observed vendor validator contract:
 
 ```lua
-{ field = { "field_name" }, canbe_empty = true }
+{ key = "field_name" }
 ```
 
-The older `{ key = "field_name" }` shape is invalid for this controller and was
-identified during the 2026-09-10 hardware ADD failure. Build gates reject that
-shape.
+The previously inferred `{ field = { key }, canbe_empty = true }` shape is not
+the contract used by this firmware. Build gates explicitly reject that inferred
+shape and require the positional `{ key = key }` rule used by the current code.
 
 `scripts/verify-tplink-vpn-bytecode.py` fails the build if the expected stock
 registry contract is absent. The native registry loader requires
@@ -139,34 +139,37 @@ No profile-specific operation is allowed to fall back to:
 
 Those paths are not part of the current implementation.
 
-## Setup Key and one-step enrollment
+## Setup Key staging and deferred enrollment
 
-The initial profile flow is intentionally one stock Save:
+The user experience remains one normal TP-Link Save, but the secret does **not**
+enter the stock Save payload:
 
 ```text
 Add NetBird
   -> fill provider fields
   -> enter Setup Key
+  -> provider validate()
+       -> /admin/netbird stage_setup_key
+       -> mode-0600 /tmp/netbird-setup-stage-<token>
+       -> opaque enrollment_token returned to the form
   -> TP-Link SALVAR
-       -> stock serializer creates the profile key
+       -> stock serializer creates/reuses the profile key
        -> /admin/vpn?form=server processes type=netbirdvpn
-       -> VPN_CFG_TBL[netbirdvpn] consumes setup_key transiently
-       -> NetBird identity is enrolled under profiles/<stock key>/
-       -> setup_key temporary file is deleted
-       -> callback leaves NetBird stopped
-  -> stock row appears in the normal TP-Link list
-  -> enable with the normal stock toggle
+       -> VPN_CFG_TBL[netbirdvpn] validates the staged token
+       -> only enrollment_token is handed to protocol.netbirdvpn/network.vpn
+  -> native vpnc/netifd lifecycle
+       -> proto_netbird resolves the staged key file from enrollment_token
+       -> nb_runtime_connect performs enrollment/runtime connection
+       -> staged key is discarded
+       -> enrollment_token is cleared
 ```
 
-`setup_key` is **not** a member of `VPN_TBL`, is not returned in the persistent
-`vpn` object, is not written to provider settings, and is never documented. The
-frontend includes it only in the current stock Save request. The provider
-callback stages it in a mode-0600 file under `/tmp`, invokes enrollment, unlinks
-the file, and stops the temporary enrollment daemon. Normal activation remains
-owned by the TP-Link toggle -> vpnc -> netifd lifecycle.
+`setup_key` is **not** a member of `VPN_TBL`, is not serialized into the stock
+Save request and is not written to provider settings. Only the opaque,
+short-lived `enrollment_token` crosses the stock Save boundary.
 
 An already enrolled saved row may be edited without a Setup Key. Supplying a
-Setup Key is provider-specific enrollment input, not a generic profile field.
+Setup Key is provider-specific enrollment input staged outside generic CRUD.
 
 ## Auxiliary `/admin/netbird` boundary
 
@@ -180,9 +183,9 @@ payload_status  global payload diagnostics
 ```
 
 It does **not** expose enrollment or generic writable profile configuration.
-There is no `settings_set`, `settings_get`, `connected_status`, profile CRUD,
-DELETE helper or Setup Key handling there. Enrollment belongs to the provider
-callback reached by the normal stock Save.
+There is no `settings_set`, `settings_get`, `connected_status`, profile CRUD
+or DELETE helper there. It does expose transient Setup Key staging/discard
+operations; actual enrollment is owned by the native netifd lifecycle.
 
 ## Frontend boundary
 
@@ -224,7 +227,7 @@ preserve type=netbirdvpn
 generate/reuse the stock key
 mirror it into profile_key
 map Management URL hostname into the common server field
-carry setup_key explicitly as transient request input
+carry only enrollment_token as transient provider handoff
 ```
 
 Stock list/request/update/delete/status functions remain unchanged.
@@ -266,7 +269,7 @@ Ephemeral:
 /tmp/netbird.log
 /tmp/netbird-active-profile
 /tmp/netbird-firewall.state
-/tmp/nb-setup-key-*          <- only while a stock Save enrollment is running
+/tmp/netbird-setup-stage-*   <- transient Setup Key staging by opaque token
 ```
 
 The large executable is not stored in rootfs or a new NAND partition. MIBIB
