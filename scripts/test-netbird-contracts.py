@@ -315,6 +315,7 @@ def check_build_gates() -> None:
     mod012 = text("mods/012-netbird-native-vpn.sh")
     makefile = text("Makefile")
     verifier = text("scripts/verify-tplink-vpn-bytecode.py")
+    router_validator = text("scripts/validate-netbird-native-router.sh")
     require(
         mod010,
         'is_stock_vpn "$VPN_CONTROLLER"',
@@ -345,6 +346,14 @@ def check_build_gates() -> None:
         'test-netbird:', 'src/init/netbird-profile-gc.init', 'scripts/test-netbird-profiles.sh',
         'scripts/test-netbird-recovery.sh', 'python3 scripts/test-netbird-contracts.py .',
         'python3 scripts/test-netbird-native-frontend.py',
+    )
+    require(
+        router_validator,
+        'PROFILE_KEY="$(uci -q get network.vpn.profile_key 2>/dev/null || true)"',
+        'PROFILE_SETTINGS="/tp_data/netbird/profiles/$PROFILE_KEY/settings"',
+    )
+    assert '/tp_data/netbird/settings' not in router_validator, (
+        "hardware validator must not use retired singleton settings path"
     )
 
     # Make recipes are parsed once by make and again by bash -c. Literal shell
