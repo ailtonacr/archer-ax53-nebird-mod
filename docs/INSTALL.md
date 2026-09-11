@@ -11,8 +11,8 @@ NetBird is a fifth native TP-Link VPN Client provider:
 TP-Link VPN Client UI
   -> /admin/vpn?form=server
   -> type=netbirdvpn / id=5
-  -> stock Save generates/reuses the profile key
-  -> provider callback consumes transient Setup Key
+  -> provider validate() stages Setup Key under /tmp and receives an opaque token
+  -> stock Save generates/reuses the profile key and carries only enrollment_token
   -> network.vpn.proto=netbird
   -> network.vpn.profile_key=<stock key>
   -> /etc/init.d/vpnc
@@ -25,8 +25,9 @@ TP-Link VPN Client UI
 The generic TP-Link list, ADD, EDIT, Save/Cancel, toggle, DELETE and
 `connected_status` paths remain stock. `/admin/netbird` is auxiliary only for
 profile-scoped status, restart delegated to `vpnc`, logs and payload diagnostics.
-Enrollment is not a second endpoint/Save flow: the native provider callback
-consumes the Setup Key during the normal stock Save request.
+Enrollment is not a second generic Save flow. The provider endpoint only stages
+the secret; stock Save carries an opaque token, and the native netifd lifecycle
+later resolves that token and performs enrollment/runtime connection.
 
 There is no profile import/adoption path. Provider state exists only under:
 
@@ -105,31 +106,33 @@ Expected flow:
 ```text
 Add NetBird
   -> provider fields + Setup Key
+  -> validate() stages /tmp/netbird-setup-stage-<token> mode 0600
+  -> form receives opaque enrollment_token
   -> stock SALVAR
   -> stock serializer key=e.key||t()
   -> /admin/vpn?form=server
-  -> VPN_CFG_TBL[netbirdvpn]
-  -> temporary mode-0600 Setup Key file
-  -> NetBird enrollment under profiles/<stock key>/
-  -> temporary key file removed
-  -> daemon stopped
+  -> VPN_CFG_TBL[netbirdvpn] validates token and hands it to network.vpn
   -> stock row visible
-  -> normal stock toggle starts vpnc/netifd
+  -> native vpnc/netifd setup resolves staged key
+  -> NetBird identity is enrolled under profiles/<stock key>/
+  -> staged key is removed and enrollment_token is cleared
 ```
 
-The Setup Key is transient request input. It must not be stored in `vpn.server`,
-`/tp_data/netbird/profiles/<key>/settings`, repository or Notion.
+The Setup Key is transient provider-side input. It must never enter the stock
+Save payload, `vpn.server`, persistent provider settings, repository or Notion.
+Only the opaque `enrollment_token` may cross the stock Save boundary.
 
 To validate without printing secrets:
 
 ```sh
 uci show vpn | grep -E "=server|type='netbirdvpn'|profile_key="
 find /tp_data/netbird/profiles -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null
-find /tmp -maxdepth 1 -name 'nb-setup-key-*' -print
+find /tmp -maxdepth 1 -name 'netbird-setup-stage-*' -print
 ```
 
-Success requires one stock row, one matching provider directory and no leftover
-`/tmp/nb-setup-key-*` file.
+Success requires one stock row and one matching provider directory. After the
+native netifd lifecycle consumes or discards the token, no
+`/tmp/netbird-setup-stage-*` file may remain.
 
 ## Step 4 — validate multiple NetBird profiles
 
