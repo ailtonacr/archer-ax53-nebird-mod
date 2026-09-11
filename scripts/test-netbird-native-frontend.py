@@ -72,7 +72,10 @@ def main() -> int:
         'stockComponent(this, "su-form")', 'stockComponent(this, "su-form-item")', 'stockComponent(this, "su-input")',
         'stockComponent(this, "su-password")', '"onUpdate:modelValue": onSetupKey', 'onInput: onSetupKey', 'stockComponent(this, "su-checkbox")',
         'enrollment_token: enrollmentToken.value || ""', 'stage_setup_key',
-        'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
+        'const identityPresent = ref(null)',
+        'identityPresent.value = !!r.identityPresent',
+        'edit && this.identityPresent === true',
+        'A identidade deste perfil já existe. Deixe a Setup Key em branco para mantê-la',
         '_h(SuForm, { model: s }, { default: () => items })',
         'Permitir roteamento da LAN',
     )
