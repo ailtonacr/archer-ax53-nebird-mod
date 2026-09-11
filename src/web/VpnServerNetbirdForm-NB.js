@@ -338,7 +338,7 @@ export default defineComponent({
       disabled,
       placeholder: edit && this.identityPresent === true ? "Deixe em branco para manter a identidade atual" : "Setup Key do NetBird",
     }) }));
-    items.push(_h(SuAlert, null, textSlot(edit && this.identityPresent === true ? "A identidade deste perfil já existe. Deixe a Setup Key em branco para mantê-la; informe outra apenas para substituir a identidade." : "A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.")));
+    items.push(_h(SuAlert, null, textSlot(edit && this.identityPresent === true ? "A identidade deste perfil já existe. Nenhuma Setup Key é necessária para editar estas configurações." : "A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.")));
 
     const flags = [
       ["Habilitar DNS do NetBird", "disable_dns", s.disable_dns === "0", true],
