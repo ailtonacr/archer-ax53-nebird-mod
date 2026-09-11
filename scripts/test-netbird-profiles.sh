@@ -10,6 +10,13 @@ NB_ROOT="$TMP/netbird"
 NB_PROFILES_ROOT="$NB_ROOT/profiles"
 NB_ACTIVE_PROFILE_FILE="$TMP/active-profile"
 
+nb_get() {
+    file="$1" key="$2" def="${3:-}"
+    [ -f "$file" ] || { printf '%s\n' "$def"; return 0; }
+    value="$(sed -n "s/^${key}=//p" "$file" | head -n 1)"
+    [ -n "$value" ] && printf '%s\n' "$value" || printf '%s\n' "$def"
+}
+
 UCI_A=0
 UCI_B=0
 UCI_NON_NETBIRD=0
@@ -71,6 +78,17 @@ nb_profile_select "profile-a"
 nb_profile_select "profile-b"
 [ "$NB_CONFIG_DIR" = "$NB_PROFILES_ROOT/profile-b" ] || fail "profile B config dir wrong"
 [ "$NB_CONFIG_DIR" != "$NB_PROFILES_ROOT/profile-a" ] || fail "profiles share a directory"
+
+# A generated NetBird config is not proof that Management accepted the peer.
+mkdir -p "$NB_PROFILES_ROOT/profile-b"
+printf '{}\n' > "$NB_PROFILES_ROOT/profile-b/default.json"
+printf 'enrolled=0\n' > "$NB_PROFILES_ROOT/profile-b/settings"
+if nb_profile_identity_present; then
+    fail "default.json alone was treated as enrolled identity"
+fi
+printf 'enrolled=1\n' > "$NB_PROFILES_ROOT/profile-b/settings"
+nb_profile_identity_present || fail "enrolled metadata was not recognized as identity"
+rm -rf "$NB_PROFILES_ROOT/profile-b"
 
 # A/B may coexist. Removing B from vpn.server must never touch A.
 mkdir -p "$NB_PROFILES_ROOT/profile-a" "$NB_PROFILES_ROOT/profile-b" "$NB_PROFILES_ROOT/orphan"
