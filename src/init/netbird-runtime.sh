@@ -209,9 +209,7 @@ nb_runtime_connect() {
     # disableClientRoutes=true even when our settings say 0. Force the engine
     # down first so the following canonical `up` always applies every explicit
     # true/false flag through SetConfig before reconnecting.
-    if [ -S "$NB_SOCK" ]; then
-        "$NB_BIN" down --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1 || true
-    fi
+    "$NB_BIN" down --daemon-addr "unix://$NB_SOCK" >/dev/null 2>&1 || true
 
     if [ -n "$keyfile" ]; then
         "$NB_BIN" up --daemon-addr "unix://$NB_SOCK" \
