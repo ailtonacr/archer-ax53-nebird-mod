@@ -5,7 +5,7 @@
 # Allowed custom surface:
 #   - register type=netbirdvpn in the stock controller registries
 #   - provider-specific frontend subform/serialization
-#   - transient setup-key enrollment inside the stock Save provider callback
+#   - transient setup-key handoff from stock Save to the native netifd lifecycle
 #   - netifd proto=netbird + runtime
 #   - profile-scoped identity/diagnostics
 #   - provider-state orphan garbage collection
