@@ -74,11 +74,19 @@ UBUS="$(ubus call network.interface.vpn status 2>/dev/null || true)"
 printf '%s' "$UBUS" | tr -d '\r\n\t ' | grep -q '"up":true' && ok "network.interface.vpn up=true" || fail "network.interface.vpn is not up"
 printf '%s' "$UBUS" | grep -q 'wt0' && ok "network.interface.vpn references wt0" || warn "ubus status does not explicitly contain wt0"
 
-ADVERTISE_LAN="$(sed -n 's/^advertise_lan=//p' /tp_data/netbird/settings 2>/dev/null | head -n1)"
-ADVERTISE_CIDR="$(sed -n 's/^advertise_cidr=//p' /tp_data/netbird/settings 2>/dev/null | head -n1)"
-DISABLE_SERVER_ROUTES="$(sed -n 's/^disable_server_routes=//p' /tp_data/netbird/settings 2>/dev/null | head -n1)"
-DISABLE_FIREWALL="$(sed -n 's/^disable_firewall=//p' /tp_data/netbird/settings 2>/dev/null | head -n1)"
-WG_PORT="$(sed -n 's/^wireguard_port=//p' /tp_data/netbird/settings 2>/dev/null | head -n1)"
+PROFILE_KEY="$(uci -q get network.vpn.profile_key 2>/dev/null || true)"
+if [ -n "$PROFILE_KEY" ]; then
+    PROFILE_SETTINGS="/tp_data/netbird/profiles/$PROFILE_KEY/settings"
+else
+    PROFILE_SETTINGS=""
+fi
+[ -n "$PROFILE_SETTINGS" ] && [ -f "$PROFILE_SETTINGS" ]     && ok "active profile settings resolved: $PROFILE_KEY"     || fail "active profile settings missing for network.vpn.profile_key=${PROFILE_KEY:-<none>}"
+
+ADVERTISE_LAN="$(sed -n 's/^advertise_lan=//p' "$PROFILE_SETTINGS" 2>/dev/null | head -n1)"
+ADVERTISE_CIDR="$(sed -n 's/^advertise_cidr=//p' "$PROFILE_SETTINGS" 2>/dev/null | head -n1)"
+DISABLE_SERVER_ROUTES="$(sed -n 's/^disable_server_routes=//p' "$PROFILE_SETTINGS" 2>/dev/null | head -n1)"
+DISABLE_FIREWALL="$(sed -n 's/^disable_firewall=//p' "$PROFILE_SETTINGS" 2>/dev/null | head -n1)"
+WG_PORT="$(sed -n 's/^wireguard_port=//p' "$PROFILE_SETTINGS" 2>/dev/null | head -n1)"
 HOME_IF="$(uci_get_state firewall core lan_ifname 2>/dev/null)"
 [ -n "$HOME_IF" ] || HOME_IF="br-lan"
 
