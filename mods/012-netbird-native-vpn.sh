@@ -99,11 +99,13 @@ grep -q 'vpn.VPN_CFG_TBL\[TYPE\] = netbird_config' "$R/usr/lib/lua/luci/model/ne
 grep -q 'vpn.VPN_TYPE_TBL\[TYPE\] = TYPE_ID' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'vpn.VPN_TYPE_NAME_TBL\[TYPE\] = TYPE_NAME' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -q 'vpn.VPN_TBL\[TYPE\] = schema' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
-grep -q 'local enrollment_token = cfg.enrollment_token' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
-grep -q 'local function enroll_transient(profile_key, enrollment_token)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -Fq 'local enrollment_token = tostring(cfg.enrollment_token or "")' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
 grep -Fq 'nb_model.staged_setup_key_path(enrollment_token)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
-grep -Fq 'nb_model.control("enroll", profile_key, keyfile)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
-grep -Fq 'nb_model.discard_staged_setup_key(enrollment_token)' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+grep -Fq 'if enrollment_token ~= "" then vpn.enrollment_token = enrollment_token end' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"
+if grep -Fq 'nb_model.control("enroll"' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua" || grep -Fq 'enroll_transient(' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua"; then
+  echo "Error: stock Save callback still performs synchronous NetBird enrollment" >&2
+  exit 1
+fi
 if sed -n '/local FIELDS = {/,/^}/p' "$R/usr/lib/lua/luci/model/netbird_vpn_native.lua" | grep -Fq '"setup_key"'; then
   echo "Error: setup_key leaked into persistent VPN_TBL fields" >&2
   exit 1
@@ -153,7 +155,10 @@ if grep -q 'nb_fw_prioritize_lan' "$R/lib/netbird/netbird-runtime.sh"; then
   echo "Error: retired NetBird Route ACL bypass helper remains" >&2
   exit 1
 fi
-grep -q 'nb_runtime_connect' "$R/lib/netifd/proto/netbird.sh"
+grep -Fq 'proto_config_add_string "enrollment_token"' "$R/lib/netifd/proto/netbird.sh"
+grep -Fq 'nb_staged_setup_key_path "$enrollment_token"' "$R/lib/netifd/proto/netbird.sh"
+grep -Fq 'nb_runtime_connect "$keyfile"' "$R/lib/netifd/proto/netbird.sh"
+grep -Fq 'nb_profile_clear_enrollment_token "$NB_PROFILE_KEY"' "$R/lib/netifd/proto/netbird.sh"
 grep -q 'proto_config_add_string "profile_key"' "$R/lib/netifd/proto/netbird.sh"
 grep -q 'nb_profile_select "$profile_key"' "$R/lib/netifd/proto/netbird.sh"
 grep -Fq 'if [ "$vpntype" != "netbirdvpn" ]; then' "$R/lib/netifd/proto/netbird.sh"
@@ -214,7 +219,9 @@ if printf '%s' "$MODEL_JS" | grep -Fq 'setup_key:e.setup_key'; then
   exit 1
 fi
 printf '%s' "$FORM_JS" | grep -Fq 'stockComponent(this, "su-password")'
-printf '%s' "$FORM_JS" | grep -Fq 'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link'
+printf '%s' "$FORM_JS" | grep -Fq 'A identidade deste perfil já existe. Deixe a Setup Key em branco para mantê-la'
+printf '%s' "$FORM_JS" | grep -Fq 'const identityPresent = ref(null)'
+printf '%s' "$FORM_JS" | grep -Fq 'identityPresent.value = !!r.identityPresent'
 printf '%s' "$FORM_JS" | grep -Fq '_h(SuForm, { model: s }, { default: () => items })'
 printf '%s' "$FORM_JS" | grep -Fq 'Permitir roteamento da LAN'
 
