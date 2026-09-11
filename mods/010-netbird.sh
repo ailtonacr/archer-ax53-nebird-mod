@@ -5,7 +5,7 @@
 # This is the bootstrap stage consumed by 012-netbird-native-vpn.sh. The final
 # image uses NetBird as native type=netbirdvpn/proto=netbird through the stock
 # /admin/vpn endpoint; the dedicated /admin/netbird endpoint remains diagnostics
-# only. Setup-key enrollment is consumed inside the stock provider Save callback.
+# only. Setup-key staging crosses stock Save as an opaque token; enrollment is consumed later by native netifd.
 #
 # The large NetBird ELF is NOT embedded in rootfs and NOT stored on any MTD/UBI
 # partition; it is downloaded over HTTPS and materialized into /tmp at runtime.
