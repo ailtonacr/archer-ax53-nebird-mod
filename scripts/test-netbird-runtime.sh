@@ -215,8 +215,11 @@ NB_SOCK="$TMP/netbird.sock"
 NB_CONFIG_DIR="$TMP/profile"
 mkdir -p "$NB_CONFIG_DIR" "$NB_STATE_DIR"
 printf '{}\n' > "$NB_CONFIG_FILE"
+MOCK_CMD_LOG="$TMP/netbird-commands.log"
+export MOCK_CMD_LOG
 cat > "$NB_BIN" <<'EOF'
 #!/bin/sh
+printf '%s\n' "$*" >> "${MOCK_CMD_LOG:-/dev/null}"
 case "$1" in
     up) exit "${MOCK_UP_RC:-0}" ;;
     down|status) exit 0 ;;
@@ -257,7 +260,18 @@ nb_set() {
 keyfile="$TMP/setup-key"
 printf 'secret-for-test-only\n' > "$keyfile"
 export MOCK_UP_RC=0
+: > "$MOCK_CMD_LOG"
 nb_runtime_connect "$keyfile"
+[ "$(sed -n '1s/[[:space:]].*$//p' "$MOCK_CMD_LOG")" = "down" ] || {
+    echo "runtime did not force daemon down before canonical up" >&2
+    cat "$MOCK_CMD_LOG" >&2
+    exit 1
+}
+grep -q '^up .*--disable-client-routes=true' "$MOCK_CMD_LOG" || {
+    echo "runtime up did not carry canonical explicit flags" >&2
+    cat "$MOCK_CMD_LOG" >&2
+    exit 1
+}
 grep -Fxq 'enrolled=1' "$NB_SETTINGS_FILE" || { echo "successful setup-key login did not mark enrolled" >&2; exit 1; }
 
 sed -i 's/^enrolled=1$/enrolled=0/' "$NB_SETTINGS_FILE"
