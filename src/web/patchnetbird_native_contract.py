@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Validate the authored TP-Link native NetBird subform contract.
 
-The form does not intercept TP-Link Save. setup_key is a transient provider
-field included in the normal stock Save payload and consumed by VPN_CFG_TBL;
-it is never persisted by the stock profile schema.
+The form does not intercept TP-Link Save. The Setup Key is staged provider-side
+in /tmp before Save; only an opaque short-lived enrollment_token crosses the
+normal stock Save payload. The secret never enters the stock profile schema.
 """
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ required = [
     's.advertise_lan === "1" && s.disable_server_routes !== "0"',
     's.advertise_lan === "1" && s.disable_firewall !== "0"',
     'draft.value.disable_firewall = "0"',
+    'if (!creating.value && hasIdentity === null && profileKey.value)',
     'A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.',
     '_h(SuForm, { model: s }, { default: () => items })',
     'Permitir roteamento da LAN',
