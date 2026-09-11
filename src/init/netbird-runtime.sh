@@ -209,6 +209,14 @@ nb_runtime_connect() {
     fi
     rc=$?
 
+    # A generated default.json only proves that NetBird initialized local
+    # configuration. It does not prove that Management accepted this peer.
+    # Mark enrollment only after a setup-key login itself succeeds, before any
+    # later firewall step can fail independently of authentication.
+    if [ "$rc" -eq 0 ] && [ -n "$keyfile" ]; then
+        nb_set "$NB_SETTINGS_FILE" enrolled 1 || return 1
+    fi
+
     if [ "$rc" -eq 0 ]; then
         if ! nb_runtime_apply_firewall; then
             nb_runtime_stop >/dev/null 2>&1 || true
