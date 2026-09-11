@@ -207,6 +207,11 @@ def check_auxiliary_boundary() -> None:
     assert 'SETTINGS = ROOT .. "/settings"' not in model
     assert 'function connected_status(' not in model
     assert 'function remove_profile_state(' not in model
+    identity_fn = model.split("function identity_present(profile_key)", 1)[1].split("\nend", 1)[0]
+    assert 'settings.enrolled == "1"' in identity_fn, "Lua identity must use authenticated enrollment metadata"
+    assert "default.json" not in identity_fn and "fs.readfile" not in identity_fn, (
+        "Lua identity must not infer enrollment from config-file existence"
+    )
 
 
 def check_profile_authority() -> None:
@@ -218,7 +223,8 @@ def check_profile_authority() -> None:
         'NB_ROOT=', 'NB_PROFILES_ROOT=', 'nb_profile_clear_context()', 'nb_profile_key_valid()',
         'nb_enrollment_token_valid()', 'nb_staged_setup_key_path()', 'nb_discard_staged_setup_key()',
         'nb_profile_clear_enrollment_token()',
-        'nb_profile_select()', 'nb_profile_stock_exists()', 'vpn.@server[$idx].key',
+        'nb_profile_select()', 'nb_profile_identity_present()', '[ "$(nb_get "$NB_SETTINGS_FILE" enrolled "0")" = "1" ]',
+        'nb_profile_stock_exists()', 'vpn.@server[$idx].key',
         '[ "$row_key" = "$key" ] && [ "$row_type" = "netbirdvpn" ]',
         'nb_profile_gc_orphans()', 'NB_CONFIG_DIR=""', 'NB_SETTINGS_FILE=""',
         'nb_profile_clear_context',
@@ -257,7 +263,9 @@ def check_runtime_library() -> None:
         'nb_up_flags()', '"--wireguard-port=${wg_port}"', 'nb_runtime_validate_settings()',
         'LAN routing requires server routes to be enabled', 'LAN routing requires NetBird firewall policy enforcement',
         'NB_FW_STATE="/tmp/netbird-firewall.state"',
-        'nb_runtime_connect()', 'nb_runtime_disconnect()', 'nb_runtime_stop()', 'nb_runtime_restart()',
+        'nb_runtime_connect()', '[ "$rc" -eq 0 ] && [ -n "$keyfile" ]',
+        'nb_set "$NB_SETTINGS_FILE" enrolled 1',
+        'nb_runtime_disconnect()', 'nb_runtime_stop()', 'nb_runtime_restart()',
     )
     runtime_code = shell_code(runtime)
     assert "/sbin/netbird-ctl" not in runtime_code
