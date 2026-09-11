@@ -5,7 +5,8 @@ import { s as api } from "./update-store-DQkZxaRI.js";
 // The outer dialog owns Description, VPN Type, Save/Cancel, list/toggle/delete
 // and the stock /admin/vpn?form=server request. The Setup Key is staged through
 // the provider endpoint during validate(); getForm() exposes only an opaque
-// enrollment token to the stock Save request, never the secret itself.
+// enrollment token. The stock provider callback hands that token to netifd,
+// which owns enrollment after the HTTP Save path has returned.
 const NB = "/admin/netbird";
 
 function nbReq(operation, extra) {
@@ -130,6 +131,7 @@ export default defineComponent({
     const profileKey = ref("");
     const setupKey = ref("");
     const enrollmentToken = ref("");
+    const enrollmentHandedOff = ref(false);
     const log = ref("");
     const busy = ref(false);
     const message = ref("");
@@ -161,6 +163,7 @@ export default defineComponent({
       const staleToken = enrollmentToken.value;
       setupKey.value = setupKeyValue(value);
       enrollmentToken.value = "";
+      enrollmentHandedOff.value = false;
       if (staleToken) nbReq("discard_setup_key", { enrollment_token: staleToken }).catch(() => {});
       dirty.value = true;
       error.value = "";
@@ -224,6 +227,7 @@ export default defineComponent({
       if (setupKey.value && !enrollmentToken.value) {
         const staged = await nbReq("stage_setup_key", { setup_key: setupKey.value });
         enrollmentToken.value = String(staged && staged.enrollment_token || "");
+        enrollmentHandedOff.value = false;
         if (!enrollmentToken.value) {
           error.value = "Não foi possível preparar a Setup Key para este salvamento.";
           throw new Error(error.value);
@@ -245,6 +249,7 @@ export default defineComponent({
       if (creating.value) { draft.value.enable = "0"; draft.value.enrolled = "0"; }
       setupKey.value = "";
       enrollmentToken.value = "";
+      enrollmentHandedOff.value = false;
       dirty.value = false; error.value = ""; message.value = "";
       if (existing) Promise.resolve().then(() => load(false));
       return true;
@@ -254,6 +259,8 @@ export default defineComponent({
       const s = draft.value || {};
       // Generic identity/list fields remain stock-owned. The Setup Key itself
       // never enters the stock payload; only a short-lived opaque token does.
+      // Once getForm() hands the token to stock Save, netifd owns its cleanup.
+      if (enrollmentToken.value) enrollmentHandedOff.value = true;
       return {
         management_url: s.management_url || "", server: s.management_url || "", hostname: s.hostname || "",
         disable_dns: s.disable_dns || "1", disable_firewall: s.disable_firewall || "1",
@@ -268,6 +275,7 @@ export default defineComponent({
       draft.value = normalizeForm(settings.value || {}, {});
       setupKey.value = "";
       enrollmentToken.value = "";
+      enrollmentHandedOff.value = false;
       dirty.value = false; error.value = ""; message.value = "";
       return true;
     }
@@ -284,10 +292,11 @@ export default defineComponent({
       if (timer) clearInterval(timer);
       const staleToken = enrollmentToken.value;
       enrollmentToken.value = "";
-      if (staleToken) nbReq("discard_setup_key", { enrollment_token: staleToken }).catch(() => {});
+      if (staleToken && !enrollmentHandedOff.value) nbReq("discard_setup_key", { enrollment_token: staleToken }).catch(() => {});
+      enrollmentHandedOff.value = false;
     });
 
-    return { props, settings, draft, status, netbird, payload, traffic, profileExists, identityPresent, profileKey, setupKey, enrollmentToken, log, busy, message, error, showLog, dirty, creating, updateDraft, updateSetupKey, restart, fetchLog };
+    return { props, settings, draft, status, netbird, payload, traffic, profileExists, identityPresent, profileKey, setupKey, enrollmentToken, enrollmentHandedOff, log, busy, message, error, showLog, dirty, creating, updateDraft, updateSetupKey, restart, fetchLog };
   },
 
   render() {
