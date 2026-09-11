@@ -18,6 +18,9 @@ for (const token of [
   'const profileKey = ref("")',
   'const identityPresent = ref(null)',
   'identityPresent.value = !!r.identityPresent',
+  'const enrollmentHandedOff = ref(false)',
+  'if (enrollmentToken.value) enrollmentHandedOff.value = true',
+  'staleToken && !enrollmentHandedOff.value',
   'enrollment_token: enrollmentToken.value || ""',
   'stage_setup_key',
   '"onUpdate:modelValue": onSetupKey',
@@ -149,6 +152,7 @@ for (const field of ["key", "id", "type", "description", "enable", "enabled", "e
   assert.equal(field in addForm, false, `provider subform must not own generic field ${field}`);
 assert.equal(addForm.management_url, "https://netbird.example");
 assert.equal(addForm.enrollment_token, "0123456789abcdef0123456789abcdef");
+assert.equal(state.enrollmentHandedOff.value, true, "getForm must hand staged-secret cleanup ownership to netifd");
 assert.equal("setup_key" in addForm, false, "secret must never enter stock Save payload");
 
 // A persisted stock key alone proves Edit. Diagnostics are profile-scoped. An
