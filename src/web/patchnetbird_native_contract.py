@@ -34,7 +34,7 @@ required = [
     's.advertise_lan === "1" && s.disable_server_routes !== "0"',
     's.advertise_lan === "1" && s.disable_firewall !== "0"',
     'draft.value.disable_firewall = "0"',
-    'A Setup Key será usada para enrollment durante o SALVAR stock da TP-Link',
+    'A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.',
     '_h(SuForm, { model: s }, { default: () => items })',
     'Permitir roteamento da LAN',
 ]
