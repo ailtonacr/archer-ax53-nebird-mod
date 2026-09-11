@@ -30,7 +30,7 @@ NB_PID="/var/run/netbird.pid"
 NB_DL_CLIENT="/usr/bin/curl"
 NB_DL_CACERT="/etc/ssl/certs/ca-certificates.crt"
 NB_DL_CONNECT_TIMEOUT="5"
-NB_DL_MAX_TIME="30"
+NB_DL_MAX_TIME="300"
 NB_DL_COOLDOWN="300"
 
 NB_VERSION="0.77.1"
