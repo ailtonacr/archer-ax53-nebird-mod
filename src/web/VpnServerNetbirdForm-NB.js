@@ -46,7 +46,7 @@ function normalizeForm(value, fallback) {
     enrolled: as01(v.enrolled, base.enrolled || "0"),
     management_url: v.management_url || v.server || base.management_url || "https://netbird.ailton.dev.br",
     hostname: v.hostname !== undefined ? String(v.hostname || "") : (base.hostname || ""),
-    disable_dns: as01(v.disable_dns, base.disable_dns || "1"),
+    disable_dns: "1",
     disable_firewall: as01(v.disable_firewall, base.disable_firewall || "1"),
     disable_client_routes: as01(v.disable_client_routes, base.disable_client_routes || "1"),
     disable_server_routes: as01(v.disable_server_routes, base.disable_server_routes || "1"),
@@ -144,6 +144,7 @@ export default defineComponent({
     function updateDraft(key, value) {
       draft.value[key] = value;
       if (key === "advertise_lan" && value === "1") {
+        draft.value.disable_client_routes = "0";
         draft.value.disable_server_routes = "0";
         draft.value.disable_firewall = "0";
       }
@@ -234,6 +235,7 @@ export default defineComponent({
         }
       }
       if (s.advertise_lan === "1" && !validCidr(s.advertise_cidr)) { error.value = "Informe uma rede LAN válida em CIDR, por exemplo 192.168.10.0/24."; throw new Error(error.value); }
+      if (s.advertise_lan === "1" && s.disable_client_routes !== "0") { error.value = "Para conectar a LAN a recursos remotos, habilite Rotas de cliente do NetBird."; throw new Error(error.value); }
       if (s.advertise_lan === "1" && s.disable_server_routes !== "0") { error.value = "Para rotear a LAN, habilite Rotas de servidor do NetBird."; throw new Error(error.value); }
       if (s.advertise_lan === "1" && s.disable_firewall !== "0") { error.value = "Para rotear a LAN com políticas, habilite o firewall do NetBird."; throw new Error(error.value); }
       return true;
@@ -263,7 +265,7 @@ export default defineComponent({
       if (enrollmentToken.value) enrollmentHandedOff.value = true;
       return {
         management_url: s.management_url || "", server: s.management_url || "", hostname: s.hostname || "",
-        disable_dns: s.disable_dns || "1", disable_firewall: s.disable_firewall || "1",
+        disable_dns: "1", disable_firewall: s.disable_firewall || "1",
         disable_client_routes: s.disable_client_routes || "1", disable_server_routes: s.disable_server_routes || "1",
         disable_ipv6: s.disable_ipv6 || "1", network_monitor: s.network_monitor || "0",
         advertise_lan: s.advertise_lan || "0", advertise_cidr: s.advertise_cidr || "",
@@ -344,7 +346,6 @@ export default defineComponent({
     }
 
     const flags = [
-      ["Habilitar DNS do NetBird", "disable_dns", s.disable_dns === "0", true],
       ["Habilitar firewall do NetBird", "disable_firewall", s.disable_firewall === "0", true],
       ["Rotas de cliente", "disable_client_routes", s.disable_client_routes === "0", true],
       ["Rotas de servidor", "disable_server_routes", s.disable_server_routes === "0", true],
@@ -352,6 +353,8 @@ export default defineComponent({
       ["Monitor de rede", "network_monitor", s.network_monitor === "1", false],
       ["Permitir roteamento da LAN", "advertise_lan", s.advertise_lan === "1", false],
     ];
+    items.push(_h(SuAlert, null, textSlot("DNS do NetBird fica desabilitado no AX53 para não disputar a porta 53 do roteador. O DNS comum da LAN deve ser distribuído pelo DHCP.")));
+
     for (const [label, key, checked, inverted] of flags) {
       items.push(_h(SuFormContentItem, null, { default: () => _h(SuCheckbox, { checked, "onUpdate:checked": value => this.updateDraft(key, inverted ? (value ? "0" : "1") : (value ? "1" : "0")), disabled }, textSlot(label)) }));
     }
