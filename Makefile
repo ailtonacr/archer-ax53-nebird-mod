@@ -138,9 +138,9 @@ firmware: $(TARGET) test-netbird
 		if grep -Fq "setup_key:e.setup_key" "$$VERIFY_JS_DIR/model.js"; then echo "Error: Setup Key leaked into stock VPN serializer" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; fi; \
 		grep -Fq "stockComponent(this, \"su-password\")" "$$VERIFY_JS_DIR/form.js" || { echo "Error: stock Setup Key control missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		grep -Fq "_h(SuForm, { model: s }, { default: () => items })" "$$VERIFY_JS_DIR/form.js" || { echo "Error: provider form context missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
-		grep -Fq "Permitir roteamento da LAN" "$$VERIFY_JS_DIR/form.js" || { echo "Error: LAN routing control missing" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
-		grep -Fq "DNS do NetBird fica desabilitado no AX53" "$$VERIFY_JS_DIR/form.js" || { echo "Error: AX53 DNS safety notice missing" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
-		if grep -Fq "Habilitar DNS do NetBird" "$$VERIFY_JS_DIR/form.js"; then echo "Error: unsupported AX53 NetBird DNS toggle is still exposed" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; fi; \
+		grep -Fq "Permitir roteamento da LAN" "$$VERIFY_JS_DIR/form.js" || { echo "Error: LAN routing control missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "DNS do NetBird fica desabilitado no AX53" "$$VERIFY_JS_DIR/form.js" || { echo "Error: AX53 DNS safety notice missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		if grep -Fq "Habilitar DNS do NetBird" "$$VERIFY_JS_DIR/form.js"; then echo "Error: unsupported AX53 NetBird DNS toggle is still exposed" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; fi; \
 		grep -Fq "const identityPresent = ref(null)" "$$VERIFY_JS_DIR/form.js" || { echo "Error: identity-aware Edit state missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		grep -Fq "identityPresent.value = !!r.identityPresent" "$$VERIFY_JS_DIR/form.js" || { echo "Error: backend identity state is not authoritative in Edit" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		cat "$$VERIFY_JS_DIR/model.js" "$$VERIFY_JS_DIR/page.js" "$$VERIFY_JS_DIR/form.js" > "$$VERIFY_JS_DIR/all.js"; \
