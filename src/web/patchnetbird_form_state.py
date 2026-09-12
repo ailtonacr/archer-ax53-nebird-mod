@@ -39,9 +39,12 @@ required = [
     'stage_setup_key',
     'const showSetupKey = this.creating || this.identityPresent === false;',
     'if (showSetupKey) {',
+    's.advertise_lan === "1" && s.disable_client_routes !== "0"',
     's.advertise_lan === "1" && s.disable_server_routes !== "0"',
     's.advertise_lan === "1" && s.disable_firewall !== "0"',
+    'draft.value.disable_client_routes = "0"',
     'draft.value.disable_firewall = "0"',
+    'DNS do NetBird fica desabilitado no AX53',
     'Permitir roteamento da LAN',
 ]
 missing = [token for token in required if token not in text]
