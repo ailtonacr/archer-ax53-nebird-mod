@@ -417,15 +417,15 @@ def check_build_gates() -> None:
     )
 
     # Make recipes are parsed once by make and again by bash -c. Shell
-    # variables and command substitutions must therefore use $ in Makefile
+    # variables and command substitutions must therefore use $$ in Makefile
     # source so the recipe shell receives a single $.
     require(
         makefile,
-        'nb_staged_setup_key_path \\"\\$enrollment_token\\"',
-        'nb_runtime_connect \\"\\$keyfile\\"',
-        'nb_profile_clear_enrollment_token \\"\\$NB_PROFILE_KEY\\"',
-        'VPN_MAIN_BLOCK="$(sed -n',
-        'VPN_CHECK_BLOCK="$(sed -n',
+        'nb_staged_setup_key_path \\"\\$$enrollment_token\\"',
+        'nb_runtime_connect \\"\\$$keyfile\\"',
+        'nb_profile_clear_enrollment_token \\"\\$$NB_PROFILE_KEY\\"',
+        'VPN_MAIN_BLOCK="$$(sed -n',
+        'VPN_CHECK_BLOCK="$$(sed -n',
     )
     for stale in (
         '[$]enrollment_token', '[$]keyfile', '[$]NB_PROFILE_KEY',
