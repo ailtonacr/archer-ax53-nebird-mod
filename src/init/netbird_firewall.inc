@@ -4,10 +4,12 @@
 # cidr/homeif arguments are used by netbird-runtime.sh to remove the exact rules
 # that were previously applied even after settings change from A -> B.
 #
-# NetBird v0.77.1 owns route authorization through NETBIRD-RT-FWD-* chains. The
-# scoped TP-Link FORWARD rules below are deliberately APPENDED (no position 1)
-# so they cannot bypass NetBird Route ACL ACCEPT/DROP decisions. Routing-peer
-# mode requires the NetBird firewall to stay enabled; see netbird-runtime.sh.
+# NetBird owns route authorization. On AX53 that authorization is forced into
+# the userspace firewall/router because the QSDK kernel cannot apply ipset-backed
+# Route ACLs reliably. The scoped TP-Link FORWARD rules below are deliberately
+# APPENDED (no position 1): they provide only kernel interface plumbing and must
+# never become a broad policy bypass. Gateway mode requires the NetBird firewall
+# to stay enabled; see netbird-runtime.sh.
 #
 # No broad "-i wt0 -j ACCEPT" is installed. The WireGuard/ICE handshake port is
 # opened on INPUT; routing-peer forwarding remains opt-in and CIDR-scoped.
