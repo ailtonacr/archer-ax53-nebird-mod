@@ -381,16 +381,26 @@ def check_build_gates() -> None:
         'python3 scripts/test-netbird-native-frontend.py',
         'VPN_MAIN_BLOCK="$(sed -n',
         'VPN_CHECK_BLOCK="$(sed -n',
+        'printf "%s\\n" "$VPN_MAIN_BLOCK"',
+        'printf "%s\\n" "$VPN_CHECK_BLOCK"',
         'legacy TP-Link VPN marking bypass missing from vpn_main()',
         'legacy TP-Link VPN marking bypass missing from vpn_check_add_rules()',
     )
     assert 'grep -Fc "# NetBird uses its own routing policy; skip TP-Link VPN-client marks."' not in makefile, (
         "Makefile reintroduced fragile integer-count validation for vpn_core bypass"
     )
-    assert 'printf "%s\\n" "$VPN_MAIN_BLOCK"' in makefile
-    assert 'printf "%s\\n" "$VPN_CHECK_BLOCK"' in makefile
-    assert 'printf "%s\\n" "$VPN_MAIN_BLOCK"' not in makefile, "Make consumed shell variable escaping for VPN_MAIN_BLOCK"
-    assert 'printf "%s\\n" "$VPN_CHECK_BLOCK"' not in makefile, "Make consumed shell variable escaping for VPN_CHECK_BLOCK"
+    assert 'VPN_MAIN_BLOCK="$(sed -n' not in makefile, (
+        "Makefile must escape vpn_main command substitution with $"
+    )
+    assert 'VPN_CHECK_BLOCK="$(sed -n' not in makefile, (
+        "Makefile must escape vpn_check_add_rules command substitution with $"
+    )
+    assert 'printf "%s\\n" "$VPN_MAIN_BLOCK"' not in makefile, (
+        "Makefile must preserve VPN_MAIN_BLOCK for the recipe shell"
+    )
+    assert 'printf "%s\\n" "$VPN_CHECK_BLOCK"' not in makefile, (
+        "Makefile must preserve VPN_CHECK_BLOCK for the recipe shell"
+    )
     require(
         router_validator,
         'PROFILE_KEY="$(uci -q get network.vpn.profile_key 2>/dev/null || true)"',
@@ -402,18 +412,16 @@ def check_build_gates() -> None:
         "hardware validator must not use retired singleton settings path"
     )
 
-    # Make recipes are parsed once by make and again by bash -c. Literal shell
-    # variables in grep contracts therefore need \\$$ in the Makefile source:
-    # make turns $$ into $, leaving \\$ for bash so the variable is not expanded.
+    # Make recipes are parsed once by make and again by bash -c. Shell
+    # variables and command substitutions must therefore use $ in Makefile
+    # source so the recipe shell receives a single $.
     require(
         makefile,
-        'nb_staged_setup_key_path \\"\\$$enrollment_token\\"',
-        'nb_runtime_connect \\"\\$$keyfile\\"',
-        'nb_profile_clear_enrollment_token \\"\\$$NB_PROFILE_KEY\\"',
-        'test "$$(grep -Fc "# NetBird uses its own routing policy; skip TP-Link VPN-client marks." rootfs/lib/vpn/vpn_core.sh)" -eq 2',
-    )
-    assert 'test "$(grep -Fc "# NetBird uses its own routing policy; skip TP-Link VPN-client marks."' not in makefile, (
-        "Makefile must escape shell command substitution with $$ so make does not consume it"
+        'nb_staged_setup_key_path \\"\\$enrollment_token\\"',
+        'nb_runtime_connect \\"\\$keyfile\\"',
+        'nb_profile_clear_enrollment_token \\"\\$NB_PROFILE_KEY\\"',
+        'VPN_MAIN_BLOCK="$(sed -n',
+        'VPN_CHECK_BLOCK="$(sed -n',
     )
     for stale in (
         '[$]enrollment_token', '[$]keyfile', '[$]NB_PROFILE_KEY',
