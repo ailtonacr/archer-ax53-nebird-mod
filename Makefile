@@ -111,8 +111,8 @@ firmware: $(TARGET) test-netbird
 		grep -Fq "NB_DL_MAX_TIME=\"300\"" rootfs/lib/netbird/netbird.sh || { echo "Error: hardware-proven payload download window missing" >&2; exit 1; }; \
 		NB_FW_CANONICAL="$$(sed -n "/# NetBird v4 CIDR-scoped\\/applied-state/,\$$p" rootfs/lib/firewall/tpcmd.sh)"; \
 		test -n "$$NB_FW_CANONICAL" || { echo "Error: ACL-safe canonical NetBird firewall source missing" >&2; exit 1; }; \
-		if printf "%s\n" "$NB_FW_CANONICAL" | grep -Fq "fw_s_add 4 f FORWARD ACCEPT 1 {"; then echo "Error: canonical TP-Link NetBird FORWARD rules bypass policy ordering" >&2; exit 1; fi; \
-		printf "%s\n" "$NB_FW_CANONICAL" | grep -Eq "POSTROUTING MASQUERADE.*-o wt0 -s" || { echo "Error: clientless LAN -> wt0 scoped MASQUERADE missing" >&2; exit 1; }; \
+		if printf "%s\n" "$$NB_FW_CANONICAL" | grep -Fq "fw_s_add 4 f FORWARD ACCEPT 1 {"; then echo "Error: canonical TP-Link NetBird FORWARD rules bypass policy ordering" >&2; exit 1; fi; \
+		printf "%s\n" "$$NB_FW_CANONICAL" | grep -Eq "POSTROUTING MASQUERADE.*-o wt0 -s" || { echo "Error: clientless LAN -> wt0 scoped MASQUERADE missing" >&2; exit 1; }; \
 		grep -Fq "# NetBird owns its own route table and DNS behavior." rootfs/etc/hotplug.d/iface/90-vpn || { echo "Error: legacy TP-Link VPN hotplug isolation missing" >&2; exit 1; }; \
 		VERIFY_JS_DIR="$$(mktemp -d)"; \
 		gzip -cd rootfs/www/webpages/js/update-store-DQkZxaRI.js.gz > "$$VERIFY_JS_DIR/update.js"; \
@@ -138,9 +138,9 @@ firmware: $(TARGET) test-netbird
 		if grep -Fq "setup_key:e.setup_key" "$$VERIFY_JS_DIR/model.js"; then echo "Error: Setup Key leaked into stock VPN serializer" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; fi; \
 		grep -Fq "stockComponent(this, \"su-password\")" "$$VERIFY_JS_DIR/form.js" || { echo "Error: stock Setup Key control missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		grep -Fq "_h(SuForm, { model: s }, { default: () => items })" "$$VERIFY_JS_DIR/form.js" || { echo "Error: provider form context missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
-		grep -Fq "Permitir roteamento da LAN" "$VERIFY_JS_DIR/form.js" || { echo "Error: LAN routing control missing" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
-		grep -Fq "DNS do NetBird fica desabilitado no AX53" "$VERIFY_JS_DIR/form.js" || { echo "Error: AX53 DNS safety notice missing" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
-		if grep -Fq "Habilitar DNS do NetBird" "$VERIFY_JS_DIR/form.js"; then echo "Error: unsupported AX53 NetBird DNS toggle is still exposed" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; fi; \
+		grep -Fq "Permitir roteamento da LAN" "$$VERIFY_JS_DIR/form.js" || { echo "Error: LAN routing control missing" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "DNS do NetBird fica desabilitado no AX53" "$$VERIFY_JS_DIR/form.js" || { echo "Error: AX53 DNS safety notice missing" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
+		if grep -Fq "Habilitar DNS do NetBird" "$$VERIFY_JS_DIR/form.js"; then echo "Error: unsupported AX53 NetBird DNS toggle is still exposed" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; fi; \
 		grep -Fq "const identityPresent = ref(null)" "$$VERIFY_JS_DIR/form.js" || { echo "Error: identity-aware Edit state missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		grep -Fq "identityPresent.value = !!r.identityPresent" "$$VERIFY_JS_DIR/form.js" || { echo "Error: backend identity state is not authoritative in Edit" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		cat "$$VERIFY_JS_DIR/model.js" "$$VERIFY_JS_DIR/page.js" "$$VERIFY_JS_DIR/form.js" > "$$VERIFY_JS_DIR/all.js"; \
@@ -157,7 +157,7 @@ firmware: $(TARGET) test-netbird
 		echo "    ok provider-only NetBird form + content cache-busting"; \
 		echo "    ok independent profile identities + orphan GC"; \
 		echo "    ok vpnc/netifd sole normal lifecycle owner + rollback"; \
-		echo "    ok routing-peer invariants + NetBird Route ACL ordering"; \
+		echo "    ok AX53 userspace policy + clientless LAN gateway invariants"; \
 		echo "    ok build identity: $$STAMPED_VERSION"; \
 		echo "=== [5/6] Repacking firmware ==="; \
 		rm -f "$(FIRMWARE_OUTPUT)"; \
