@@ -38,6 +38,7 @@ fw_netbird_access(){
     # Remove broad rules from historical builds before installing scoped rules.
     fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif" }
     fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0" }
+    fw_s_del 4 f forwarding_lan ACCEPT { "-i $homeif -o wt0" }
     [ -n "$cidr" ] && fw_s_del 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }
     fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10" }
 
@@ -47,10 +48,14 @@ fw_netbird_access(){
         # plumbing into a priority policy bypass.
         fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }
         fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }
+        fw_s_del 4 f forwarding_lan ACCEPT { "-i $homeif -o wt0 -s $cidr" }
         fw_s_del 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }
         fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }
         fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }
-        fw_s_add 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }
+        # The stock LAN zone ends in DROP. Put clientless LAN -> wt0 in the
+        # LAN custom chain, which runs before zone_lan_DROP, instead of appending
+        # to top-level FORWARD where the packet would never reach the rule.
+        fw_s_add 4 f forwarding_lan ACCEPT { "-i $homeif -o wt0 -s $cidr" }
         # Clientless LAN hosts use the AX53 as their NetBird gateway. NetBird's
         # userspace firewall/router remains the policy authority; this SNAT runs
         # only in POSTROUTING so remote peers/resources see the AX53 overlay
@@ -78,6 +83,7 @@ fw_netbird_block(){
     if [ -n "$cidr" ]; then
         fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }
         fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }
+        fw_s_del 4 f forwarding_lan ACCEPT { "-i $homeif -o wt0 -s $cidr" }
         fw_s_del 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }
         fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }
     fi
@@ -85,6 +91,7 @@ fw_netbird_block(){
     # Also clean historical broad rules from pre-CIDR builds.
     fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif" }
     fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0" }
+    fw_s_del 4 f forwarding_lan ACCEPT { "-i $homeif -o wt0" }
     [ -n "$cidr" ] && fw_s_del 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }
     fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10" }
 }
