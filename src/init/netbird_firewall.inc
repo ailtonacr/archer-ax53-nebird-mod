@@ -42,17 +42,18 @@ fw_netbird_access(){
 
     if [ "$access" == "lan" ] && [ -n "$cidr" ]; then
         # Idempotent replacement for the currently requested scope. Do not pass
-        # a numeric position: fw_s_add without pos appends after NetBird's own
-        # FORWARD jumps and therefore preserves Route ACL enforcement.
+        # a numeric position: fw_s_add without pos avoids turning local kernel
+        # plumbing into a priority policy bypass.
         fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }
         fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }
         fw_s_del 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }
         fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }
         fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }
         fw_s_add 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }
-        # Clientless LAN hosts use the AX53 as their NetBird gateway. Preserve
-        # NetBird Route ACL ordering in FORWARD, then SNAT only after the policy
-        # decision so remote peers/resources see the AX53 overlay identity.
+        # Clientless LAN hosts use the AX53 as their NetBird gateway. NetBird's
+        # userspace firewall/router remains the policy authority; this SNAT runs
+        # only in POSTROUTING so remote peers/resources see the AX53 overlay
+        # identity after the local forwarding decision.
         fw_s_add 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }
         fw_s_add 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }
     fi
