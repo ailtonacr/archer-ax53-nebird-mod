@@ -50,7 +50,7 @@ expect_disconnected '{"daemonStatus":"Connected","signal":{"connected":true}}'
 expect_disconnected '{"daemonStatus":"Connected","management":{"connected":false},"signal":{"connected":false}}'
 
 cat > "$NB_SETTINGS_FILE" <<'EOF'
-disable_dns=1
+disable_dns=0
 disable_firewall=0
 disable_client_routes=1
 disable_server_routes=0
@@ -89,16 +89,23 @@ do
     }
 done
 
-# Routing peer invariants from NetBird v0.77.1:
-# - server routes must be enabled so this peer can route management-delivered routes;
-# - NetBird firewall must be enabled so NETBIRD-RT-FWD-* Route ACLs remain authoritative.
+# AX53 gateway-mode invariants:
+# - client routes must be enabled so LAN hosts can consume remote Networks;
+# - server routes must be enabled so this peer can route the home LAN;
+# - NetBird firewall must stay enabled so policy enforcement remains authoritative.
 cat > "$NB_SETTINGS_FILE" <<'EOF'
 advertise_lan=1
 advertise_cidr=192.168.10.0/24
+disable_client_routes=1
 disable_server_routes=1
 disable_firewall=1
 wireguard_port=51820
 EOF
+if nb_runtime_validate_settings >/dev/null 2>&1; then
+    echo "routing invariant accepted advertise_lan=1 + disable_client_routes=1" >&2
+    exit 1
+fi
+sed -i 's/^disable_client_routes=1$/disable_client_routes=0/' "$NB_SETTINGS_FILE"
 if nb_runtime_validate_settings >/dev/null 2>&1; then
     echo "routing invariant accepted advertise_lan=1 + disable_server_routes=1" >&2
     exit 1
