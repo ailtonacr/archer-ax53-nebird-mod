@@ -210,9 +210,16 @@ Required provider state:
 
 ```text
 advertise_lan=1
+disable_client_routes=0
 disable_server_routes=0
 disable_firewall=0
+disable_dns=1
 ```
+
+On the AX53 the implementation forces NetBird's userspace WireGuard/firewall/router
+because the QSDK kernel cannot reliably apply the ipset-backed Route ACL rules.
+NetBird DNS stays disabled locally; use the router DHCP to distribute the same
+private resolver that NetBird distributes to remote peers.
 
 The corresponding Network/Resource/Policy is created in NetBird Management with
 the AX53 selected as routing peer; the router UI does not create control-plane
@@ -222,12 +229,16 @@ Inspect:
 
 ```sh
 cat /tmp/netbird-firewall.state
-iptables -S FORWARD | grep -E 'wt0|NETBIRD'
-iptables -S NETBIRD-RT-FWD-IN
+/tmp/netbird debug config --daemon-addr unix:///tmp/netbird.sock
+/tmp/netbird status -d --daemon-addr unix:///tmp/netbird.sock
+iptables -S FORWARD | grep wt0
 iptables -t nat -S POSTROUTING | grep -E 'wt0|100\.64\.'
+ip rule show
 ```
 
-A local priority ACCEPT before NetBird routing-policy chains is a stop condition.
+Success requires Userspace interface mode, no legacy `lookup vpn` rule, scoped
+LAN<->wt0 forwarding, and a scoped `-o wt0 -s <LAN-CIDR> -j MASQUERADE`.
+A priority broad ACCEPT remains a stop condition.
 Also validate CIDR A -> CIDR B, routing ON -> OFF and WireGuard port X -> Y with
 no stale rules.
 
@@ -256,7 +267,10 @@ Do not merge/deploy/remove the fallback VPN if any of these occur:
 - `network.vpn.profile_key` does not match the active stock row;
 - more than one lifecycle owner starts NetBird;
 - `network.interface.vpn` is UP without `wt0` and management connectivity;
-- LAN routing is enabled with server routes or NetBird firewall disabled;
-- a local FORWARD ACCEPT bypasses NetBird Route ACLs;
+- LAN routing is enabled with client routes, server routes or NetBird firewall disabled;
+- NetBird DNS is enabled on the AX53;
+- the NetBird interface is not in Userspace mode on this QSDK build;
+- the legacy TP-Link `lookup vpn` rule or `vpnDnsproxy` is active;
+- a broad local FORWARD ACCEPT bypass exists;
 - remote peer -> AX53/LAN fails;
 - DNS still depends on the WG-Easy path.
