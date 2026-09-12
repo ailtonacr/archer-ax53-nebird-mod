@@ -188,10 +188,12 @@ router does not create it.
 Firewall/routing requirements:
 
 - no direct priority `iptables -I/--insert FORWARD` bypass;
-- scoped `br-lan -> wt0` and `wt0 -> br-lan` rules only for the configured LAN CIDR;
+- scoped `br-lan -> wt0` rule in `forwarding_lan` before the stock LAN-zone DROP;
+- scoped return/integration rule for `wt0 -> br-lan` only for the configured LAN CIDR;
 - scoped `LAN CIDR -> wt0` MASQUERADE;
 - scoped overlay `100.64.0.0/10 -> LAN CIDR` MASQUERADE;
 - no legacy pref-500 `lookup vpn` rule and no `vpnDnsproxy` for `netbirdvpn`;
+- firewall restart restores NetBird scoped rules via `firewall-sync` without restarting the daemon;
 - exact applied values stored in `/tmp/netbird-firewall.state`;
 - configuration A removed before B is applied;
 - cleanup failure preserves old snapshot and aborts transition.
