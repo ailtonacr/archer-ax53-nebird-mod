@@ -4,6 +4,8 @@
 #
 # Optional environment variables:
 #   NB_PEER_IP      - NetBird overlay peer to ping from the router
+#   NB_RESOURCE_IP  - Remote Network resource expected through NetBird
+#   NB_DNS_IP       - Private DNS resolver expected through NetBird
 #   LAN_TARGET_IP   - LAN host to ping from the router
 #
 # IMPORTANT: router-originated pings do NOT prove remote peer -> AX53/LAN.
@@ -84,6 +86,8 @@ fi
 
 ADVERTISE_LAN="$(sed -n 's/^advertise_lan=//p' "$PROFILE_SETTINGS" 2>/dev/null | head -n1)"
 ADVERTISE_CIDR="$(sed -n 's/^advertise_cidr=//p' "$PROFILE_SETTINGS" 2>/dev/null | head -n1)"
+DISABLE_DNS="$(sed -n 's/^disable_dns=//p' "$PROFILE_SETTINGS" 2>/dev/null | head -n1)"
+DISABLE_CLIENT_ROUTES="$(sed -n 's/^disable_client_routes=//p' "$PROFILE_SETTINGS" 2>/dev/null | head -n1)"
 DISABLE_SERVER_ROUTES="$(sed -n 's/^disable_server_routes=//p' "$PROFILE_SETTINGS" 2>/dev/null | head -n1)"
 DISABLE_FIREWALL="$(sed -n 's/^disable_firewall=//p' "$PROFILE_SETTINGS" 2>/dev/null | head -n1)"
 WG_PORT="$(sed -n 's/^wireguard_port=//p' "$PROFILE_SETTINGS" 2>/dev/null | head -n1)"
@@ -103,38 +107,75 @@ else
 fi
 
 if [ "$ADVERTISE_LAN" = "1" ]; then
+    expect_eq "disable_dns on AX53" "$DISABLE_DNS" "1"
+    expect_eq "disable_client_routes for LAN gateway" "$DISABLE_CLIENT_ROUTES" "0"
     expect_eq "disable_server_routes for routing peer" "$DISABLE_SERVER_ROUTES" "0"
-    expect_eq "disable_firewall for Route ACL enforcement" "$DISABLE_FIREWALL" "0"
+    expect_eq "disable_firewall for policy enforcement" "$DISABLE_FIREWALL" "0"
     [ -n "$ADVERTISE_CIDR" ] && ok "LAN routing CIDR configured: $ADVERTISE_CIDR" || fail "advertise_lan=1 without advertise_cidr"
     if [ -f "$FW_STATE" ]; then
         expect_eq "applied firewall mode" "$APPLIED_ACCESS" "lan"
         expect_eq "applied firewall CIDR" "$APPLIED_CIDR" "$ADVERTISE_CIDR"
     fi
 
-    # NetBird v0.77.1 owns inbound routed authorization. Its jump must be the
-    # first wt0-specific FORWARD decision; an earlier ACCEPT would bypass Route ACLs.
-    FORWARD_RULES="$(iptables -S FORWARD 2>/dev/null || true)"
-    FIRST_WT0="$(printf '%s\n' "$FORWARD_RULES" | grep -- '-i wt0' | head -n1)"
-    if printf '%s' "$FIRST_WT0" | grep -Fq -- '-j NETBIRD-RT-FWD-IN'; then
-        ok "NetBird Route ACL jump precedes local wt0 FORWARD rules"
-    else
-        fail "first wt0 FORWARD rule is not NETBIRD-RT-FWD-IN: ${FIRST_WT0:-<none>}"
-    fi
-    iptables -S NETBIRD-RT-FWD-IN >/dev/null 2>&1 \
-        && ok "NETBIRD-RT-FWD-IN chain exists" \
-        || fail "NETBIRD-RT-FWD-IN chain missing while LAN routing is enabled"
+    DEBUG_CONFIG="$(/tmp/netbird debug config --daemon-addr unix:///tmp/netbird.sock 2>/dev/null || true)"
+    printf '%s\n' "$DEBUG_CONFIG" | grep -Eq '"disableDns":[[:space:]]*true' \
+        && ok "effective daemon disableDns=true" || fail "effective daemon DNS is not disabled"
+    printf '%s\n' "$DEBUG_CONFIG" | grep -Eq '"disableClientRoutes":[[:space:]]*false' \
+        && ok "effective daemon client routes enabled" || fail "effective daemon client routes are disabled"
+    printf '%s\n' "$DEBUG_CONFIG" | grep -Eq '"disableServerRoutes":[[:space:]]*false' \
+        && ok "effective daemon server routes enabled" || fail "effective daemon server routes are disabled"
 
+    # AX53/QSDK has no usable ipset backend. The packaged service must force
+    # NetBird's userspace firewall/router instead of relying on native Route ACL
+    # chains that fail on this kernel.
+    DETAIL="$(/tmp/netbird status -d --daemon-addr unix:///tmp/netbird.sock 2>/dev/null || true)"
+    printf '%s\n' "$DETAIL" | grep -qi 'Interface type:[[:space:]]*Userspace' \
+        && ok "NetBird interface is Userspace" || warn "status -d did not confirm Userspace interface"
+
+    FORWARD_RULES="$(iptables -S FORWARD 2>/dev/null || true)"
     if [ -n "$ADVERTISE_CIDR" ]; then
         printf '%s\n' "$FORWARD_RULES" | grep -F -- "-i wt0 -o $HOME_IF -d $ADVERTISE_CIDR -j ACCEPT" >/dev/null \
             && ok "scoped wt0 -> LAN integration rule present" || fail "missing scoped wt0 -> LAN integration rule"
-        iptables -t nat -S POSTROUTING 2>/dev/null | grep -F -- "-o $HOME_IF -s 100.64.0.0/10 -d $ADVERTISE_CIDR -j MASQUERADE" >/dev/null \
+        printf '%s\n' "$FORWARD_RULES" | grep -F -- "-i $HOME_IF -o wt0 -s $ADVERTISE_CIDR -j ACCEPT" >/dev/null \
+            && ok "scoped LAN -> wt0 integration rule present" || fail "missing scoped LAN -> wt0 integration rule"
+        NAT_RULES="$(iptables -t nat -S POSTROUTING 2>/dev/null || true)"
+        printf '%s\n' "$NAT_RULES" | grep -F -- "-o wt0 -s $ADVERTISE_CIDR -j MASQUERADE" >/dev/null \
+            && ok "LAN -> wt0 scoped MASQUERADE present" || fail "missing LAN -> wt0 scoped MASQUERADE"
+        printf '%s\n' "$NAT_RULES" | grep -F -- "-o $HOME_IF -s 100.64.0.0/10 -d $ADVERTISE_CIDR -j MASQUERADE" >/dev/null \
             && ok "overlay -> LAN scoped MASQUERADE present" || fail "missing scoped overlay -> LAN MASQUERADE"
+    fi
+
+    if ip rule show 2>/dev/null | grep -q 'lookup vpn'; then
+        fail "legacy TP-Link table-vpn policy rule still active for NetBird"
+    else
+        ok "legacy TP-Link table-vpn policy rule absent"
+    fi
+    if ps 2>/dev/null | grep -q '[v]pnDnsproxy'; then
+        fail "legacy vpnDnsproxy is running for NetBird"
+    else
+        ok "legacy vpnDnsproxy absent"
     fi
 else
     if [ -f "$FW_STATE" ]; then
         expect_eq "applied firewall mode" "$APPLIED_ACCESS" "home"
     fi
     ok "LAN routing disabled; routed-LAN firewall checks skipped"
+fi
+
+if [ -n "${NB_RESOURCE_IP:-}" ]; then
+    ip route show table all 2>/dev/null | grep -F -- "$NB_RESOURCE_IP" >/dev/null \
+        && ok "remote NetBird resource route installed: $NB_RESOURCE_IP" \
+        || fail "remote NetBird resource route missing: $NB_RESOURCE_IP"
+else
+    warn "NB_RESOURCE_IP not supplied; remote Network route not verified"
+fi
+
+if [ -n "${NB_DNS_IP:-}" ]; then
+    nslookup google.com "$NB_DNS_IP" >/dev/null 2>&1 \
+        && ok "private DNS reachable from router: $NB_DNS_IP" \
+        || fail "private DNS query failed from router: $NB_DNS_IP"
+else
+    warn "NB_DNS_IP not supplied; private DNS query not executed"
 fi
 
 if [ -n "${NB_PEER_IP:-}" ]; then
@@ -149,7 +190,7 @@ else
     warn "LAN_TARGET_IP not supplied; router-to-LAN ping not executed"
 fi
 
-warn "external acceptance still required: from a remote NetBird peer, test the AX53 overlay IP and a LAN target through the AX53; this router-local script cannot prove that traffic direction"
+warn "external acceptance still required in both directions: remote peer -> LAN and a clientless LAN host -> remote NetBird resource/DNS; this router-local script cannot prove either forwarded data path end-to-end"
 
 echo
 echo "SUMMARY pass=$PASS fail=$FAIL warn=$WARN"
