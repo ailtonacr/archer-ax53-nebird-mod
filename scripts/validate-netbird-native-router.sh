@@ -127,12 +127,11 @@ if [ "$ADVERTISE_LAN" = "1" ]; then
     printf '%s\n' "$DEBUG_CONFIG" | grep -Eq '"disableServerRoutes":[[:space:]]*false' \
         && ok "effective daemon server routes enabled" || fail "effective daemon server routes are disabled"
 
-    # AX53/QSDK has no usable ipset backend. The packaged service must force
-    # NetBird's userspace firewall/router instead of relying on native Route ACL
-    # chains that fail on this kernel.
-    DETAIL="$(/tmp/netbird status -d --daemon-addr unix:///tmp/netbird.sock 2>/dev/null || true)"
-    printf '%s\n' "$DETAIL" | grep -qi 'Interface type:[[:space:]]*Userspace' \
-        && ok "NetBird interface is Userspace" || warn "status -d did not confirm Userspace interface"
+    # AX53/QSDK has no usable ipset backend. Kernel interface mode is therefore
+    # a hard failure, not a warning. NetBird v0.77.1 exposes this directly in
+    # status JSON as usesKernelInterface.
+    printf '%s\n' "$COMPACT" | grep -q '"usesKernelInterface":false' \
+        && ok "NetBird interface is Userspace" || fail "NetBird is not using the required Userspace interface"
 
     FORWARD_RULES="$(iptables -S FORWARD 2>/dev/null || true)"
     LAN_FORWARD_RULES="$(iptables -S forwarding_lan 2>/dev/null || true)"
