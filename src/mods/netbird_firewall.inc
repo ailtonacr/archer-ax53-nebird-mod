@@ -5,10 +5,12 @@
 # cidr/homeif arguments are used by netbird-runtime.sh to remove the exact rules
 # that were previously applied even after settings change from A -> B.
 #
-# NetBird v0.77.1 owns route authorization through NETBIRD-RT-FWD-* chains. The
-# scoped TP-Link FORWARD rules below are deliberately APPENDED (no position 1)
-# so they cannot bypass NetBird Route ACL ACCEPT/DROP decisions. Routing-peer
-# mode requires the NetBird firewall to stay enabled; see netbird-runtime.sh.
+# NetBird owns route authorization. On AX53 that authorization is forced into
+# the userspace firewall/router because the QSDK kernel cannot apply ipset-backed
+# Route ACLs reliably. The scoped TP-Link FORWARD rules below are deliberately
+# APPENDED (no position 1): they provide only kernel interface plumbing and must
+# never become a broad policy bypass. Gateway mode requires the NetBird firewall
+# to stay enabled; see netbird-runtime.sh.
 #
 # No broad "-i wt0 -j ACCEPT" is installed. The WireGuard/ICE handshake port is
 # opened on INPUT; routing-peer forwarding remains opt-in and CIDR-scoped.
@@ -41,17 +43,18 @@ fw_netbird_access(){
 
     if [ "$access" == "lan" ] && [ -n "$cidr" ]; then
         # Idempotent replacement for the currently requested scope. Do not pass
-        # a numeric position: fw_s_add without pos appends after NetBird's own
-        # FORWARD jumps and therefore preserves Route ACL enforcement.
+        # a numeric position: fw_s_add without pos avoids turning local kernel
+        # plumbing into a priority policy bypass.
         fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }
         fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }
         fw_s_del 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }
         fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }
         fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }
         fw_s_add 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }
-        # Clientless LAN hosts use the AX53 as their NetBird gateway. Preserve
-        # NetBird Route ACL ordering in FORWARD, then SNAT only after the policy
-        # decision so remote peers/resources see the AX53 overlay identity.
+        # Clientless LAN hosts use the AX53 as their NetBird gateway. NetBird's
+        # userspace firewall/router remains the policy authority; this SNAT runs
+        # only in POSTROUTING so remote peers/resources see the AX53 overlay
+        # identity after the local forwarding decision.
         fw_s_add 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }
         fw_s_add 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }
     fi
