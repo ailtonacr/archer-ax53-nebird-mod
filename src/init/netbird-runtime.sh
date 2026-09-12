@@ -156,10 +156,10 @@ nb_fw_read_state() {
     return 0
 }
 
-# TP-Link's scoped rules are bookkeeping/NAT integration only. They must never
-# be promoted ahead of NetBird's NETBIRD-RT-FWD-* chains. Route authorization is
-# owned by NetBird policy; the canonical firewall source appends its FORWARD
-# rules so an ACL ACCEPT/DROP decision always happens first.
+# TP-Link's rules are only host-firewall plumbing/NAT integration. Route
+# authorization is owned by NetBird's forced userspace firewall/router. The
+# LAN -> wt0 rule lives in TP-Link's forwarding_lan custom chain so it runs
+# before the stock zone_lan_DROP; it is still CIDR/interface scoped.
 #
 # The applied-state snapshot is deleted only after the exact old rules were
 # removed successfully. If cleanup fails, keep the snapshot for retry and stop
