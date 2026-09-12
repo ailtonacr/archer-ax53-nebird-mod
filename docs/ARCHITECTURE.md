@@ -362,8 +362,10 @@ disable_dns=1
 The frontend normalizes these prerequisites and both Lua and shell runtime reject
 invalid combinations.
 
-TP-Link scoped forwarding rules are never inserted at priority 1. They allow only
-the configured LAN CIDR between `br-lan` and `wt0`; NetBird's userspace
+TP-Link scoped forwarding rules are never inserted as a broad top-level bypass.
+The outbound `br-lan -> wt0` rule is installed in the stock `forwarding_lan`
+custom chain, which runs before `zone_lan_DROP`; appending it to top-level
+`FORWARD` would be ineffective on this firmware. NetBird's userspace
 firewall/router remains the policy authority. Postrouting installs scoped
 MASQUERADE in both directions required by the clientless gateway design:
 
@@ -373,7 +375,9 @@ LAN CIDR -> wt0
 ```
 
 The stock TP-Link VPN hotplug is bypassed for `netbirdvpn` so it cannot install
-the legacy pref-500 `table vpn` route or start `vpnDnsproxy`. Applied firewall
+the legacy pref-500 `table vpn` route or start `vpnDnsproxy`. On a firewall
+reload, the stock firewall hotplug calls the NetBird `firewall-sync` operation
+to restore the scoped rules without restarting the tunnel. Applied firewall
 values are snapshotted in `/tmp/netbird-firewall.state` so a configuration
 transition removes the exact previous rules before applying new values.
 
