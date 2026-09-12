@@ -49,6 +49,19 @@ expect_disconnected '{"daemonStatus":"Connecting","management":{"connected":true
 expect_disconnected '{"daemonStatus":"Connected","signal":{"connected":true}}'
 expect_disconnected '{"daemonStatus":"Connected","management":{"connected":false},"signal":{"connected":false}}'
 
+nb_status_json_is_userspace '{"usesKernelInterface":false}' || {
+    echo "userspace status was rejected" >&2
+    exit 1
+}
+if nb_status_json_is_userspace '{"usesKernelInterface":true}'; then
+    echo "kernel interface status was accepted" >&2
+    exit 1
+fi
+if nb_status_json_is_userspace '{"daemonStatus":"Connected"}'; then
+    echo "status without interface type was accepted" >&2
+    exit 1
+fi
+
 cat > "$NB_SETTINGS_FILE" <<'EOF'
 disable_dns=0
 disable_firewall=0
