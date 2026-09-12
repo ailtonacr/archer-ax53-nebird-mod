@@ -320,7 +320,7 @@ def check_firewall_source() -> None:
     require(
         fw,
         '# NetBird v4 CIDR-scoped/applied-state firewall integration.',
-        'NetBird v0.77.1 owns route authorization through NETBIRD-RT-FWD-* chains',
+        'NetBird owns route authorization. On AX53 that authorization is forced into',
         'fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }',
         'fw_s_add 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }',
         'fw_s_add 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }',
