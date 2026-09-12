@@ -281,6 +281,7 @@ def check_runtime_library() -> None:
         'LAN gateway mode requires client routes to be enabled',
         'LAN routing requires server routes to be enabled', 'LAN routing requires NetBird firewall policy enforcement',
         'NB_FW_STATE="/tmp/netbird-firewall.state"',
+        'nb_status_json_is_userspace()', '"usesKernelInterface":false',
         'nb_runtime_connect()', '[ "$rc" -eq 0 ] && [ -n "$keyfile" ]',
         'nb_set "$NB_SETTINGS_FILE" enrolled 1',
         'nb_runtime_disconnect()', 'nb_runtime_stop()', 'nb_runtime_restart()',
@@ -407,6 +408,8 @@ def check_build_gates() -> None:
         'PROFILE_SETTINGS="/tp_data/netbird/profiles/$PROFILE_KEY/settings"',
         'IP_FORWARD="$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || true)"',
         'expect_eq "IPv4 forwarding" "$IP_FORWARD" "1"',
+        '"usesKernelInterface":false',
+        'fail "NetBird is not using the required Userspace interface"',
     )
     assert '/tp_data/netbird/settings' not in router_validator, (
         "hardware validator must not use retired singleton settings path"
