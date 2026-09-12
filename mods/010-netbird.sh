@@ -159,6 +159,54 @@ grep -Fq '# NetBird owns its own route table and DNS behavior.' "$VPN_HOTPLUG" |
   exit 1
 }
 
+echo "[5c/7] bypassing TP-Link legacy VPN-client marking for NetBird ..."
+VPN_CORE="$R/lib/vpn/vpn_core.sh"
+[ -f "$VPN_CORE" ] || { echo "Error: missing stock VPN core $VPN_CORE" >&2; exit 1; }
+python3 - "$VPN_CORE" <<'PY'
+import pathlib, sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+marker = "# NetBird uses its own routing policy; skip TP-Link VPN-client marks."
+if marker not in text:
+    def inject(function_name: str, body: str) -> str:
+        start = body.find(function_name + "()")
+        if start < 0:
+            raise SystemExit(f"Error: {function_name}() not found in stock vpn_core.sh")
+        next_func = body.find("\n}\n", start)
+        if next_func < 0:
+            raise SystemExit(f"Error: end of {function_name}() not found")
+        needle = "\t#init iptables rules"
+        pos = body.find(needle, start, next_func)
+        if pos < 0:
+            raise SystemExit(f"Error: iptables init point not found in {function_name}()")
+        guard = r'''	# NetBird uses its own routing policy; skip TP-Link VPN-client marks.
+	if [ "$vpntype" = "netbirdvpn" ]; then
+'''
+        if function_name == "vpn_main":
+            guard += r'''		ubus call network.interface.vpn disconnect
+		ubus call network reload
+		ubus call network.interface.vpn connect
+		return
+	fi
+
+'''
+        else:
+            guard += r'''		return
+	fi
+
+'''
+        return body[:pos] + guard + body[pos:]
+
+    text = inject("vpn_main", text)
+    text = inject("vpn_check_add_rules", text)
+    path.write_text(text)
+PY
+test "$(grep -Fc '# NetBird uses its own routing policy; skip TP-Link VPN-client marks.' "$VPN_CORE")" -eq 2 || {
+  echo "Error: NetBird VPN core isolation was not installed in both paths" >&2
+  exit 1
+}
+
 echo "[6/7] factory-reset cleanup in /sbin/reset ..."
 if ! grep -q "tp_data/netbird" "$R/sbin/reset" 2>/dev/null; then
   sed -i 's#^sleep 3$#rm -rf /tp_data/netbird\nsleep 3#' "$R/sbin/reset"
