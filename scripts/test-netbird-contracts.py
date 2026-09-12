@@ -346,6 +346,10 @@ def check_build_gates() -> None:
         '# NetBird owns its own route table and DNS behavior.',
         'ip route flush table vpn',
         '# NetBird uses its own routing policy; skip TP-Link VPN-client marks.',
+        'VPN_MAIN_BLOCK="$(sed -n',
+        'VPN_CHECK_BLOCK="$(sed -n',
+        'NetBird VPN core isolation missing from vpn_main()',
+        'NetBird VPN core isolation missing from vpn_check_add_rules()',
         'vpn_check_add_rules', 'firewall-sync',
         'failed to restore firewall rules after firewall restart',
         'for forbidden_op in', "'enroll'", "'settings_set'", "'profile_delete'", "'connected_status'", "'settings_get'",
@@ -375,6 +379,13 @@ def check_build_gates() -> None:
         'test-netbird:', 'src/init/netbird-profile-gc.init', 'scripts/test-netbird-profiles.sh',
         'scripts/test-netbird-recovery.sh', 'python3 scripts/test-netbird-contracts.py .',
         'python3 scripts/test-netbird-native-frontend.py',
+        'VPN_MAIN_BLOCK="$(sed -n',
+        'VPN_CHECK_BLOCK="$(sed -n',
+        'legacy TP-Link VPN marking bypass missing from vpn_main()',
+        'legacy TP-Link VPN marking bypass missing from vpn_check_add_rules()',
+    )
+    assert 'grep -Fc "# NetBird uses its own routing policy; skip TP-Link VPN-client marks."' not in makefile, (
+        "Makefile reintroduced fragile integer-count validation for vpn_core bypass"
     )
     require(
         router_validator,
