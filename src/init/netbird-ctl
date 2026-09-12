@@ -68,6 +68,11 @@ restart)
     exit $?
     ;;
 
+firewall-sync)
+    nb_runtime_apply_firewall
+    exit $?
+    ;;
+
 clean)
     nb_clean
     exit $?
@@ -110,7 +115,7 @@ payload-verify)
     ;;
 
 *)
-    echo "usage: $0 [--profile-key KEY] {up [--setup-key-file PATH]|down|stop|restart|clean|status|log|settings|daemon-ping} | {payload-version|payload-status|payload-verify}" >&2
+    echo "usage: $0 [--profile-key KEY] {up [--setup-key-file PATH]|down|stop|restart|firewall-sync|clean|status|log|settings|daemon-ping} | {payload-version|payload-status|payload-verify}" >&2
     exit 1
     ;;
 esac
