@@ -322,29 +322,60 @@ Immediate setup failure and connection timeout both rollback the runtime before
 The polling recovery worker is an observer only: it can re-trigger TP-Link
 `network.interface.vpn`/`vpnc`, but it cannot call `nb_runtime_connect` itself.
 
+### AX53 userspace datapath
+
+The AX53 QSDK kernel does not provide a usable `ipset` backend for NetBird
+Route ACLs. The service therefore exports:
+
+```text
+NB_WG_KERNEL_DISABLED=true
+NB_FORCE_USERSPACE_FIREWALL=true
+NB_FORCE_USERSPACE_ROUTER=true
+NB_DISABLE_EBPF_WG_PROXY=true
+```
+
+This keeps NetBird policy enforcement in userspace instead of relying on the
+kernel ACL path that fails with `ipset ... invalid argument`. The local TP-Link
+firewall remains responsible only for scoped interface forwarding/NAT plumbing.
+
+NetBird DNS remains disabled on this hardware (`disable_dns=1`) because the
+TP-Link DNS stack already owns port 53. LAN devices receive the common resolver
+through DHCP; NetBird peers receive the same resolver through a Nameserver Group.
+
 ## Routing-peer mode
 
 The UI option **Permitir roteamento da LAN** does not create a NetBird
 Network/Resource. The Network/Resource/Policy is managed in NetBird Management
 and the AX53 is selected there as routing peer.
 
-Local routing requires:
+AX53 gateway mode is deliberately bidirectional and requires:
 
 ```text
 advertise_lan=1
 advertise_cidr=<local CIDR>
+disable_client_routes=0
 disable_server_routes=0
 disable_firewall=0
+disable_dns=1
 ```
 
-The frontend enables the two prerequisites and both Lua and shell runtime
-independently reject invalid combinations.
+The frontend normalizes these prerequisites and both Lua and shell runtime reject
+invalid combinations.
 
-TP-Link scoped forwarding rules are appended after NetBird's own Route ACL
-chains. A priority `iptables -I FORWARD ... ACCEPT` workaround is prohibited.
-Applied firewall values are snapshotted in `/tmp/netbird-firewall.state` so a
-configuration transition can remove the exact previous rules before applying
-new values.
+TP-Link scoped forwarding rules are never inserted at priority 1. They allow only
+the configured LAN CIDR between `br-lan` and `wt0`; NetBird's userspace
+firewall/router remains the policy authority. Postrouting installs scoped
+MASQUERADE in both directions required by the clientless gateway design:
+
+```text
+LAN CIDR -> wt0
+100.64.0.0/10 -> LAN CIDR
+```
+
+The stock TP-Link VPN hotplug is bypassed for `netbirdvpn` so it cannot install
+the legacy pref-500 `table vpn` route or start `vpnDnsproxy`. Applied firewall
+values are snapshotted in `/tmp/netbird-firewall.state` so a configuration
+transition removes the exact previous rules before applying new values.
 
 ## Historical work
 
