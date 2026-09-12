@@ -78,6 +78,9 @@ def main() -> int:
         'const showSetupKey = this.creating || this.identityPresent === false;',
         'if (showSetupKey) {',
         'A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.',
+        's.advertise_lan === "1" && s.disable_client_routes !== "0"',
+        'draft.value.disable_client_routes = "0"',
+        'DNS do NetBird fica desabilitado no AX53',
         '_h(SuForm, { model: s }, { default: () => items })',
         'Permitir roteamento da LAN',
     )
@@ -86,6 +89,7 @@ def main() -> int:
         'value.type === "netbirdvpn"', 'value.type === "netbird"', 'const creating = ref(false)',
         'NETBIRD_CSS', 'type: "checkbox"', 'class: "netbird-input"', 'Anunciar rede local',
         'Já existe um perfil NetBird', 'enable: s.enable === "1" ? "on" : "off"',
+        'Habilitar DNS do NetBird',
     ):
         assert token not in form, f"generic/singleton field leaked into provider form: {token!r}"
 
