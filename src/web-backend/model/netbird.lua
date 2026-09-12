@@ -165,6 +165,9 @@ local function merged_settings(cand, profile_key)
     if cur.advertise_lan == "1" and cur.advertise_cidr == "" then
         return nil, "advertise_cidr required when LAN routing is enabled"
     end
+    if cur.advertise_lan == "1" and cur.disable_client_routes ~= "0" then
+        return nil, "client routes must be enabled when LAN gateway mode is enabled"
+    end
     if cur.advertise_lan == "1" and cur.disable_server_routes ~= "0" then
         return nil, "server routes must be enabled when LAN routing is enabled"
     end
