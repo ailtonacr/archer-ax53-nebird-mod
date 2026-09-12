@@ -416,16 +416,16 @@ def check_build_gates() -> None:
         "hardware validator must not use retired singleton settings path"
     )
 
-    # Make recipes are parsed once by make and again by bash -c. Shell
-    # variables and command substitutions must therefore use $$ in Makefile
-    # source so the recipe shell receives a single $.
+    # Make recipes are parsed once by make and again by bash -c. Literal shell
+    # variables must use $$ in Makefile source so the recipe shell receives a
+    # single $. Reuse make_dollar to make this contract unambiguous.
     require(
         makefile,
-        'nb_staged_setup_key_path \\"\\$$enrollment_token\\"',
-        'nb_runtime_connect \\"\\$$keyfile\\"',
-        'nb_profile_clear_enrollment_token \\"\\$$NB_PROFILE_KEY\\"',
-        'VPN_MAIN_BLOCK="$$(sed -n',
-        'VPN_CHECK_BLOCK="$$(sed -n',
+        f'nb_staged_setup_key_path \\"\\{make_dollar}enrollment_token\\"',
+        f'nb_runtime_connect \\"\\{make_dollar}keyfile\\"',
+        f'nb_profile_clear_enrollment_token \\"\\{make_dollar}NB_PROFILE_KEY\\"',
+        f'VPN_MAIN_BLOCK="{make_dollar}(sed -n',
+        f'VPN_CHECK_BLOCK="{make_dollar}(sed -n',
     )
     for stale in (
         '[$]enrollment_token', '[$]keyfile', '[$]NB_PROFILE_KEY',
