@@ -31,9 +31,12 @@ required = [
     'stockComponent(this, "su-password")', '"onUpdate:modelValue": onSetupKey', 'onInput: onSetupKey',
     'stockComponent(this, "su-checkbox")',
     'stockComponent(this, "su-button")',
+    's.advertise_lan === "1" && s.disable_client_routes !== "0"',
     's.advertise_lan === "1" && s.disable_server_routes !== "0"',
     's.advertise_lan === "1" && s.disable_firewall !== "0"',
+    'draft.value.disable_client_routes = "0"',
     'draft.value.disable_firewall = "0"',
+    'DNS do NetBird fica desabilitado no AX53',
     'if (!creating.value && hasIdentity === null && profileKey.value)',
     'A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.',
     '_h(SuForm, { model: s }, { default: () => items })',
@@ -58,6 +61,7 @@ forbidden = [
     'type: "checkbox"',
     'class: "netbird-input"',
     'Anunciar rede local',
+    'Habilitar DNS do NetBird',
 ]
 leaked = [token for token in forbidden if token in text]
 if leaked:
