@@ -22,10 +22,6 @@ fw_netbird_access(){
     local homeif="$4"
     [ -n "$homeif" ] || homeif="$(uci_get_state firewall core lan_ifname)"
     [ -n "$homeif" ] || homeif="br-lan"
-    if [ $# -lt 3 ]; then
-        cidr="$(sed -n 's/^advertise_cidr=//p' /tp_data/netbird/settings 2>/dev/null | head -n 1)"
-    fi
-
     # WireGuard/ICE handshake port (inbound transport).
     fw_s_add 4 f INPUT ACCEPT 1 { "-p udp -m udp --dport $port" }
 
@@ -72,10 +68,6 @@ fw_netbird_block(){
     local homeif="$4"
     [ -n "$homeif" ] || homeif="$(uci_get_state firewall core lan_ifname)"
     [ -n "$homeif" ] || homeif="br-lan"
-    if [ $# -lt 3 ]; then
-        cidr="$(sed -n 's/^advertise_cidr=//p' /tp_data/netbird/settings 2>/dev/null | head -n 1)"
-    fi
-
     fw_s_del 4 f INPUT ACCEPT { "-p udp -m udp --dport $port" }
     fw_s_del 4 f INPUT ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
     fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -m conntrack --ctstate ESTABLISHED,RELATED" }
