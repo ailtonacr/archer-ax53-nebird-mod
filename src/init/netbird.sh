@@ -270,7 +270,17 @@ nb_daemon_start() {
     hostname=$(nb_get "$NB_SETTINGS_FILE" hostname "")
     args="service run --config $NB_CONFIG_FILE --management-url $(nb_mgmt_url) --daemon-addr unix://$NB_SOCK --log-file $NB_LOG --log-level info"
     [ -n "$hostname" ] && args="$args --hostname $hostname"
+
+    # AX53/QSDK lacks the ipset capabilities required by NetBird's native
+    # iptables Route ACL backend. Force the documented userspace datapath so
+    # policy enforcement and routed forwarding do not depend on missing kernel
+    # netfilter features. Disable the eBPF WG proxy as well; this kernel lacks
+    # the cgroup/eBPF primitives NetBird probes for and always falls back.
     export NB_STATE_DIR NB_LOG_MAX_SIZE_MB=2
+    export NB_WG_KERNEL_DISABLED=true
+    export NB_FORCE_USERSPACE_FIREWALL=true
+    export NB_FORCE_USERSPACE_ROUTER=true
+    export NB_DISABLE_EBPF_WG_PROXY=true
     SERVICE_PID_FILE="$NB_PID" SERVICE_DAEMONIZE=1 SERVICE_WRITE_PID=1 \
         service_start "$NB_BIN" $args
 }
