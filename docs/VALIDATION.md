@@ -355,11 +355,18 @@ nested su-form/layout fix: IMPLEMENTED IN CODE; HARDWARE PENDING
 LuCI index-cache upvalue fix: IMPLEMENTED
 browser cache busting: IMPLEMENTED
 R2 runtime: PREVIOUSLY VALIDATED ON HARDWARE
+down -> up config reconciliation: VALIDATED MANUALLY ON HARDWARE
+remote Network route installation (10.0.6.3/32): VALIDATED MANUALLY IN KERNEL MODE
+AX53 forced userspace WireGuard/firewall/router workaround: IMPLEMENTED IN CODE; HARDWARE PENDING
+LAN -> wt0 scoped SNAT: IMPLEMENTED IN CODE; HARDWARE PENDING
+NetBird DNS hard-disabled on AX53: IMPLEMENTED IN CODE; HARDWARE PENDING
+legacy table-vpn/vpnDnsproxy isolation: IMPLEMENTED IN CODE; HARDWARE PENDING
 latest make test-netbird: PENDING LOCAL EXECUTION AFTER THESE COMMITS
 latest firmware build/repack: PENDING
 hardware one-step ADD -> LIST acceptance: PENDING
 multi-profile hardware acceptance: PENDING
 remote peer -> AX53/LAN acceptance: PENDING
+clientless LAN -> remote NetBird resource/DNS acceptance: PENDING
 WG-Easy decommission: NOT AUTHORIZED
 ```
 
