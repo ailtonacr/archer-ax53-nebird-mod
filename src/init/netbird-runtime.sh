@@ -45,11 +45,12 @@ nb_up_flags() {
     [ -n "$hostname" ] && printf '%s ' "--hostname=${hostname}"
 }
 
-# Routing-peer mode must preserve NetBird's own route ACL enforcement. NetBird
-# v0.77.1 installs NETBIRD-RT-FWD-* chains plus a final DROP for inbound wt0
-# forwarding; bypassing that firewall with a higher-priority ACCEPT would turn
-# management policies into advisory configuration. Therefore LAN routing is
-# fail-closed unless both server routes and the NetBird firewall are enabled.
+# Gateway mode must preserve NetBird policy enforcement. On AX53 the daemon is
+# forced onto NetBird's userspace firewall/router because the QSDK kernel lacks
+# the ipset backend needed by native Route ACLs. Local TP-Link FORWARD rules are
+# only scoped plumbing; disabling NetBird's firewall would remove the policy
+# authority. Therefore LAN routing remains fail-closed unless client routes,
+# server routes and the NetBird firewall are enabled.
 nb_runtime_validate_settings() {
     local advertise_lan disable_client_routes disable_server_routes disable_firewall
     advertise_lan="$(nb_get "$NB_SETTINGS_FILE" advertise_lan "0")"
