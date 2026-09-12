@@ -208,11 +208,21 @@ if marker not in text:
     text = inject("vpn_check_add_rules", text)
     path.write_text(text)
 PY
-test "$(grep -Fc '# NetBird uses its own routing policy; skip TP-Link VPN-client marks.' "$VPN_CORE")" -eq 2 || {
-  echo "Error: NetBird VPN core isolation was not installed in both paths" >&2
+VPN_MAIN_BLOCK="$(sed -n '/^vpn_main()/,/^}/p' "$VPN_CORE")"
+VPN_CHECK_BLOCK="$(sed -n '/^vpn_check_add_rules()/,/^}/p' "$VPN_CORE")"
+printf '%s\n' "$VPN_MAIN_BLOCK" | grep -Fq 'if [ "$vpntype" = "netbirdvpn" ]; then' || {
+  echo "Error: NetBird VPN core isolation missing from vpn_main()" >&2
   exit 1
 }
-grep -Fq 'firewall-sync >/dev/null' "$VPN_CORE" || {
+printf '%s\n' "$VPN_MAIN_BLOCK" | grep -Fq 'ubus call network.interface.vpn connect' || {
+  echo "Error: NetBird vpn_main() bypass does not reconnect network.interface.vpn" >&2
+  exit 1
+}
+printf '%s\n' "$VPN_CHECK_BLOCK" | grep -Fq 'if [ "$vpntype" = "netbirdvpn" ]; then' || {
+  echo "Error: NetBird VPN core isolation missing from vpn_check_add_rules()" >&2
+  exit 1
+}
+printf '%s\n' "$VPN_CHECK_BLOCK" | grep -Fq 'firewall-sync >/dev/null' || {
   echo "Error: NetBird firewall rules will not be restored after firewall restart" >&2
   exit 1
 }
