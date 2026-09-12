@@ -108,6 +108,8 @@ fi
 
 if [ "$ADVERTISE_LAN" = "1" ]; then
     expect_eq "disable_dns on AX53" "$DISABLE_DNS" "1"
+    IP_FORWARD="$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || true)"
+    expect_eq "IPv4 forwarding" "$IP_FORWARD" "1"
     expect_eq "disable_client_routes for LAN gateway" "$DISABLE_CLIENT_ROUTES" "0"
     expect_eq "disable_server_routes for routing peer" "$DISABLE_SERVER_ROUTES" "0"
     expect_eq "disable_firewall for policy enforcement" "$DISABLE_FIREWALL" "0"
