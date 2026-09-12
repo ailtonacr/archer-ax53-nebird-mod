@@ -167,21 +167,31 @@ before `proto_setup_failed`. Recovery may re-trigger TP-Link
 
 ## Routing-peer invariants
 
-LAN routing is valid only when:
+AX53 LAN gateway mode is valid only when:
 
 ```text
 advertise_lan=1
+disable_client_routes=0
 disable_server_routes=0
 disable_firewall=0
+disable_dns=1
 ```
+
+The service must run NetBird with the userspace datapath forced
+(`NB_WG_KERNEL_DISABLED`, `NB_FORCE_USERSPACE_FIREWALL`,
+`NB_FORCE_USERSPACE_ROUTER`) because the hardware kernel cannot satisfy the
+native ipset-backed ACL requirements.
 
 The corresponding Network/Resource/Policy is owned by NetBird Management. The
 router does not create it.
 
-Firewall requirements:
+Firewall/routing requirements:
 
 - no direct priority `iptables -I/--insert FORWARD` bypass;
-- TP-Link scoped forwarding rules appended after NetBird policy chains;
+- scoped `br-lan -> wt0` and `wt0 -> br-lan` rules only for the configured LAN CIDR;
+- scoped `LAN CIDR -> wt0` MASQUERADE;
+- scoped overlay `100.64.0.0/10 -> LAN CIDR` MASQUERADE;
+- no legacy pref-500 `lookup vpn` rule and no `vpnDnsproxy` for `netbirdvpn`;
 - exact applied values stored in `/tmp/netbird-firewall.state`;
 - configuration A removed before B is applied;
 - cleanup failure preserves old snapshot and aborts transition.
@@ -303,22 +313,33 @@ When enabled inspect:
 
 ```sh
 cat /tmp/netbird-firewall.state
-iptables -S FORWARD | grep -E 'wt0|NETBIRD'
-iptables -S NETBIRD-RT-FWD-IN
+/tmp/netbird debug config --daemon-addr unix:///tmp/netbird.sock
+/tmp/netbird status -d --daemon-addr unix:///tmp/netbird.sock
+iptables -S FORWARD | grep wt0
 iptables -t nat -S POSTROUTING | grep -E 'wt0|100\.64\.'
+ip rule show
 ```
 
 Also test CIDR A -> B, routing ON -> OFF and WireGuard port X -> Y. No stale
 rules may remain.
 
-### Remote direction
+### Bidirectional acceptance
 
 From a real remote peer test:
 
 1. remote peer -> AX53 overlay;
 2. remote peer -> LAN host through AX53;
-3. Proxmox/VMs/local Coolify as applicable;
-4. DNS without dependency on `10.8.0.1`.
+3. Proxmox/VMs/local Coolify as applicable.
+
+From a LAN host without NetBird:
+
+4. LAN host -> remote NetBird Network resource;
+5. LAN host -> shared private DNS resolver (for example `10.0.6.3:53`);
+6. DNS works without dependency on `10.8.0.1`.
+
+After reboot, repeat both directions and confirm the NetBird interface remains
+Userspace and the effective daemon config still has client/server routes enabled
+with DNS disabled.
 
 ## Current validation status — 2026-09-11
 
