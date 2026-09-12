@@ -294,6 +294,7 @@ def check_runtime_library() -> None:
         ctl,
         '. /lib/netbird/netbird-profiles.sh', '--profile-key', 'nb_profile_select "$profile_key"',
         'no active native NetBird profile; use --profile-key KEY', '. /lib/netbird/netbird-runtime.sh',
+        'firewall-sync)', 'nb_runtime_apply_firewall',
     )
     require(
         proto,
@@ -322,7 +323,7 @@ def check_firewall_source() -> None:
         '# NetBird v4 CIDR-scoped/applied-state firewall integration.',
         'NetBird owns route authorization. On AX53 that authorization is forced into',
         'fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }',
-        'fw_s_add 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }',
+        'fw_s_add 4 f forwarding_lan ACCEPT { "-i $homeif -o wt0 -s $cidr" }',
         'fw_s_add 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }',
     )
     assert 'fw_s_add 4 f FORWARD ACCEPT 1 {' not in fw
@@ -341,7 +342,8 @@ def check_build_gates() -> None:
         '# NetBird owns its own route table and DNS behavior.',
         'ip route flush table vpn',
         '# NetBird uses its own routing policy; skip TP-Link VPN-client marks.',
-        'vpn_check_add_rules',
+        'vpn_check_add_rules', 'firewall-sync',
+        'failed to restore firewall rules after firewall restart',
         'for forbidden_op in', "'enroll'", "'settings_set'", "'profile_delete'", "'connected_status'", "'settings_get'",
         'stage_setup_key',
     )
