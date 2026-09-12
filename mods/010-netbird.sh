@@ -192,7 +192,13 @@ if marker not in text:
 
 '''
         else:
-            guard += r'''		return
+            guard += r'''		local nb_profile_key
+		nb_profile_key="$(uci -q get network.vpn.profile_key 2>/dev/null)"
+		if [ -n "$nb_profile_key" ] && [ -x /sbin/netbird-ctl ]; then
+			/sbin/netbird-ctl --profile-key "$nb_profile_key" firewall-sync >/dev/null 2>&1 || \
+				echo "netbird: failed to restore firewall rules after firewall restart" > /dev/console
+		fi
+		return
 	fi
 
 '''
