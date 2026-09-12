@@ -187,6 +187,9 @@ grep -q 'description' "$R/usr/lib/lua/luci/model/netbird.lua" || {
 grep -q '# NetBird v4 CIDR-scoped/applied-state' "$R/lib/firewall/tpcmd.sh" || {
   echo "Error: canonical NetBird firewall source was not installed" >&2; exit 1;
 }
+grep -Fq -- '-o wt0 -s $cidr' "$R/lib/firewall/tpcmd.sh" || {
+  echo "Error: clientless LAN -> wt0 scoped MASQUERADE missing" >&2; exit 1;
+}
 NB_FORM_JS="$(zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz")"
 printf '%s' "$NB_FORM_JS" | grep -Fq 'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })' || {
   echo "Error: NetBird subform does not expose TP-Link native isChanged contract" >&2; exit 1;
@@ -203,6 +206,16 @@ fi
 printf '%s' "$NB_FORM_JS" | grep -Fq 'throw new Error(error.value)' || {
   echo "Error: NetBird validate() does not reject invalid state like stock forms" >&2; exit 1;
 }
+printf '%s' "$NB_FORM_JS" | grep -Fq 'draft.value.disable_client_routes = "0"' || {
+  echo "Error: LAN gateway mode does not enable NetBird client routes" >&2; exit 1;
+}
+printf '%s' "$NB_FORM_JS" | grep -Fq 'DNS do NetBird fica desabilitado no AX53' || {
+  echo "Error: AX53 DNS safety notice missing" >&2; exit 1;
+}
+if printf '%s' "$NB_FORM_JS" | grep -Fq 'Habilitar DNS do NetBird'; then
+  echo "Error: unsupported NetBird DNS toggle is exposed on AX53" >&2
+  exit 1
+fi
 for forbidden in '"label-width": { span: 10 }' '"content-width": { span: 14 }' 'async function enroll()' 'async function afterStockSave()' 'syncNativeSaveButton' 'data-netbird-dirty' '__netbirdSaveListener' 'stopImmediatePropagation' 'netbirdSaveSyncTimer' 'Já existe um perfil NetBird'; do
   if printf '%s' "$NB_FORM_JS" | grep -Fq "$forbidden"; then
     echo "Error: obsolete/singleton NetBird form logic leaked into final form: $forbidden" >&2
