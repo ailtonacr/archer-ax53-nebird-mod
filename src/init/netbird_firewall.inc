@@ -35,6 +35,7 @@ fw_netbird_access(){
     # Remove broad rules from historical builds before installing scoped rules.
     fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif" }
     fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0" }
+    [ -n "$cidr" ] && fw_s_del 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }
     fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10" }
 
     if [ "$access" == "lan" ] && [ -n "$cidr" ]; then
@@ -43,9 +44,15 @@ fw_netbird_access(){
         # FORWARD jumps and therefore preserves Route ACL enforcement.
         fw_s_del 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }
         fw_s_del 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }
+        fw_s_del 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }
         fw_s_del 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }
+        fw_s_del 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }
         fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }
         fw_s_add 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }
+        # Clientless LAN hosts use the AX53 as their NetBird gateway. Preserve
+        # NetBird Route ACL ordering in FORWARD, then SNAT only after the policy
+        # decision so remote peers/resources see the AX53 overlay identity.
+        fw_s_add 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }
         fw_s_add 4 n POSTROUTING MASQUERADE { "-o $homeif -s 100.64.0.0/10 -d $cidr" }
     fi
 }
