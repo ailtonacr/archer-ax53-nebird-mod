@@ -77,6 +77,7 @@ firmware: $(TARGET) test-netbird
 		grep -q "local function op_stage_setup_key(body)" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: transient Setup Key staging endpoint missing" >&2; exit 1; }; \
 		grep -q "model.stage_setup_key(setup_key)" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: Setup Key staging is not delegated to provider model" >&2; exit 1; }; \
 		grep -Fq "/etc/init.d/vpnc restart" rootfs/usr/lib/lua/luci/controller/admin/netbird.lua || { echo "Error: NetBird restart bypasses native vpnc lifecycle" >&2; exit 1; }; \
+		grep -q "client routes must be enabled when LAN gateway mode is enabled" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: backend does not require client routes for LAN gateway mode" >&2; exit 1; }; \
 		grep -q "server routes must be enabled when LAN routing is enabled" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: backend does not reject routing with server routes disabled" >&2; exit 1; }; \
 		grep -q "NetBird firewall must be enabled when LAN routing is enabled" rootfs/usr/lib/lua/luci/model/netbird.lua || { echo "Error: backend does not require NetBird firewall policy enforcement for LAN routing" >&2; exit 1; }; \
 		cmp -s src/init/netbird.sh rootfs/lib/netbird/netbird.sh || { echo "Error: packaged netbird.sh drifted from canonical source" >&2; exit 1; }; \
@@ -99,14 +100,20 @@ firmware: $(TARGET) test-netbird
 		grep -q "nb_profile_gc_orphans" rootfs/etc/init.d/netbird-profile-gc || { echo "Error: stock-delete orphan identity maintenance missing" >&2; exit 1; }; \
 		grep -q "NB_FW_STATE=\"/tmp/netbird-firewall.state\"" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: applied firewall state snapshot missing" >&2; exit 1; }; \
 		grep -q "nb_runtime_validate_settings" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: runtime routing settings validation missing" >&2; exit 1; }; \
-		grep -q "LAN routing requires NetBird firewall policy enforcement" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: runtime does not preserve NetBird Route ACL enforcement" >&2; exit 1; }; \
+		grep -q "LAN gateway mode requires client routes to be enabled" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: runtime does not require remote client routes for gateway mode" >&2; exit 1; }; \
+		grep -q "LAN routing requires NetBird firewall policy enforcement" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: runtime does not preserve NetBird policy enforcement" >&2; exit 1; }; \
+		grep -Fq "NB_WG_KERNEL_DISABLED=true" rootfs/lib/netbird/netbird.sh || { echo "Error: AX53 userspace WireGuard workaround missing" >&2; exit 1; }; \
+		grep -Fq "NB_FORCE_USERSPACE_FIREWALL=true" rootfs/lib/netbird/netbird.sh || { echo "Error: AX53 userspace firewall workaround missing" >&2; exit 1; }; \
+		grep -Fq "NB_FORCE_USERSPACE_ROUTER=true" rootfs/lib/netbird/netbird.sh || { echo "Error: AX53 userspace router workaround missing" >&2; exit 1; }; \
 		if grep -Eq "iptables[[:space:]].*(-I|--insert)[[:space:]]+FORWARD" rootfs/lib/netbird/netbird-runtime.sh; then echo "Error: runtime contains a priority FORWARD bypass" >&2; exit 1; fi; \
 		if grep -q "nb_fw_prioritize_lan" rootfs/lib/netbird/netbird-runtime.sh; then echo "Error: retired Route ACL bypass helper remains" >&2; exit 1; fi; \
 		grep -q -- "--wireguard-port" rootfs/lib/netbird/netbird-runtime.sh || { echo "Error: WireGuard port is not applied by canonical NetBird flag builder" >&2; exit 1; }; \
 		grep -Fq "NB_DL_MAX_TIME=\"300\"" rootfs/lib/netbird/netbird.sh || { echo "Error: hardware-proven payload download window missing" >&2; exit 1; }; \
 		NB_FW_CANONICAL="$$(sed -n "/# NetBird v4 CIDR-scoped\\/applied-state/,\$$p" rootfs/lib/firewall/tpcmd.sh)"; \
 		test -n "$$NB_FW_CANONICAL" || { echo "Error: ACL-safe canonical NetBird firewall source missing" >&2; exit 1; }; \
-		if printf "%s\n" "$$NB_FW_CANONICAL" | grep -Fq "fw_s_add 4 f FORWARD ACCEPT 1 {"; then echo "Error: canonical TP-Link NetBird FORWARD rules bypass Route ACL ordering" >&2; exit 1; fi; \
+		if printf "%s\n" "$NB_FW_CANONICAL" | grep -Fq "fw_s_add 4 f FORWARD ACCEPT 1 {"; then echo "Error: canonical TP-Link NetBird FORWARD rules bypass policy ordering" >&2; exit 1; fi; \
+		printf "%s\n" "$NB_FW_CANONICAL" | grep -Eq "POSTROUTING MASQUERADE.*-o wt0 -s" || { echo "Error: clientless LAN -> wt0 scoped MASQUERADE missing" >&2; exit 1; }; \
+		grep -Fq "# NetBird owns its own route table and DNS behavior." rootfs/etc/hotplug.d/iface/90-vpn || { echo "Error: legacy TP-Link VPN hotplug isolation missing" >&2; exit 1; }; \
 		VERIFY_JS_DIR="$$(mktemp -d)"; \
 		gzip -cd rootfs/www/webpages/js/update-store-DQkZxaRI.js.gz > "$$VERIFY_JS_DIR/update.js"; \
 		gzip -cd rootfs/www/webpages/js/model-CI6Gt3Hz.js.gz > "$$VERIFY_JS_DIR/model.js"; \
@@ -131,7 +138,9 @@ firmware: $(TARGET) test-netbird
 		if grep -Fq "setup_key:e.setup_key" "$$VERIFY_JS_DIR/model.js"; then echo "Error: Setup Key leaked into stock VPN serializer" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; fi; \
 		grep -Fq "stockComponent(this, \"su-password\")" "$$VERIFY_JS_DIR/form.js" || { echo "Error: stock Setup Key control missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		grep -Fq "_h(SuForm, { model: s }, { default: () => items })" "$$VERIFY_JS_DIR/form.js" || { echo "Error: provider form context missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
-		grep -Fq "Permitir roteamento da LAN" "$$VERIFY_JS_DIR/form.js" || { echo "Error: LAN routing label still overpromises management-side announcement" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "Permitir roteamento da LAN" "$VERIFY_JS_DIR/form.js" || { echo "Error: LAN routing control missing" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
+		grep -Fq "DNS do NetBird fica desabilitado no AX53" "$VERIFY_JS_DIR/form.js" || { echo "Error: AX53 DNS safety notice missing" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; }; \
+		if grep -Fq "Habilitar DNS do NetBird" "$VERIFY_JS_DIR/form.js"; then echo "Error: unsupported AX53 NetBird DNS toggle is still exposed" >&2; rm -rf "$VERIFY_JS_DIR"; exit 1; fi; \
 		grep -Fq "const identityPresent = ref(null)" "$$VERIFY_JS_DIR/form.js" || { echo "Error: identity-aware Edit state missing" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		grep -Fq "identityPresent.value = !!r.identityPresent" "$$VERIFY_JS_DIR/form.js" || { echo "Error: backend identity state is not authoritative in Edit" >&2; rm -rf "$$VERIFY_JS_DIR"; exit 1; }; \
 		cat "$$VERIFY_JS_DIR/model.js" "$$VERIFY_JS_DIR/page.js" "$$VERIFY_JS_DIR/form.js" > "$$VERIFY_JS_DIR/all.js"; \
