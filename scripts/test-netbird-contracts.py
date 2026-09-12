@@ -374,6 +374,8 @@ def check_build_gates() -> None:
         router_validator,
         'PROFILE_KEY="$(uci -q get network.vpn.profile_key 2>/dev/null || true)"',
         'PROFILE_SETTINGS="/tp_data/netbird/profiles/$PROFILE_KEY/settings"',
+        'IP_FORWARD="$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null || true)"',
+        'expect_eq "IPv4 forwarding" "$IP_FORWARD" "1"',
     )
     assert '/tp_data/netbird/settings' not in router_validator, (
         "hardware validator must not use retired singleton settings path"
