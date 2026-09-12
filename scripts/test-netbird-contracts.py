@@ -386,13 +386,13 @@ def check_build_gates() -> None:
     # make turns $$ into $, leaving \\$ for bash so the variable is not expanded.
     require(
         makefile,
-        'nb_staged_setup_key_path \\"\\$enrollment_token\\"',
-        'nb_runtime_connect \\"\\$keyfile\\"',
-        'nb_profile_clear_enrollment_token \\"\\$NB_PROFILE_KEY\\"',
-        'test "$(grep -Fc "# NetBird uses its own routing policy; skip TP-Link VPN-client marks." rootfs/lib/vpn/vpn_core.sh)" -eq 2',
+        'nb_staged_setup_key_path \\"\\$$enrollment_token\\"',
+        'nb_runtime_connect \\"\\$$keyfile\\"',
+        'nb_profile_clear_enrollment_token \\"\\$$NB_PROFILE_KEY\\"',
+        'test "$$(grep -Fc "# NetBird uses its own routing policy; skip TP-Link VPN-client marks." rootfs/lib/vpn/vpn_core.sh)" -eq 2',
     )
     assert 'test "$(grep -Fc "# NetBird uses its own routing policy; skip TP-Link VPN-client marks."' not in makefile, (
-        "Makefile must escape shell command substitution with $ so make does not consume it"
+        "Makefile must escape shell command substitution with $$ so make does not consume it"
     )
     for stale in (
         '[$]enrollment_token', '[$]keyfile', '[$]NB_PROFILE_KEY',
