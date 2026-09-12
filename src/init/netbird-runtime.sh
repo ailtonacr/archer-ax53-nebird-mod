@@ -31,8 +31,11 @@ nb_up_flags() {
     wg_port="$(nb_get "$NB_SETTINGS_FILE" wireguard_port "$NB_DEFAULT_PORT")"
     hostname="$(nb_get "$NB_SETTINGS_FILE" hostname "")"
 
+    # AX53 already owns port 53 with the TP-Link DNS stack. NetBird DNS must
+    # stay disabled on this hardware; LAN clients receive the shared resolver
+    # through DHCP instead.
     printf '%s ' \
-        "$(nb_bool_arg disable_dns --disable-dns 1)" \
+        "--disable-dns=true" \
         "$(nb_bool_arg disable_firewall --disable-firewall 1)" \
         "$(nb_bool_arg disable_client_routes --disable-client-routes 1)" \
         "$(nb_bool_arg disable_server_routes --disable-server-routes 1)" \
@@ -48,9 +51,15 @@ nb_up_flags() {
 # management policies into advisory configuration. Therefore LAN routing is
 # fail-closed unless both server routes and the NetBird firewall are enabled.
 nb_runtime_validate_settings() {
-    local advertise_lan disable_server_routes disable_firewall
+    local advertise_lan disable_client_routes disable_server_routes disable_firewall
     advertise_lan="$(nb_get "$NB_SETTINGS_FILE" advertise_lan "0")"
     [ "$advertise_lan" = "1" ] || return 0
+
+    disable_client_routes="$(nb_get "$NB_SETTINGS_FILE" disable_client_routes "1")"
+    if [ "$disable_client_routes" != "0" ]; then
+        echo "netbird: LAN gateway mode requires client routes to be enabled" >&2
+        return 1
+    fi
 
     disable_server_routes="$(nb_get "$NB_SETTINGS_FILE" disable_server_routes "1")"
     if [ "$disable_server_routes" != "0" ]; then
