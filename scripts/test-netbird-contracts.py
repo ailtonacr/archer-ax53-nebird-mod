@@ -340,6 +340,8 @@ def check_build_gates() -> None:
         'is_stock_vpn "$VPN_CONTROLLER"',
         '# NetBird owns its own route table and DNS behavior.',
         'ip route flush table vpn',
+        '# NetBird uses its own routing policy; skip TP-Link VPN-client marks.',
+        'vpn_check_add_rules',
         'for forbidden_op in', "'enroll'", "'settings_set'", "'profile_delete'", "'connected_status'", "'settings_get'",
         'stage_setup_key',
     )
