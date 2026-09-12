@@ -135,11 +135,12 @@ if [ "$ADVERTISE_LAN" = "1" ]; then
         && ok "NetBird interface is Userspace" || warn "status -d did not confirm Userspace interface"
 
     FORWARD_RULES="$(iptables -S FORWARD 2>/dev/null || true)"
+    LAN_FORWARD_RULES="$(iptables -S forwarding_lan 2>/dev/null || true)"
     if [ -n "$ADVERTISE_CIDR" ]; then
         printf '%s\n' "$FORWARD_RULES" | grep -F -- "-i wt0 -o $HOME_IF -d $ADVERTISE_CIDR -j ACCEPT" >/dev/null \
             && ok "scoped wt0 -> LAN integration rule present" || fail "missing scoped wt0 -> LAN integration rule"
-        printf '%s\n' "$FORWARD_RULES" | grep -F -- "-i $HOME_IF -o wt0 -s $ADVERTISE_CIDR -j ACCEPT" >/dev/null \
-            && ok "scoped LAN -> wt0 integration rule present" || fail "missing scoped LAN -> wt0 integration rule"
+        printf '%s\n' "$LAN_FORWARD_RULES" | grep -F -- "-i $HOME_IF -o wt0 -s $ADVERTISE_CIDR -j ACCEPT" >/dev/null \
+            && ok "scoped LAN -> wt0 rule is before stock LAN zone drop" || fail "missing scoped forwarding_lan -> wt0 rule"
         NAT_RULES="$(iptables -t nat -S POSTROUTING 2>/dev/null || true)"
         printf '%s\n' "$NAT_RULES" | grep -F -- "-o wt0 -s $ADVERTISE_CIDR -j MASQUERADE" >/dev/null \
             && ok "LAN -> wt0 scoped MASQUERADE present" || fail "missing LAN -> wt0 scoped MASQUERADE"
