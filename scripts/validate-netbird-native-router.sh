@@ -155,6 +155,11 @@ if [ "$ADVERTISE_LAN" = "1" ]; then
     else
         ok "legacy vpnDnsproxy absent"
     fi
+    if iptables -t mangle -S PREROUTING 2>/dev/null | grep -q 'prerouting_rule_vpn_client'; then
+        fail "legacy TP-Link VPN-client mangle hook is active for NetBird"
+    else
+        ok "legacy TP-Link VPN-client mangle hook absent"
+    fi
 else
     if [ -f "$FW_STATE" ]; then
         expect_eq "applied firewall mode" "$APPLIED_ACCESS" "home"
