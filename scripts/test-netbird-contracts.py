@@ -79,6 +79,8 @@ def check_native_registry() -> None:
         'local profile_key = profile_key_from_config(cfg)',
         'if profile_key == "" then', 'stock VPN profile key missing',
         'profile_key = profile_key,',
+        'disable_dns = "1"',
+        'disable_client_routes = "0"',
         'local enrollment_token = tostring(cfg.enrollment_token or "")',
         'nb_model.staged_setup_key_path(enrollment_token)',
         'if enrollment_token ~= "" then vpn.enrollment_token = enrollment_token end',
@@ -159,12 +161,16 @@ def check_stock_frontend_boundary() -> None:
         'if (showSetupKey) {',
         'A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.',
         'const enrollmentHandedOff = ref(false)',
+        'draft.value.disable_client_routes = "0"',
+        'DNS do NetBird fica desabilitado no AX53',
         'if (enrollmentToken.value) enrollmentHandedOff.value = true',
         'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })',
         'stockComponent(this, "su-form")', 'stockComponent(this, "su-form-item")', 'stockComponent(this, "su-input")',
         'stockComponent(this, "su-password")', '"onUpdate:modelValue": onSetupKey', 'onInput: onSetupKey', 'stockComponent(this, "su-checkbox")',
         '_h(SuForm, { model: s }, { default: () => items })',
     )
+    assert '["Habilitar DNS do NetBird", "disable_dns"' not in form, "AX53 must not expose NetBird DNS toggle"
+
     for token in (
         '"label-width": { span: 10 }', '"content-width": { span: 14 }', 'async function enroll()', 'async function afterStockSave()',
         'value.type === "netbirdvpn"', 'value.type === "netbird"', 'key:e.key||"netbird"',
@@ -204,6 +210,8 @@ def check_auxiliary_boundary() -> None:
     require(
         model,
         'ROOT     = "/tp_data/netbird"', 'PROFILES = ROOT .. "/profiles"',
+        'cur.advertise_lan == "1" and cur.disable_client_routes ~= "0"',
+        'client routes must be enabled when LAN gateway mode is enabled',
         'cur.advertise_lan == "1" and cur.disable_server_routes ~= "0"',
         'server routes must be enabled when LAN routing is enabled',
         'cur.advertise_lan == "1" and cur.disable_firewall ~= "0"',
@@ -264,10 +272,13 @@ def check_runtime_library() -> None:
         'nb_require_profile_context()', '/tp_data/netbird/profiles/*',
         'NB_BIN="/tmp/netbird"', 'nb_materialize()', 'nb_payload_status()',
         'nb_daemon_start()', 'nb_daemon_stop()', 'nb_fw_access()', 'nb_fw_block()',
+        'NB_WG_KERNEL_DISABLED=true', 'NB_FORCE_USERSPACE_FIREWALL=true',
+        'NB_FORCE_USERSPACE_ROUTER=true', 'NB_DISABLE_EBPF_WG_PROXY=true',
     )
     require(
         runtime,
-        'nb_up_flags()', '"--wireguard-port=${wg_port}"', '"--hostname=${hostname}"', 'nb_runtime_validate_settings()',
+        'nb_up_flags()', '"--disable-dns=true"', '"--wireguard-port=${wg_port}"', '"--hostname=${hostname}"', 'nb_runtime_validate_settings()',
+        'LAN gateway mode requires client routes to be enabled',
         'LAN routing requires server routes to be enabled', 'LAN routing requires NetBird firewall policy enforcement',
         'NB_FW_STATE="/tmp/netbird-firewall.state"',
         'nb_runtime_connect()', '[ "$rc" -eq 0 ] && [ -n "$keyfile" ]',
@@ -312,6 +323,7 @@ def check_firewall_source() -> None:
         'NetBird v0.77.1 owns route authorization through NETBIRD-RT-FWD-* chains',
         'fw_s_add 4 f FORWARD ACCEPT { "-i wt0 -o $homeif -d $cidr" }',
         'fw_s_add 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }',
+        'fw_s_add 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }',
     )
     assert 'fw_s_add 4 f FORWARD ACCEPT 1 {' not in fw
     require(mod, 'FIREWALL_SRC="$RUNTIME_SRC/netbird_firewall.inc"', 'cat "$FIREWALL_SRC" >> "$R/lib/firewall/tpcmd.sh"')
@@ -326,6 +338,8 @@ def check_build_gates() -> None:
     require(
         mod010,
         'is_stock_vpn "$VPN_CONTROLLER"',
+        '# NetBird owns its own route table and DNS behavior.',
+        'ip route flush table vpn',
         'for forbidden_op in', "'enroll'", "'settings_set'", "'profile_delete'", "'connected_status'", "'settings_get'",
         'stage_setup_key',
     )
