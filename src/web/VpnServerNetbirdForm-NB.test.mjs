@@ -29,8 +29,10 @@ for (const token of [
   'const showSetupKey = this.creating || this.identityPresent === false;',
   'if (showSetupKey) {',
   'A Setup Key será usada uma única vez para enrollment e nunca será armazenada no perfil.',
+  's.advertise_lan === "1" && s.disable_client_routes !== "0"',
   's.advertise_lan === "1" && s.disable_server_routes !== "0"',
   's.advertise_lan === "1" && s.disable_firewall !== "0"',
+  'DNS do NetBird fica desabilitado no AX53',
   'Permitir roteamento da LAN',
   '_h(SuForm, { model: s }, { default: () => items })',
 ]) assert.ok(original.includes(token), `missing authored token ${token}`);
@@ -39,7 +41,7 @@ for (const token of [
   "NETBIRD_CSS", 'type: "checkbox"', 'class: "netbird-input"', "syncNativeSaveButton", "unknown error",
   'value.type === "netbirdvpn"', 'value.type === "netbird"', "const creating = ref(false)",
   'Anunciar rede local', 'Já existe um perfil NetBird', 'async function enroll()', 'async function afterStockSave()',
-  'enable: s.enable === "1" ? "on" : "off"',
+  'enable: s.enable === "1" ? "on" : "off"', 'Habilitar DNS do NetBird',
 ]) assert.equal(original.includes(token), false, `generic/legacy UI token leaked: ${token}`);
 
 const source = original
@@ -55,7 +57,7 @@ let response = {
   identityPresent: true,
   settings: {
     enrolled: "1", management_url: "https://netbird.example", advertise_cidr: "192.168.10.0/24",
-    disable_dns: "1", disable_firewall: "0", disable_client_routes: "1",
+    disable_dns: "1", disable_firewall: "0", disable_client_routes: "0",
     disable_server_routes: "0", disable_ipv6: "1", network_monitor: "0",
     advertise_lan: "1", enable: "1", wireguard_port: "51820", hostname: "",
   },
@@ -162,6 +164,7 @@ const addForm = exposed.getForm();
 for (const field of ["key", "id", "type", "description", "enable", "enabled", "enrolled"])
   assert.equal(field in addForm, false, `provider subform must not own generic field ${field}`);
 assert.equal(addForm.management_url, "https://netbird.example");
+assert.equal(addForm.disable_dns, "1");
 assert.equal(addForm.enrollment_token, "0123456789abcdef0123456789abcdef");
 assert.equal(state.enrollmentHandedOff.value, true, "getForm must hand staged-secret cleanup ownership to netifd");
 assert.equal("setup_key" in addForm, false, "secret must never enter stock Save payload");
@@ -172,8 +175,8 @@ assert.equal("setup_key" in addForm, false, "secret must never enter stock Save 
 assert.equal(exposed.setForm({
   key: "arbitrary-stock-key", type: "netbirdvpn", server: "https://netbird.example",
   management_url: "https://netbird.example", enable: "on", enrolled: "1",
-  advertise_lan: "1", advertise_cidr: "192.168.10.0/24", disable_server_routes: "0",
-  disable_firewall: "0", wireguard_port: "51820",
+  advertise_lan: "1", advertise_cidr: "192.168.10.0/24", disable_client_routes: "0",
+  disable_server_routes: "0", disable_firewall: "0", wireguard_port: "51820",
 }), true);
 assert.equal(state.creating.value, false);
 assert.equal(state.profileKey.value, "arbitrary-stock-key");
@@ -220,21 +223,26 @@ response = { ...response, identityPresent: true, settings: { ...response.setting
 assert.equal(exposed.setForm({
   key: "arbitrary-stock-key", type: "netbirdvpn", server: "https://netbird.example",
   management_url: "https://netbird.example", enable: "on", enrolled: "1",
-  advertise_lan: "1", advertise_cidr: "192.168.10.0/24", disable_server_routes: "0",
-  disable_firewall: "0", wireguard_port: "51820",
+  advertise_lan: "1", advertise_cidr: "192.168.10.0/24", disable_client_routes: "0",
+  disable_server_routes: "0", disable_firewall: "0", wireguard_port: "51820",
 }), true);
 await new Promise(resolve => setTimeout(resolve, 0));
 assert.equal(state.identityPresent.value, true);
 
 // Routing peer invariants remain provider-specific validation.
 state.updateDraft("advertise_lan", "0");
+state.updateDraft("disable_client_routes", "1");
 state.updateDraft("disable_server_routes", "1");
 state.updateDraft("disable_firewall", "1");
 state.updateDraft("advertise_lan", "1");
+assert.equal(state.draft.value.disable_client_routes, "0");
 assert.equal(state.draft.value.disable_server_routes, "0");
 assert.equal(state.draft.value.disable_firewall, "0");
 state.updateDraft("advertise_cidr", "192.168.10.0/24");
 assert.equal(await exposed.validate(), true);
+state.updateDraft("disable_client_routes", "1");
+await assert.rejects(() => exposed.validate(), /Rotas de cliente/);
+state.updateDraft("disable_client_routes", "0");
 state.updateDraft("disable_server_routes", "1");
 await assert.rejects(() => exposed.validate(), /Rotas de servidor/);
 state.updateDraft("disable_server_routes", "0");
