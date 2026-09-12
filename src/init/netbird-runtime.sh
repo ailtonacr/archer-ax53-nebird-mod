@@ -111,6 +111,15 @@ nb_status_json_is_connected() {
     return 0
 }
 
+# AX53 must run the userspace interface. Kernel mode re-enables the QSDK
+# iptables/ipset Route ACL path that is known to fail on this hardware.
+# NetBird v0.77.1 exposes this as usesKernelInterface in status -j.
+nb_status_json_is_userspace() {
+    local status="$1" compact
+    compact="$(printf '%s' "$status" | tr -d '\r\n\t ')"
+    printf '%s' "$compact" | grep -q '"usesKernelInterface":false'
+}
+
 # A netifd link is UP only when all three facts are simultaneously true:
 #   1. the wt0 device exists;
 #   2. NetBird reports daemonStatus=Connected;
@@ -120,7 +129,8 @@ nb_runtime_is_connected() {
     [ -S "$NB_SOCK" ] || return 1
     local status
     status="$(nb_status_json 2>/dev/null)" || return 1
-    nb_status_json_is_connected "$status"
+    nb_status_json_is_connected "$status" || return 1
+    nb_status_json_is_userspace "$status"
 }
 
 nb_fw_current_values() {
