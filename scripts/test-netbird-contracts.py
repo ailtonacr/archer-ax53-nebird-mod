@@ -375,15 +375,16 @@ def check_build_gates() -> None:
         '"VPN_TBL"', '"VPN_CFG_TBL"', '"VPN_TYPE_TBL"', '"VPN_TYPE_NAME_TBL"',
         'STOCK_TYPES = {"pptpvpn", "l2tpvpn", "openvpn", "wireguardvpn"}',
     )
+    make_dollar = chr(36) * 2
     require(
         makefile,
         'test-netbird:', 'src/init/netbird-profile-gc.init', 'scripts/test-netbird-profiles.sh',
         'scripts/test-netbird-recovery.sh', 'python3 scripts/test-netbird-contracts.py .',
         'python3 scripts/test-netbird-native-frontend.py',
-        'VPN_MAIN_BLOCK="$(sed -n',
-        'VPN_CHECK_BLOCK="$(sed -n',
-        'printf "%s\\n" "$VPN_MAIN_BLOCK"',
-        'printf "%s\\n" "$VPN_CHECK_BLOCK"',
+        f'VPN_MAIN_BLOCK="{make_dollar}(sed -n',
+        f'VPN_CHECK_BLOCK="{make_dollar}(sed -n',
+        f'printf "%s\\n" "{make_dollar}VPN_MAIN_BLOCK"',
+        f'printf "%s\\n" "{make_dollar}VPN_CHECK_BLOCK"',
         'legacy TP-Link VPN marking bypass missing from vpn_main()',
         'legacy TP-Link VPN marking bypass missing from vpn_check_add_rules()',
     )
@@ -391,10 +392,10 @@ def check_build_gates() -> None:
         "Makefile reintroduced fragile integer-count validation for vpn_core bypass"
     )
     assert 'VPN_MAIN_BLOCK="$(sed -n' not in makefile, (
-        "Makefile must escape vpn_main command substitution with $"
+        "Makefile must escape vpn_main command substitution for the recipe shell"
     )
     assert 'VPN_CHECK_BLOCK="$(sed -n' not in makefile, (
-        "Makefile must escape vpn_check_add_rules command substitution with $"
+        "Makefile must escape vpn_check_add_rules command substitution for the recipe shell"
     )
     assert 'printf "%s\\n" "$VPN_MAIN_BLOCK"' not in makefile, (
         "Makefile must preserve VPN_MAIN_BLOCK for the recipe shell"
