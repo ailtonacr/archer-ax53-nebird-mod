@@ -121,6 +121,44 @@ else
   echo "    (already present, skipping)"
 fi
 
+echo "[5b/7] isolating NetBird from TP-Link legacy VPN route/DNS hotplug ..."
+VPN_HOTPLUG="$R/etc/hotplug.d/iface/90-vpn"
+[ -f "$VPN_HOTPLUG" ] || { echo "Error: missing stock VPN hotplug $VPN_HOTPLUG" >&2; exit 1; }
+python3 - "$VPN_HOTPLUG" <<'PY'
+import pathlib, sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+guard = "# NetBird owns its own route table and DNS behavior."
+if guard not in text:
+    start = text.find("vpn_client_handle()")
+    if start < 0:
+        raise SystemExit("Error: vpn_client_handle() not found in stock 90-vpn")
+    marker = 'config_get vpntype "client" "vpntype"'
+    pos = text.find(marker, start)
+    if pos < 0:
+        raise SystemExit("Error: stock vpntype lookup not found in vpn_client_handle()")
+    pos = text.find("\n", pos) + 1
+    snippet = r'''
+    # NetBird owns its own route table and DNS behavior. The stock VPN Client
+    # hotplug otherwise installs pref-500 table-vpn policy routing and starts
+    # vpnDnsproxy, which conflicts with NetBird Networks and the AX53 DNS stack.
+    if [ "$vpntype" = "netbirdvpn" ]; then
+        killall vpnDnsproxy >/dev/null 2>&1 || true
+        while ip rule del pref "$VPN_CLIENT_PREF" fwmark "$VPN_CLIENT_MARK/$VPN_CLIENT_MASK" iif "$BRIDGE_NAME" table vpn >/dev/null 2>&1; do :; done
+        ip route flush table vpn >/dev/null 2>&1 || true
+        ip route flush cache >/dev/null 2>&1 || true
+        return 0
+    fi
+'''
+    text = text[:pos] + snippet + text[pos:]
+    path.write_text(text)
+PY
+grep -Fq '# NetBird owns its own route table and DNS behavior.' "$VPN_HOTPLUG" || {
+  echo "Error: NetBird stock-hotplug isolation was not installed" >&2
+  exit 1
+}
+
 echo "[6/7] factory-reset cleanup in /sbin/reset ..."
 if ! grep -q "tp_data/netbird" "$R/sbin/reset" 2>/dev/null; then
   sed -i 's#^sleep 3$#rm -rf /tp_data/netbird\nsleep 3#' "$R/sbin/reset"
