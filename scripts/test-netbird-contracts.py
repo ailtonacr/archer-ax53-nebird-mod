@@ -327,6 +327,10 @@ def check_firewall_source() -> None:
         'fw_s_add 4 n POSTROUTING MASQUERADE { "-o wt0 -s $cidr" }',
     )
     assert 'fw_s_add 4 f FORWARD ACCEPT 1 {' not in fw
+    assert 'fw_s_add 4 f FORWARD ACCEPT { "-i $homeif -o wt0 -s $cidr" }' not in fw, (
+        "LAN -> wt0 must use forwarding_lan before the stock LAN zone DROP"
+    )
+    assert "/tp_data/netbird/settings" not in fw, "firewall adapter must not use retired singleton settings"
     require(mod, 'FIREWALL_SRC="$RUNTIME_SRC/netbird_firewall.inc"', 'cat "$FIREWALL_SRC" >> "$R/lib/firewall/tpcmd.sh"')
 
 
