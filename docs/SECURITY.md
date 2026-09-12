@@ -1,6 +1,19 @@
 # NOTE: current runtime is the R2 runtime (payload downloaded over HTTPS, no netbird_data/MIBIB/UBI). This file documents the historical MIBIB/netbird_data architecture unless stated otherwise. See docs/R2-RUNTIME.md for the current architecture and INSTALL.md for the current install flow.
 # NetBird on Archer AX53 V1 — Security
 
+## Current AX53 override (2026-09)
+
+The historical defaults below are superseded for the active routing-peer build.
+The AX53 runs NetBird with userspace WireGuard/firewall/router forced because the
+QSDK kernel cannot apply the required ipset-backed Route ACLs. Gateway mode
+requires `disable_firewall=0`, `disable_client_routes=0`,
+`disable_server_routes=0`, and `disable_dns=1`.
+
+LAN -> NetBird forwarding is limited to the configured LAN CIDR, installed in
+TP-Link's `forwarding_lan` chain before the stock LAN-zone DROP, and SNATed only
+toward `wt0`. NetBird userspace policy remains the authorization boundary.
+Firewall reloads restore these scoped rules through `firewall-sync`.
+
 ## Secrets handling
 
 - **Setup key**: submitted once via the authenticated admin endpoint, written to a
