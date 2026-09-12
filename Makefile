@@ -112,7 +112,7 @@ firmware: $(TARGET) test-netbird
 		NB_FW_CANONICAL="$$(sed -n "/# NetBird v4 CIDR-scoped\\/applied-state/,\$$p" rootfs/lib/firewall/tpcmd.sh)"; \
 		test -n "$$NB_FW_CANONICAL" || { echo "Error: ACL-safe canonical NetBird firewall source missing" >&2; exit 1; }; \
 		if printf "%s\n" "$$NB_FW_CANONICAL" | grep -Fq "fw_s_add 4 f FORWARD ACCEPT 1 {"; then echo "Error: canonical TP-Link NetBird FORWARD rules bypass policy ordering" >&2; exit 1; fi; \
-		printf "%s\n" "$$NB_FW_CANONICAL" | grep -Fq 'fw_s_add 4 f forwarding_lan ACCEPT { "-i $homeif -o wt0 -s $cidr" }' || { echo "Error: clientless LAN rule is not in pre-drop forwarding_lan chain" >&2; exit 1; }; \
+		printf "%s\n" "$$NB_FW_CANONICAL" | grep -Fq "fw_s_add 4 f forwarding_lan ACCEPT { \"-i \$$homeif -o wt0 -s \$$cidr\" }" || { echo "Error: clientless LAN rule is not in pre-drop forwarding_lan chain" >&2; exit 1; }; \
 		printf "%s\n" "$$NB_FW_CANONICAL" | grep -Eq "POSTROUTING MASQUERADE.*-o wt0 -s" || { echo "Error: clientless LAN -> wt0 scoped MASQUERADE missing" >&2; exit 1; }; \
 		grep -Fq "# NetBird owns its own route table and DNS behavior." rootfs/etc/hotplug.d/iface/90-vpn || { echo "Error: legacy TP-Link VPN hotplug isolation missing" >&2; exit 1; }; \
 		test "$$(grep -Fc "# NetBird uses its own routing policy; skip TP-Link VPN-client marks." rootfs/lib/vpn/vpn_core.sh)" -eq 2 || { echo "Error: legacy TP-Link VPN marking bypass missing" >&2; exit 1; }; \
