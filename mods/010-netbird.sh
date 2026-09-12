@@ -212,6 +212,10 @@ test "$(grep -Fc '# NetBird uses its own routing policy; skip TP-Link VPN-client
   echo "Error: NetBird VPN core isolation was not installed in both paths" >&2
   exit 1
 }
+grep -Fq 'firewall-sync >/dev/null' "$VPN_CORE" || {
+  echo "Error: NetBird firewall rules will not be restored after firewall restart" >&2
+  exit 1
+}
 
 echo "[6/7] factory-reset cleanup in /sbin/reset ..."
 if ! grep -q "tp_data/netbird" "$R/sbin/reset" 2>/dev/null; then
@@ -241,8 +245,14 @@ grep -q 'description' "$R/usr/lib/lua/luci/model/netbird.lua" || {
 grep -q '# NetBird v4 CIDR-scoped/applied-state' "$R/lib/firewall/tpcmd.sh" || {
   echo "Error: canonical NetBird firewall source was not installed" >&2; exit 1;
 }
+grep -Fq 'fw_s_add 4 f forwarding_lan ACCEPT { "-i $homeif -o wt0 -s $cidr" }' "$R/lib/firewall/tpcmd.sh" || {
+  echo "Error: clientless LAN forwarding rule is not before stock LAN zone drop" >&2; exit 1;
+}
 grep -Fq -- '-o wt0 -s $cidr' "$R/lib/firewall/tpcmd.sh" || {
   echo "Error: clientless LAN -> wt0 scoped MASQUERADE missing" >&2; exit 1;
+}
+grep -Fq 'firewall-sync)' "$R/sbin/netbird-ctl" || {
+  echo "Error: firewall-only resync command missing" >&2; exit 1;
 }
 NB_FORM_JS="$(zcat "$R/www/webpages/js/VpnServerNetbirdForm-NB.js.gz")"
 printf '%s' "$NB_FORM_JS" | grep -Fq 'context.expose({ isChanged: dirty, validate, setForm, getForm, resetForm, clearValidate })' || {
