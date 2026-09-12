@@ -117,8 +117,10 @@ firmware: $(TARGET) test-netbird
 		grep -Fq "# NetBird owns its own route table and DNS behavior." rootfs/etc/hotplug.d/iface/90-vpn || { echo "Error: legacy TP-Link VPN hotplug isolation missing" >&2; exit 1; }; \
 		VPN_MAIN_BLOCK="$(sed -n "/^vpn_main()/,/^}/p" rootfs/lib/vpn/vpn_core.sh)"; \
 		VPN_CHECK_BLOCK="$(sed -n "/^vpn_check_add_rules()/,/^}/p" rootfs/lib/vpn/vpn_core.sh)"; \
-		printf "%s\n" "$VPN_MAIN_BLOCK" | grep -Fq "if [ \"\$vpntype\" = \"netbirdvpn\" ]; then" || { echo "Error: legacy TP-Link VPN marking bypass missing from vpn_main()" >&2; exit 1; }; \
-		printf "%s\n" "$VPN_CHECK_BLOCK" | grep -Fq "if [ \"\$vpntype\" = \"netbirdvpn\" ]; then" || { echo "Error: legacy TP-Link VPN marking bypass missing from vpn_check_add_rules()" >&2; exit 1; }; \
+		printf "%s\n" "$VPN_MAIN_BLOCK" | grep -Fq "# NetBird uses its own routing policy; skip TP-Link VPN-client marks." || { echo "Error: legacy TP-Link VPN marking bypass missing from vpn_main()" >&2; exit 1; }; \
+		printf "%s\n" "$VPN_MAIN_BLOCK" | grep -Fq "netbirdvpn" || { echo "Error: NetBird vpn_main() bypass does not target netbirdvpn" >&2; exit 1; }; \
+		printf "%s\n" "$VPN_CHECK_BLOCK" | grep -Fq "# NetBird uses its own routing policy; skip TP-Link VPN-client marks." || { echo "Error: legacy TP-Link VPN marking bypass missing from vpn_check_add_rules()" >&2; exit 1; }; \
+		printf "%s\n" "$VPN_CHECK_BLOCK" | grep -Fq "netbirdvpn" || { echo "Error: NetBird vpn_check_add_rules() bypass does not target netbirdvpn" >&2; exit 1; }; \
 		grep -Fq "firewall-sync)" rootfs/sbin/netbird-ctl || { echo "Error: NetBird firewall-only resync command missing" >&2; exit 1; }; \
 		printf "%s\n" "$VPN_CHECK_BLOCK" | grep -Fq "firewall-sync >/dev/null" || { echo "Error: firewall restart does not restore NetBird scoped rules" >&2; exit 1; }; \
 		VERIFY_JS_DIR="$$(mktemp -d)"; \
