@@ -387,6 +387,10 @@ def check_build_gates() -> None:
     assert 'grep -Fc "# NetBird uses its own routing policy; skip TP-Link VPN-client marks."' not in makefile, (
         "Makefile reintroduced fragile integer-count validation for vpn_core bypass"
     )
+    assert 'printf "%s\\n" "$VPN_MAIN_BLOCK"' in makefile
+    assert 'printf "%s\\n" "$VPN_CHECK_BLOCK"' in makefile
+    assert 'printf "%s\\n" "$VPN_MAIN_BLOCK"' not in makefile, "Make consumed shell variable escaping for VPN_MAIN_BLOCK"
+    assert 'printf "%s\\n" "$VPN_CHECK_BLOCK"' not in makefile, "Make consumed shell variable escaping for VPN_CHECK_BLOCK"
     require(
         router_validator,
         'PROFILE_KEY="$(uci -q get network.vpn.profile_key 2>/dev/null || true)"',
