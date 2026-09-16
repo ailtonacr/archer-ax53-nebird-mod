@@ -1,0 +1,7 @@
+#!/bin/sh
+# The vendor 65-iptv hook owns the stock switch table. Re-apply our profile
+# afterwards only when the persistent managed-switch setting is enabled.
+
+[ -x /usr/sbin/ax53-switch ] || exit 0
+/usr/sbin/ax53-switch apply >/dev/null 2>&1 || logger -t ax53-switch "hotplug re-apply failed"
+exit 0

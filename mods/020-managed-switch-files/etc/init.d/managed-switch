@@ -1,0 +1,15 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+STOP=5
+
+start()
+{
+    /usr/sbin/ax53-switch apply
+}
+
+stop()
+{
+    # Do not rewrite the switch while the device is shutting down.
+    return 0
+}

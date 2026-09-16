@@ -1,0 +1,375 @@
+#!/bin/sh
+set -u
+
+ETC_ROOT="${MS_ETC_ROOT:-/etc}"
+TP_DATA_ROOT="${MS_TP_DATA_ROOT:-/tp_data}"
+DRIVER_ROOT="${MS_DRIVER_ROOT:-/proc/driver/rtl8367s}"
+DEFAULT_CONF="$ETC_ROOT/managed-switch/default.conf"
+STATE_DIR="$TP_DATA_ROOT/managed-switch"
+CONF="${MS_CONF:-$STATE_DIR/config}"
+TEST_LOG="${MS_TEST_LOG:-}"
+
+die()
+{
+    echo "ax53-switch: $*" >&2
+    exit 1
+}
+
+log()
+{
+    logger -t ax53-switch "$*" 2>/dev/null || true
+    echo "ax53-switch: $*"
+}
+
+driver_write()
+{
+    local node="$1"
+    shift
+    if [ -n "$TEST_LOG" ]; then
+        printf '%s %s\n' "$node" "$*" >> "$TEST_LOG"
+        return 0
+    fi
+    [ -e "$DRIVER_ROOT/$node" ] || die "driver node missing: $DRIVER_ROOT/$node"
+    printf '%s\n' "$*" > "$DRIVER_ROOT/$node"
+}
+
+ensure_config()
+{
+    [ -f "$DEFAULT_CONF" ] || die "default config missing: $DEFAULT_CONF"
+    if [ ! -f "$CONF" ]; then
+        mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
+        cp "$DEFAULT_CONF" "$CONF" || die "cannot initialize $CONF"
+        chmod 0600 "$CONF" 2>/dev/null || true
+    fi
+}
+
+load_config()
+{
+    ensure_config
+    enabled=0
+    profile=router-on-a-stick
+    wan_vid=4094
+    lan_vid=2
+    trunk_port=1
+    access_ports="2 3 4"
+    cpu_lan=1
+    cpu_wan=0
+    # Root-owned persistent config; values are validated before use.
+    . "$CONF"
+}
+
+is_uint()
+{
+    case "${1:-}" in
+        ''|*[!0-9]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+validate_vid()
+{
+    is_uint "$1" || return 1
+    [ "$1" -ge 1 ] && [ "$1" -le 4094 ]
+}
+
+validate_port()
+{
+    case "$1" in 1|2|3|4) return 0 ;; *) return 1 ;; esac
+}
+
+port_to_phy()
+{
+    case "$1" in
+        1) echo 1 ;;
+        2) echo 2 ;;
+        3) echo 3 ;;
+        4) echo 4 ;;
+        *) return 1 ;;
+    esac
+}
+
+contains_word()
+{
+    local needle="$1"
+    shift
+    for x in "$@"; do
+        [ "$x" = "$needle" ] && return 0
+    done
+    return 1
+}
+
+validate_config()
+{
+    [ "$profile" = "router-on-a-stick" ] || die "unsupported profile: $profile"
+    case "$enabled" in 0|1) ;; *) die "enabled must be 0 or 1" ;; esac
+    validate_vid "$wan_vid" || die "invalid wan_vid: $wan_vid"
+    validate_vid "$lan_vid" || die "invalid lan_vid: $lan_vid"
+    [ "$wan_vid" != "$lan_vid" ] || die "WAN and LAN VLAN IDs must differ"
+    validate_port "$trunk_port" || die "invalid trunk_port: $trunk_port"
+    case "$cpu_lan" in 0|1) ;; *) die "cpu_lan must be 0 or 1" ;; esac
+    case "$cpu_wan" in 0|1) ;; *) die "cpu_wan must be 0 or 1" ;; esac
+
+    local seen=""
+    local p
+    [ -n "$access_ports" ] || die "access_ports cannot be empty"
+    for p in $access_ports; do
+        validate_port "$p" || die "invalid access port: $p"
+        [ "$p" != "$trunk_port" ] || die "trunk port cannot also be an access port"
+        case " $seen " in *" $p "*) die "duplicate access port: $p" ;; esac
+        seen="$seen $p"
+    done
+
+    # v1 deliberately preserves the stock AX53 CPU/LAN interface (eth1.2).
+    # Arbitrary LAN VIDs require a separate network/Wi-Fi rebind implementation.
+    if [ "$cpu_lan" = "1" ] && [ "$lan_vid" != "2" ]; then
+        die "cpu_lan=1 currently requires lan_vid=2 to preserve AX53 management/Wi-Fi"
+    fi
+}
+
+mask_for_ports()
+{
+    local mask=0
+    local p
+    for p in "$@"; do
+        mask=$((mask | (1 << p)))
+    done
+    echo "$mask"
+}
+
+set_pvid()
+{
+    driver_write port pvid set "$1" "$2" 0
+}
+
+set_vlan()
+{
+    local vid="$1"
+    local members="$2"
+    local untagged="$3"
+    local member_mask=0
+    local untag_mask=0
+    local p
+
+    for p in $members; do
+        member_mask=$((member_mask | (1 << p)))
+    done
+    for p in $untagged; do
+        untag_mask=$((untag_mask | (1 << p)))
+        set_pvid "$p" "$vid"
+    done
+
+    driver_write vlan set "$vid" "$member_mask" "$untag_mask"
+}
+
+clear_vlans()
+{
+    driver_write vlan reset
+    driver_write vlan init
+}
+
+apply_profile()
+{
+    load_config
+    validate_config
+
+    if [ "${1:-}" != "--force" ] && [ "$enabled" != "1" ]; then
+        log "managed profile is disabled; nothing applied"
+        return 0
+    fi
+
+    local trunk_phy
+    local access_phys=""
+    local p phy
+    trunk_phy="$(port_to_phy "$trunk_port")" || die "cannot map trunk port"
+
+    for p in $access_ports; do
+        phy="$(port_to_phy "$p")" || die "cannot map LAN$p"
+        access_phys="$access_phys $phy"
+    done
+
+    local wan_members="0 $trunk_phy"
+    local lan_members="$trunk_phy$access_phys"
+
+    [ "$cpu_wan" = "1" ] && wan_members="$wan_members 16"
+    [ "$cpu_lan" = "1" ] && lan_members="$lan_members 16"
+
+    clear_vlans
+
+    # Stock code configures the CPU port to accept tagged frames.
+    driver_write port ptype set 16 1
+
+    # Trunk is tagged on both VLANs. Give untagged ingress on the trunk a LAN
+    # PVID as a recovery-friendly default, while keeping egress tagged.
+    set_pvid "$trunk_phy" "$lan_vid"
+
+    # Physical WAN is untagged; trunk is tagged; CPU is excluded by default.
+    set_vlan "$wan_vid" "$wan_members" "0"
+
+    # Access LANs are untagged; trunk and CPU are tagged.
+    set_vlan "$lan_vid" "$lan_members" "$access_phys"
+
+    log "applied router-on-a-stick: WAN vlan=$wan_vid, LAN vlan=$lan_vid, trunk=LAN$trunk_port, access=[$access_ports]"
+}
+
+fallback_stock_default()
+{
+    clear_vlans
+    driver_write port ptype set 16 1
+    set_vlan 4094 "0 16" "0"
+    set_vlan 2 "1 2 3 4 16" "1 2 3 4"
+    log "restored stock default switch VLAN layout"
+}
+
+restore_stock()
+{
+    if [ -z "$TEST_LOG" ] && [ -x "$ETC_ROOT/init.d/iptv" ]; then
+        "$ETC_ROOT/init.d/iptv" restart >/dev/null 2>&1 && {
+            log "requested stock IPTV/switch pipeline restore"
+            return 0
+        }
+    fi
+    fallback_stock_default
+}
+
+write_setting()
+{
+    local key="$1"
+    local value="$2"
+    local tmp="${CONF}.tmp.$$"
+
+    case "$key" in
+        enabled|cpu_lan|cpu_wan)
+            case "$value" in 0|1) ;; *) die "$key must be 0 or 1" ;; esac
+            ;;
+        wan_vid|lan_vid)
+            validate_vid "$value" || die "invalid VLAN ID: $value"
+            ;;
+        trunk_port)
+            validate_port "$value" || die "trunk_port must be 1..4"
+            ;;
+        access_ports)
+            local p seen=""
+            [ -n "$value" ] || die "access_ports cannot be empty"
+            for p in $value; do
+                validate_port "$p" || die "invalid access port: $p"
+                case " $seen " in *" $p "*) die "duplicate access port: $p" ;; esac
+                seen="$seen $p"
+            done
+            ;;
+        *)
+            die "unsupported setting: $key"
+            ;;
+    esac
+
+    ensure_config
+    awk -v key="$key" -v value="$value" '
+        BEGIN { done=0 }
+        $0 ~ ("^" key "=") {
+            printf "%s=\"%s\"\n", key, value
+            done=1
+            next
+        }
+        { print }
+        END {
+            if (!done) printf "%s=\"%s\"\n", key, value
+        }
+    ' "$CONF" > "$tmp" || die "cannot update config"
+    mv "$tmp" "$CONF" || die "cannot replace config"
+    chmod 0600 "$CONF" 2>/dev/null || true
+
+    load_config
+    validate_config
+    log "saved $key=$value"
+}
+
+show_status()
+{
+    load_config
+    validate_config
+    cat <<EOF
+config=$CONF
+enabled=$enabled
+profile=$profile
+wan_vid=$wan_vid
+lan_vid=$lan_vid
+trunk_port=LAN$trunk_port
+access_ports=$access_ports
+cpu_lan=$cpu_lan
+cpu_wan=$cpu_wan
+EOF
+
+    if [ -z "$TEST_LOG" ] && [ -r "$DRIVER_ROOT/vlan" ]; then
+        echo "--- rtl8367s/vlan ---"
+        cat "$DRIVER_ROOT/vlan" 2>/dev/null || true
+    fi
+}
+
+usage()
+{
+    cat <<'EOF'
+Usage:
+  ax53-switch init
+  ax53-switch check
+  ax53-switch status
+  ax53-switch set <enabled|wan_vid|lan_vid|trunk_port|access_ports|cpu_lan|cpu_wan> <value>
+  ax53-switch apply [--force]
+  ax53-switch enable
+  ax53-switch disable
+  ax53-switch rollback
+
+Safe deployment:
+  1. ax53-switch init
+  2. ax53-switch check
+  3. ax53-switch status
+  4. configure Proxmox VLAN 4094 (WAN) and VLAN 2 (LAN)
+  5. ax53-switch enable
+  6. ax53-switch apply
+Rollback:
+  ax53-switch rollback
+EOF
+}
+
+cmd="${1:-}"
+case "$cmd" in
+    init)
+        ensure_config
+        load_config
+        validate_config
+        log "persistent configuration initialized at $CONF"
+        ;;
+    check)
+        load_config
+        validate_config
+        echo "OK"
+        ;;
+    status)
+        show_status
+        ;;
+    set)
+        [ "$#" -ge 3 ] || { usage; exit 2; }
+        key="$2"
+        shift 2
+        write_setting "$key" "$*"
+        ;;
+    apply)
+        load_config
+        validate_config
+        apply_profile "${2:-}"
+        ;;
+    enable)
+        write_setting enabled 1
+        log "enabled persistently; run 'ax53-switch apply' when ready"
+        ;;
+    disable)
+        write_setting enabled 0
+        restore_stock
+        ;;
+    rollback)
+        write_setting enabled 0
+        restore_stock
+        ;;
+    *)
+        usage
+        exit 2
+        ;;
+esac

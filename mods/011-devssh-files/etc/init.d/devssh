@@ -11,9 +11,7 @@ PORT=2222
 get_lan_ip()
 {
     local ip
-
     ip="$(uci -q get network.lan.ipaddr)"
-
     if [ -z "$ip" ]; then
         ip="$(
             ifconfig br-lan 2>/dev/null |
@@ -21,16 +19,13 @@ get_lan_ip()
             head -n1
         )"
     fi
-
     echo "$ip"
 }
 
 lan_is_ready()
 {
     local ip="$1"
-
-    ifconfig br-lan 2>/dev/null |
-        grep -q "$ip"
+    ifconfig br-lan 2>/dev/null | grep -q "$ip"
 }
 
 start()
@@ -40,11 +35,9 @@ start()
 
     while [ "$retries" -gt 0 ]; do
         lan_ip="$(get_lan_ip)"
-
         if [ -n "$lan_ip" ] && lan_is_ready "$lan_ip"; then
             break
         fi
-
         retries=$((retries - 1))
         sleep 1
     done
@@ -55,17 +48,12 @@ start()
     fi
 
     if [ ! -s "$HOSTKEY" ]; then
-        /usr/bin/dropbearkey \
-            -t ecdsa \
-            -f "$HOSTKEY" \
-            -s 521 \
-            >/dev/null 2>&1
+        /usr/bin/dropbearkey -t ecdsa -f "$HOSTKEY" -s 521 >/dev/null 2>&1
     fi
-
-    if [ ! -s "$HOSTKEY" ]; then
+    [ -s "$HOSTKEY" ] || {
         logger -t devssh "Unable to generate host key"
         return 1
-    fi
+    }
 
     logger -t devssh "Starting development SSH on ${lan_ip}:${PORT}"
 
@@ -73,8 +61,6 @@ start()
         -P "$PIDFILE" \
         -p "${lan_ip}:${PORT}" \
         -r "$HOSTKEY" \
-        -s \
-        -g \
         -L \
         -j \
         -k \
