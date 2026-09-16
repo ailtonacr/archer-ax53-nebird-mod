@@ -173,7 +173,7 @@ clear_vlans()
     driver_write vlan init
 }
 
-apply_profile()
+apply_profile_unlocked()
 {
     load_config
     validate_config
@@ -215,6 +215,25 @@ apply_profile()
     set_vlan "$lan_vid" "$lan_members" "$access_phys"
 
     log "applied router-on-a-stick: WAN vlan=$wan_vid, LAN vlan=$lan_vid, trunk=LAN$trunk_port, access=[$access_ports]"
+}
+
+apply_profile()
+{
+    # Offline tests use a fake driver log and do not need the vendor lock tool.
+    if [ -n "$TEST_LOG" ]; then
+        apply_profile_unlocked "$@"
+        return $?
+    fi
+
+    lock /var/run/switch-set.lock || die "cannot acquire switch lock"
+    trap 'lock -u /var/run/switch-set.lock >/dev/null 2>&1 || true' EXIT INT TERM
+
+    apply_profile_unlocked "$@"
+    local rc=$?
+
+    lock -u /var/run/switch-set.lock >/dev/null 2>&1 || true
+    trap - EXIT INT TERM
+    return "$rc"
 }
 
 fallback_stock_default()
@@ -296,6 +315,57 @@ write_setting()
     log "saved $key=$value"
 }
 
+write_full_config()
+{
+    [ "$#" -eq 6 ] || die "configure requires: <wan_vid> <lan_vid> <trunk_port> <access_ports> <cpu_lan> <cpu_wan>"
+
+    load_config
+    local next_enabled="$enabled"
+    local next_wan_vid="$1"
+    local next_lan_vid="$2"
+    local next_trunk_port="$3"
+    local next_access_ports="$4"
+    local next_cpu_lan="$5"
+    local next_cpu_wan="$6"
+    local tmp="${CONF}.tmp.$"
+
+    enabled="$next_enabled"
+    profile="router-on-a-stick"
+    wan_vid="$next_wan_vid"
+    lan_vid="$next_lan_vid"
+    trunk_port="$next_trunk_port"
+    access_ports="$next_access_ports"
+    cpu_lan="$next_cpu_lan"
+    cpu_wan="$next_cpu_wan"
+
+    # Validate variables before writing/sourcing a candidate file.
+    validate_config
+
+    cat > "$tmp" <<EOF
+enabled=$enabled
+profile=$profile
+wan_vid=$wan_vid
+lan_vid=$lan_vid
+trunk_port=$trunk_port
+access_ports="$access_ports"
+cpu_lan=$cpu_lan
+cpu_wan=$cpu_wan
+EOF
+    chmod 0600 "$tmp" 2>/dev/null || true
+
+    load_config_file "$tmp"
+    if ! ( validate_config ); then
+        rm -f "$tmp"
+        die "candidate configuration rejected; previous config preserved"
+    fi
+
+    mv "$tmp" "$CONF" || die "cannot replace config"
+    chmod 0600 "$CONF" 2>/dev/null || true
+    load_config
+    validate_config
+    log "saved profile: WAN vlan=$wan_vid, LAN vlan=$lan_vid, trunk=LAN$trunk_port, access=[$access_ports], cpu_lan=$cpu_lan, cpu_wan=$cpu_wan"
+}
+
 show_status()
 {
     load_config
@@ -326,6 +396,7 @@ Usage:
   ax53-switch check
   ax53-switch status
   ax53-switch set <enabled|wan_vid|lan_vid|trunk_port|access_ports|cpu_lan|cpu_wan> <value>
+  ax53-switch configure <wan_vid> <lan_vid> <trunk_port> "<access_ports>" <cpu_lan> <cpu_wan>
   ax53-switch apply [--force]
   ax53-switch enable
   ax53-switch disable
@@ -364,6 +435,10 @@ case "$cmd" in
         key="$2"
         shift 2
         write_setting "$key" "$*"
+        ;;
+    configure)
+        [ "$#" -eq 7 ] || { usage; exit 2; }
+        write_full_config "$2" "$3" "$4" "$5" "$6" "$7"
         ;;
     apply)
         load_config
