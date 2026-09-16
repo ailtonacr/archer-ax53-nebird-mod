@@ -1,0 +1,16 @@
+config managed_switch 'main'
+	option enabled '0'
+	option device 'switch0'
+	option recovery_timeout '120'
+
+# VLANs are intentionally empty in the firmware baseline.
+# Add one or more sections only after validating the live switch mapping.
+# Port syntax is the TP-Link stock syntax consumed by /lib/switch/core.sh:
+#   N   = untagged/access member
+#   Nt  = tagged/trunk member
+#   Nu  = explicit untagged member (mainly useful for CPU-port exceptions)
+#
+# Example TEMPLATE ONLY (do not enable without hardware validation):
+# config vlan 'example'
+#	option vid '100'
+#	option ports '6t 1t'

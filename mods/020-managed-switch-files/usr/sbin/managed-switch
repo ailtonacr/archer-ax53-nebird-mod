@@ -1,0 +1,120 @@
+#!/bin/sh
+set -eu
+
+CFG=managed_switch
+BACKUP=/tmp/managed-switch-switch.backup
+PENDING=/tmp/managed-switch.pending
+
+usage() {
+	cat <<'EOF'
+Usage: managed-switch <status|plan|validate|apply|rollback>
+
+  status    show current TP-Link switch config and managed-switch config
+  plan      print the switch VLAN config that would be applied
+  validate  validate managed VLAN definitions without changing hardware
+  apply     apply config; requires enabled=1 and MANAGED_SWITCH_CONFIRM=YES
+  rollback  restore the pre-apply /etc/config/switch backup
+
+Safety: apply is deliberately fail-closed. Keep a local recovery path before
+changing VLANs; a wrong CPU/trunk mapping can immediately remove management.
+EOF
+}
+
+get_main() { uci -q get "$CFG.main.$1" || true; }
+
+validate_port_token() {
+	case "$1" in
+		[0-8]|[0-8]t|[0-8]u) return 0 ;;
+		*) echo "Invalid switch port token: $1" >&2; return 1 ;;
+	esac
+}
+
+validate() {
+	[ "$(get_main device)" = "switch0" ] || { echo "Only switch0 is supported" >&2; return 1; }
+	seen=" "
+	count=0
+	for sec in $(uci -q show "$CFG" | sed -n "s/^$CFG\.\([^.=]*\)=vlan$/\1/p"); do
+		vid=$(uci -q get "$CFG.$sec.vid" || true)
+		ports=$(uci -q get "$CFG.$sec.ports" || true)
+		case "$vid" in ''|*[!0-9]*) echo "Invalid VID in $sec: $vid" >&2; return 1;; esac
+		[ "$vid" -ge 1 ] && [ "$vid" -le 4094 ] || { echo "VID out of range in $sec: $vid" >&2; return 1; }
+		case "$seen" in *" $vid "*) echo "Duplicate VID: $vid" >&2; return 1;; esac
+		seen="$seen$vid "
+		[ -n "$ports" ] || { echo "VLAN $vid has no ports" >&2; return 1; }
+		for p in $ports; do validate_port_token "$p" || return 1; done
+		count=$((count + 1))
+	done
+	[ "$count" -gt 0 ] || { echo "No managed VLAN sections configured" >&2; return 1; }
+	echo "OK: $count managed VLAN(s) validated"
+}
+
+plan() {
+	echo "device=$(get_main device) enabled=$(get_main enabled)"
+	for sec in $(uci -q show "$CFG" | sed -n "s/^$CFG\.\([^.=]*\)=vlan$/\1/p"); do
+		echo "VID $(uci -q get "$CFG.$sec.vid") ports: $(uci -q get "$CFG.$sec.ports")"
+	done
+}
+
+status() {
+	echo '=== managed_switch ==='
+	uci -q show "$CFG" || true
+	echo '=== stock switch ==='
+	uci -q show switch || true
+	echo '=== rtl8367s ==='
+	for f in vlan port phy; do
+		[ -r "/proc/driver/rtl8367s/$f" ] && { echo "--- $f ---"; cat "/proc/driver/rtl8367s/$f"; }
+	done
+}
+
+apply_config() {
+	validate
+	[ "$(get_main enabled)" = 1 ] || { echo "Refusing: managed_switch.main.enabled is not 1" >&2; exit 2; }
+	[ "${MANAGED_SWITCH_CONFIRM:-}" = YES ] || {
+		echo "Refusing destructive VLAN apply without MANAGED_SWITCH_CONFIRM=YES" >&2
+		echo "Run 'managed-switch plan', verify local recovery, then explicitly confirm." >&2
+		exit 2
+	}
+	cp -f /etc/config/switch "$BACKUP"
+	: > "$PENDING"
+	trap 'echo "Apply failed; attempting rollback" >&2; cp -f "$BACKUP" /etc/config/switch 2>/dev/null || true; /etc/init.d/network restart 2>/dev/null || true; rm -f "$PENDING"' INT TERM HUP EXIT
+
+	device=$(get_main device)
+	uci -q delete switch
+	uci set switch.switch=switch
+	uci set switch.switch.name="$device"
+	uci set switch.switch.enable_vlan='1'
+	uci set switch.switch.reset='1'
+	idx=0
+	for sec in $(uci -q show "$CFG" | sed -n "s/^$CFG\.\([^.=]*\)=vlan$/\1/p"); do
+		vid=$(uci -q get "$CFG.$sec.vid")
+		ports=$(uci -q get "$CFG.$sec.ports")
+		name="managed_$idx"
+		uci set "switch.$name=switch_vlan"
+		uci set "switch.$name.device=$device"
+		uci set "switch.$name.vlan=$vid"
+		uci set "switch.$name.ports=$ports"
+		idx=$((idx + 1))
+	done
+	uci commit switch
+	/etc/init.d/network restart
+	rm -f "$PENDING"
+	trap - INT TERM HUP EXIT
+	echo "Applied. Backup retained at $BACKUP until reboot."
+}
+
+rollback() {
+	[ -f "$BACKUP" ] || { echo "No runtime backup at $BACKUP" >&2; exit 1; }
+	cp -f "$BACKUP" /etc/config/switch
+	/etc/init.d/network restart
+	rm -f "$PENDING"
+	echo "Stock switch configuration restored from runtime backup."
+}
+
+case "${1:-}" in
+	status) status ;;
+	plan) plan ;;
+	validate) validate ;;
+	apply) apply_config ;;
+	rollback) rollback ;;
+	*) usage; exit 1 ;;
+esac
