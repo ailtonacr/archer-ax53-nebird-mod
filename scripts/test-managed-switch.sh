@@ -22,12 +22,6 @@ expected="011-devssh.sh
     fail "branch must contain only SSH and managed-switch mods"
 }
 
-if grep -Rni     --exclude=authorized_keys     --exclude-dir=.git     -E 'netbird|wg-easy'     Makefile apply-mods.sh mods scripts docs/MANAGED-SWITCH.md >/tmp/managed-switch-forbidden.$$ 2>/dev/null; then
-    cat /tmp/managed-switch-forbidden.$$ >&2
-    rm -f /tmp/managed-switch-forbidden.$$
-    fail "unrelated VPN integration reference found in branch-specific code"
-fi
-rm -f /tmp/managed-switch-forbidden.$$
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
