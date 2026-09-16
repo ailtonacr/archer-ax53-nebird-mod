@@ -43,9 +43,9 @@ ensure_config()
     fi
 }
 
-load_config()
+load_config_file()
 {
-    ensure_config
+    local file="$1"
     enabled=0
     profile=router-on-a-stick
     wan_vid=4094
@@ -55,7 +55,13 @@ load_config()
     cpu_lan=1
     cpu_wan=0
     # Root-owned persistent config; values are validated before use.
-    . "$CONF"
+    . "$file"
+}
+
+load_config()
+{
+    ensure_config
+    load_config_file "$CONF"
 }
 
 is_uint()
@@ -274,9 +280,17 @@ write_setting()
             if (!done) printf "%s=\"%s\"\n", key, value
         }
     ' "$CONF" > "$tmp" || die "cannot update config"
+
+    # Validate the candidate before replacing the persistent configuration.
+    # A rejected change must never leave the router with a broken config.
+    load_config_file "$tmp"
+    if ! ( validate_config ); then
+        rm -f "$tmp"
+        die "candidate configuration rejected; previous config preserved"
+    fi
+
     mv "$tmp" "$CONF" || die "cannot replace config"
     chmod 0600 "$CONF" 2>/dev/null || true
-
     load_config
     validate_config
     log "saved $key=$value"
