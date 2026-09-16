@@ -69,7 +69,9 @@ grep -Fxq 'port ptype set 16 1' "$log" || fail "CPU tagged-frame mode missing"
 grep -Fxq 'vlan set 4094 3 1' "$log" || fail "WAN VLAN layout is not WAN0 + tagged LAN1"
 grep -Fxq 'vlan set 2 65566 28' "$log" || fail "LAN VLAN layout is not tagged LAN1+CPU + access LAN2-4"
 
-# Invalid overlap must fail before touching hardware.
+# Invalid overlap must fail and preserve the last valid persistent config.
 MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" set access_ports "1 2 3" >/dev/null 2>&1 && fail "trunk/access overlap accepted"
+MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" check | grep -Fxq OK || fail "rejected change corrupted persistent config"
+grep -Fq 'access_ports="2 3 4"' "$state/managed-switch/config" || fail "rejected change replaced access_ports"
 
 echo "OK: managed-switch offline contract"
