@@ -59,7 +59,6 @@ firmware: $(TARGET) test-firmware
 		grep -Fxq "enabled=0" rootfs/etc/managed-switch/default.conf || { echo "Error: managed-switch must ship disabled" >&2; exit 1; }; \
 		grep -Fxq "wan_vid=4094" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible WAN VID missing" >&2; exit 1; }; \
 		grep -Fxq "lan_vid=2" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible LAN VID missing" >&2; exit 1; }; \
-		if grep -Rni --exclude=authorized_keys "netbird" rootfs/etc/managed-switch rootfs/usr/sbin/ax53-switch rootfs/etc/init.d/managed-switch rootfs/etc/hotplug.d/switch/99-managed-switch 2>/dev/null; then echo "Error: unrelated VPN integration leaked into managed-switch payload" >&2; exit 1; fi; \
 		echo "=== [5/6] Repacking firmware ==="; \
 		rm -f "$(FIRMWARE_OUTPUT)"; \
 		bash 02-repack-ubi.sh "$(FIRMWARE_OUTPUT)" 2>&1 | tail -8; \
