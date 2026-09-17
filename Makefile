@@ -31,6 +31,7 @@ test-firmware:
 	sh -n mods/020-managed-switch-files/etc/init.d/managed-switch
 	sh -n mods/020-managed-switch-files/etc/hotplug.d/switch/99-managed-switch
 	sh -n scripts/test-managed-switch.sh
+	@if command -v luac >/dev/null 2>&1; then luac -p mods/020-managed-switch-files/usr/lib/lua/luci/controller/admin/managed_switch.lua; else echo "luac not found; controller syntax will be checked when available"; fi
 	sh scripts/test-managed-switch.sh
 
 firmware: $(TARGET) test-firmware
@@ -56,6 +57,10 @@ firmware: $(TARGET) test-firmware
 		test -x rootfs/usr/sbin/ax53-switch || { echo "Error: ax53-switch missing" >&2; exit 1; }; \
 		test -x rootfs/etc/init.d/managed-switch || { echo "Error: managed-switch init missing" >&2; exit 1; }; \
 		test -x rootfs/etc/hotplug.d/switch/99-managed-switch || { echo "Error: managed-switch hotplug missing" >&2; exit 1; }; \
+		test -f rootfs/usr/lib/lua/luci/controller/admin/managed_switch.lua || { echo "Error: managed-switch LuCI controller missing" >&2; exit 1; }; \
+		test -f rootfs/usr/lib/lua/luci/view/managed-switch.html || { echo "Error: managed-switch LuCI view missing" >&2; exit 1; }; \
+		grep -Fq "entry({\\\"admin\\\", \\\"managed_switch\\\"}" rootfs/usr/lib/lua/luci/controller/admin/managed_switch.lua || { echo "Error: managed-switch LuCI route missing" >&2; exit 1; }; \
+		grep -Fq "<h1>Switch / VLAN</h1>" rootfs/usr/lib/lua/luci/view/managed-switch.html || { echo "Error: managed-switch UI title missing" >&2; exit 1; }; \
 		grep -Fxq "enabled=0" rootfs/etc/managed-switch/default.conf || { echo "Error: managed-switch must ship disabled" >&2; exit 1; }; \
 		grep -Fxq "wan_vid=4094" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible WAN VID missing" >&2; exit 1; }; \
 		grep -Fxq "lan_vid=2" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible LAN VID missing" >&2; exit 1; }; \
