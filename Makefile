@@ -66,12 +66,15 @@ firmware: $(TARGET) test-firmware
 		grep -Fq "update-store-DQkZxaRI.js" <(gzip -dc rootfs/www/webpages/js/ManagedSwitchPage-AX.js.gz) || { echo "Error: managed-switch SPA module does not use stock update-store" >&2; exit 1; }; \
 		grep -Fq "api.request(API" <(gzip -dc rootfs/www/webpages/js/ManagedSwitchPage-AX.js.gz) || { echo "Error: managed-switch SPA module does not use stock API request" >&2; exit 1; }; \
 		if grep -Fq "fetch(" <(gzip -dc rootfs/www/webpages/js/ManagedSwitchPage-AX.js.gz); then echo "Error: managed-switch SPA module bypasses stock request transport" >&2; exit 1; fi; \
-		grep -Fq "__AX53_MANAGED_SWITCH_MENU_V5_IPTV_ANCHOR__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher is not IPTV/VLAN-anchored V5" >&2; exit 1; }; \
-		grep -Fq "ManagedSwitchPage-AX.js?v=" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch SPA module import missing" >&2; exit 1; }; \
-		grep -Fq "norm(s)===\"iptv/vlan\"" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher is not anchored to stock IPTV/VLAN" >&2; exit 1; }; \
-		grep -Fq "leafIptv" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: launcher lacks IPTV/VLAN leaf discovery" >&2; exit 1; }; \
-		grep -Fq "rowFor" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: launcher lacks stock row discovery" >&2; exit 1; }; \
-		if grep -Fq "n===\"rede\"||n===\"network\"" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz); then echo "Error: fragile Rede/Network text matcher still present" >&2; exit 1; fi; \
+		grep -Fq "__AX53_MANAGED_SWITCH_NATIVE_MENU_V6__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: native managed-switch menu marker missing" >&2; exit 1; }; \
+		grep -Fq "name:\"managedSwitch\",path:\"managedSwitch\"" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch route is not registered in stock route table" >&2; exit 1; }; \
+		grep -Fq "ManagedSwitchPage-AX.js?v=" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch SPA module route import missing" >&2; exit 1; }; \
+		grep -Fq "ManagedSwitchRoute" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch route lifecycle wrapper missing" >&2; exit 1; }; \
+		grep -Fq "findIndex((e=>\"iptvAdv\"===e.key))" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch menu is not anchored to stock iptvAdv node" >&2; exit 1; }; \
+		grep -Fq "{key:\"managedSwitch\",text:\"Switch / VLAN\"}" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: native managed-switch menu node missing" >&2; exit 1; }; \
+		grep -Fq "return ax53ManagedSwitchMenu(n),n" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: native modeMenu integration missing" >&2; exit 1; }; \
+		grep -Fq "return H.getExcludedMenu(s.value,e)" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: stock visible-menu filter was not preserved" >&2; exit 1; }; \
+		if grep -Eq "MutationObserver|cloneNode\\(|leafIptv|rowFor|__AX53_MANAGED_SWITCH_MENU__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz); then echo "Error: retired DOM-cloning menu injector remains" >&2; exit 1; fi; \
 		grep -Fxq "enabled=0" rootfs/etc/managed-switch/default.conf || { echo "Error: managed-switch must ship disabled" >&2; exit 1; }; \
 		grep -Fxq "wan_vid=4094" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible WAN VID missing" >&2; exit 1; }; \
 		grep -Fxq "lan_vid=2" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible LAN VID missing" >&2; exit 1; }; \
