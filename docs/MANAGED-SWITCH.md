@@ -28,8 +28,8 @@ O código vendor do AX53 V1 define:
 
 O driver vendor expõe configuração de VLAN/PVID por:
 
-- /proc/driver/rtl8367s/vlan
-- /proc/driver/rtl8367s/port
+- `/proc/driver/rtl8367s/vlan`
+- `/proc/driver/rtl8367s/port`
 
 O próprio firmware stock usa essas primitives para IPTV/VLAN.
 
@@ -37,7 +37,7 @@ O próprio firmware stock usa essas primitives para IPTV/VLAN.
 
 O primeiro perfil router-on-a-stick usa VLAN 4094 para WAN e VLAN 2 para LAN.
 
-Motivo: isso permite alterar somente o switch L2 sem obrigar, nesta primeira etapa, a reconfigurar a interface CPU, br-lan ou o binding Wi-Fi do AX53.
+Motivo: isso permite alterar somente o switch L2 sem obrigar, nesta primeira etapa, a reconfigurar a interface CPU, `br-lan` ou o binding Wi-Fi do AX53.
 
 ## Topologia alvo do perfil
 
@@ -81,7 +81,7 @@ Template de fábrica:
 /etc/managed-switch/default.conf
 ```
 
-## Operação
+## Operação por CLI
 
 Inspecionar/inicializar:
 
@@ -91,19 +91,15 @@ ax53-switch check
 ax53-switch status
 ```
 
-Persistir habilitação sem aplicar imediatamente:
+Configurar o perfil sem tocar no switch:
 
 ```sh
-ax53-switch enable
+ax53-switch configure 4094 2 1 "2 3 4" 1 0
 ```
 
-Aplicar após o trunk do Proxmox estar pronto:
+A CLI mantém os comandos `enable` e `apply` separados para manutenção/diagnóstico. Na interface web, porém, a ativação manual separada foi removida por segurança: o usuário salva primeiro e o botão **Aplicar agora** executa o fluxo de ativação + aplicação como uma única intenção operacional. Se a aplicação falhar, a UI solicita `disable`/restauração stock automaticamente.
 
-```sh
-ax53-switch apply
-```
-
-Rollback:
+Rollback manual:
 
 ```sh
 ax53-switch rollback
@@ -113,23 +109,43 @@ A restauração prefere o pipeline stock de IPTV/switch. Existe fallback para o 
 
 ## Interface web
 
-A branch inclui uma interface autenticada própria do LuCI, registrada em:
+A branch inclui um controller LuCI autenticado em:
 
 ```text
-admin/managed_switch
+/admin/managed_switch
 ```
 
-O controller fica em:
+Controller:
 
 ```text
 /usr/lib/lua/luci/controller/admin/managed_switch.lua
 ```
 
-e a view em:
+Página standalone da UI:
 
 ```text
-/usr/lib/lua/luci/view/managed-switch.html
+/www/webpages/managed-switch.html
 ```
+
+URL no navegador:
+
+```text
+http://<ip-do-ax53>/webpages/managed-switch.html
+```
+
+A página chama diretamente:
+
+```text
+/cgi-bin/luci/;stok=/admin/managed_switch
+```
+
+com `credentials: same-origin`. Ela não importa o `update-store` do SPA TP-Link, pois esse módulo depende do contexto Vue inicializado pelo aplicativo principal.
+
+### Navegação no SPA TP-Link
+
+O menu visual TP-Link é um SPA minificado; `entry()` do LuCI não cria automaticamente um item visual. O build portanto aplica um patch pequeno e idempotente no bundle principal.
+
+O launcher **Switch / VLAN** fica como filho do menu stock **Rede / Network**. Não existe fallback top-level nesta versão: se o submenu Rede ainda não estiver materializado, um `MutationObserver` espera a árvore correta aparecer e injeta o item nela.
 
 A tela permite:
 
@@ -140,8 +156,8 @@ A tela permite:
 - controlar participação da CPU nas VLANs LAN/WAN;
 - visualizar a topologia resultante antes de salvar;
 - salvar o perfil de forma atômica, sem alterar o hardware;
-- habilitar/desabilitar o perfil;
-- aplicar explicitamente a configuração L2;
+- aplicar/reaplicar explicitamente a configuração L2;
+- desabilitar e restaurar o layout stock;
 - executar rollback para o pipeline/layout stock.
 
 O salvamento usa um único comando atômico:
@@ -156,20 +172,33 @@ Isso evita estados intermediários inválidos ao trocar a porta trunk.
 
 `Salvar configuração` altera apenas `/tp_data/managed-switch/config`.
 
-`Aplicar agora` é separado e apresenta confirmação explícita no navegador. A UI também recomenda que o primeiro cutover seja executado por Wi-Fi ou por uma porta access, e não pela porta escolhida como trunk.
+Enquanto o perfil está ativo, os campos de configuração ficam bloqueados para evitar salvar um perfil diferente daquele que está efetivamente programado no RTL8367S e que poderia ser reaplicado automaticamente em hotplug/reboot.
 
-A rota LuCI está implementada no firmware. A exibição automática dessa entrada dentro do menu SPA específico da TP-Link ainda precisa ser validada no hardware/browser stock; mesmo que o SPA não materialize o item visualmente, o endpoint autenticado continua registrado no dispatcher LuCI.
+Quando o perfil está desabilitado, alterações não salvas impedem `Aplicar agora`.
+
+`Aplicar agora` é a única ação da UI que inicia a ativação do perfil. A página apresenta confirmação explícita, recomenda manter a sessão por Wi-Fi/porta access e exige que o Proxmox esteja preparado antes do cutover.
+
+A opção de desabilitar/restaurar stock só aparece quando o perfil está ativo.
+
+## Interação com IPTV/VLAN stock
+
+O managed-switch substitui a tabela VLAN do RTL8367S enquanto estiver ativo. Portanto ele não deve ser usado simultaneamente com uma configuração IPTV/VLAN customizada da TP-Link.
+
+O hook stock `65-iptv` continua sendo o dono da reconstrução padrão. Nosso hook `99-managed-switch` roda depois e reaplica o perfil somente quando `enabled=1`.
+
+O rollback chama primeiro o pipeline stock `/etc/init.d/iptv restart`; o fallback básico só é usado quando o pipeline stock não está disponível ou falha.
 
 ## Segurança operacional
 
-Antes de `apply`:
+Antes do primeiro `Aplicar agora`:
 
 1. manter acesso físico ao AX53;
 2. validar SSH pela LAN/Wi-Fi;
 3. preparar VLAN 4094 e VLAN 2 no Proxmox;
-4. não executar o primeiro cutover a partir da LAN1, pois ela mudará para trunk;
-5. usar LAN2/LAN3/LAN4 ou Wi-Fi para a sessão de manutenção;
-6. validar que o roteador virtual possui WAN e LAN antes de desativar DHCP/gateway do AX53.
+4. não executar o primeiro cutover a partir da porta escolhida como trunk;
+5. usar uma porta access ou Wi-Fi para a sessão de manutenção;
+6. manter IPTV/VLAN customizado stock desabilitado;
+7. só promover o Proxmox/VM a gateway depois de validar WAN e LAN pelo trunk.
 
 ## Limite da primeira implementação
 
@@ -198,3 +227,13 @@ Imagem padrão:
 ```text
 work/Archer-AX53-ManagedSwitch-build-<N>.bin
 ```
+
+## Estado de validação
+
+- auditoria estática da branch: concluída;
+- isolamento da branch contra integrações VPN customizadas: confirmado pelo diff contra a base pré-integrações;
+- menu V3 escopado a Rede/Network: implementado;
+- fluxo UI sem `update-store`: implementado;
+- proteção contra aplicação de draft não salvo: implementada;
+- build/teste offline executado nesta sessão: pendente, pois o ambiente de execução disponível não resolve `github.com` para clonar a branch;
+- validação do menu V3 e do dataplane em hardware real: pendente de nova imagem/flash.
