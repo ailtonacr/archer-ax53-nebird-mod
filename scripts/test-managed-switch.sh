@@ -66,17 +66,19 @@ import gzip, sys
 with gzip.open(sys.argv[1], "rt", encoding="utf-8") as fh: text=fh.read()
 required=[
  "__AX53_MANAGED_SWITCH_MENU__",
- "__AX53_MANAGED_SWITCH_MENU_V4_STOCK_CONTEXT__",
+ "__AX53_MANAGED_SWITCH_MENU_V5_IPTV_ANCHOR__",
  "ax53-managed-switch-menu",
  "ManagedSwitchPage-AX.js?v=",
- 'n==="rede"||n==="network"',
- "stockChildren",
+ 'norm(s)==="iptv/vlan"',
+ "leafIptv",
+ "rowFor",
  "import(MOD)",
 ]
 missing=[x for x in required if x not in text]
-if missing: raise SystemExit("missing stock-context menu tokens: "+", ".join(missing))
+if missing: raise SystemExit("missing IPTV-anchored menu tokens: "+", ".join(missing))
 if text.count("__AX53_MANAGED_SWITCH_MENU__") != 1: raise SystemExit("menu patch is not idempotent")
 if "/webpages/managed-switch.html" in text: raise SystemExit("legacy standalone navigation remains")
+if 'n==="rede"||n==="network"' in text: raise SystemExit("fragile parent Rede/Network text matcher still present")
 PY
 
 python3 scripts/patch-managed-switch-menu.py "$fake_root" >/dev/null
@@ -132,4 +134,4 @@ if command -v luac >/dev/null 2>&1; then
     luac -p "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI controller syntax invalid"
 fi
 
-echo "OK: managed-switch CLI + stock TP-Link SPA/API contract"
+echo "OK: managed-switch CLI + stock TP-Link SPA/API contract + IPTV/VLAN menu anchor"
