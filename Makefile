@@ -27,6 +27,7 @@ test: test-firmware
 test-firmware:
 	bash -n apply-mods.sh mods/011-devssh.sh mods/020-managed-switch.sh scripts/stamp-switch-build.sh
 	python3 -m py_compile scripts/patch-managed-switch-menu.py
+	node --input-type=module --check < src/web/ManagedSwitchPage-AX.js
 	sh -n mods/011-devssh-files/etc/init.d/devssh
 	sh -n mods/020-managed-switch-files/usr/sbin/ax53-switch
 	sh -n mods/020-managed-switch-files/etc/init.d/managed-switch
@@ -59,16 +60,16 @@ firmware: $(TARGET) test-firmware
 		test -x rootfs/etc/init.d/managed-switch || { echo "Error: managed-switch init missing" >&2; exit 1; }; \
 		test -x rootfs/etc/hotplug.d/switch/99-managed-switch || { echo "Error: managed-switch hotplug missing" >&2; exit 1; }; \
 		test -f rootfs/usr/lib/lua/luci/controller/admin/managed_switch.lua || { echo "Error: managed-switch LuCI controller missing" >&2; exit 1; }; \
-		test -f rootfs/www/webpages/managed-switch.html || { echo "Error: managed-switch SPA page missing" >&2; exit 1; }; \
-		grep -Fq "managed_switch" rootfs/usr/lib/lua/luci/controller/admin/managed_switch.lua || { echo "Error: managed-switch LuCI route missing" >&2; exit 1; }; \
-		grep -Fq "const ENDPOINT=\"/cgi-bin/luci/;stok=/admin/managed_switch\"" rootfs/www/webpages/managed-switch.html || { echo "Error: managed-switch standalone LuCI endpoint missing" >&2; exit 1; }; \
-		grep -Fq "credentials:\"same-origin\"" rootfs/www/webpages/managed-switch.html || { echo "Error: managed-switch page does not preserve session credentials" >&2; exit 1; }; \
-		if grep -Fq "update-store-DQkZxaRI.js" rootfs/www/webpages/managed-switch.html; then echo "Error: standalone managed-switch page imports SPA-only update-store context" >&2; exit 1; fi; \
-		grep -Fq "__AX53_MANAGED_SWITCH_MENU__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch SPA menu launcher missing" >&2; exit 1; }; \
-		grep -Fq "__AX53_MANAGED_SWITCH_MENU_V3_NETWORK_CHILD__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher is not the Network/Rede child variant" >&2; exit 1; }; \
+		grep -Fq "controller._index(dispatch)" rootfs/usr/lib/lua/luci/controller/admin/managed_switch.lua || { echo "Error: stock TP-Link controller transport missing" >&2; exit 1; }; \
+		test -f rootfs/www/webpages/js/ManagedSwitchPage-AX.js.gz || { echo "Error: managed-switch stock-context SPA module missing" >&2; exit 1; }; \
+		test ! -e rootfs/www/webpages/managed-switch.html || { echo "Error: broken legacy standalone page still packaged" >&2; exit 1; }; \
+		grep -Fq "update-store-DQkZxaRI.js" <(gzip -dc rootfs/www/webpages/js/ManagedSwitchPage-AX.js.gz) || { echo "Error: managed-switch SPA module does not use stock update-store" >&2; exit 1; }; \
+		grep -Fq "api.request(API" <(gzip -dc rootfs/www/webpages/js/ManagedSwitchPage-AX.js.gz) || { echo "Error: managed-switch SPA module does not use stock API request" >&2; exit 1; }; \
+		if grep -Fq "fetch(" <(gzip -dc rootfs/www/webpages/js/ManagedSwitchPage-AX.js.gz); then echo "Error: managed-switch SPA module bypasses stock request transport" >&2; exit 1; fi; \
+		grep -Fq "__AX53_MANAGED_SWITCH_MENU_V4_STOCK_CONTEXT__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher is not stock-context V4" >&2; exit 1; }; \
+		grep -Fq "ManagedSwitchPage-AX.js?v=" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch SPA module import missing" >&2; exit 1; }; \
 		grep -Fq "n===\"rede\"||n===\"network\"" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher is not scoped to Rede/Network" >&2; exit 1; }; \
-		grep -Fq "findSubmenu" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher lacks submenu targeting" >&2; exit 1; }; \
-		grep -Fq "/webpages/managed-switch.html" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch SPA menu target missing" >&2; exit 1; }; \
+		grep -Fq "stockChildren" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: launcher does not mirror stock submenu lifecycle" >&2; exit 1; }; \
 		grep -Fxq "enabled=0" rootfs/etc/managed-switch/default.conf || { echo "Error: managed-switch must ship disabled" >&2; exit 1; }; \
 		grep -Fxq "wan_vid=4094" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible WAN VID missing" >&2; exit 1; }; \
 		grep -Fxq "lan_vid=2" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible LAN VID missing" >&2; exit 1; }; \
