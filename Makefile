@@ -61,7 +61,9 @@ firmware: $(TARGET) test-firmware
 		test -f rootfs/usr/lib/lua/luci/controller/admin/managed_switch.lua || { echo "Error: managed-switch LuCI controller missing" >&2; exit 1; }; \
 		test -f rootfs/www/webpages/managed-switch.html || { echo "Error: managed-switch SPA page missing" >&2; exit 1; }; \
 		grep -Fq "managed_switch" rootfs/usr/lib/lua/luci/controller/admin/managed_switch.lua || { echo "Error: managed-switch LuCI route missing" >&2; exit 1; }; \
-		grep -Fq "update-store-DQkZxaRI.js" rootfs/www/webpages/managed-switch.html || { echo "Error: managed-switch SPA page is not using the stock authenticated API client" >&2; exit 1; }; \
+		grep -Fq "const ENDPOINT=\"/cgi-bin/luci/;stok=/admin/managed_switch\"" rootfs/www/webpages/managed-switch.html || { echo "Error: managed-switch standalone LuCI endpoint missing" >&2; exit 1; }; \
+		grep -Fq "credentials:\"same-origin\"" rootfs/www/webpages/managed-switch.html || { echo "Error: managed-switch page does not preserve session credentials" >&2; exit 1; }; \
+		if grep -Fq "update-store-DQkZxaRI.js" rootfs/www/webpages/managed-switch.html; then echo "Error: standalone managed-switch page imports SPA-only update-store context" >&2; exit 1; fi; \
 		grep -Fq "__AX53_MANAGED_SWITCH_MENU__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch SPA menu launcher missing" >&2; exit 1; }; \
 		grep -Fq "/webpages/managed-switch.html" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch SPA menu target missing" >&2; exit 1; }; \
 		grep -Fxq "enabled=0" rootfs/etc/managed-switch/default.conf || { echo "Error: managed-switch must ship disabled" >&2; exit 1; }; \
