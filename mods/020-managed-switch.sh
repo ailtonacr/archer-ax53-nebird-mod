@@ -57,7 +57,7 @@ ln -sfn "../init.d/managed-switch" "$R/etc/rc.d/S99managed-switch"
 
 # The visible TP-Link UI is a Vue SPA rooted at /webpages/index.html#/.
 # LuCI entry() does not automatically add a SPA menu item, so patch only the
-# common frontend bundle with an idempotent launcher to our static page.
+# common frontend bundle with an idempotent launcher nested under Rede/Network.
 python3 "$PATCH_MENU" "$R"
 
 grep -Fxq 'enabled=0' "$R/etc/managed-switch/default.conf" || {
@@ -70,14 +70,18 @@ grep -Fq 'entry({"admin", "managed_switch"}' "$R/usr/lib/lua/luci/controller/adm
   echo "Error: managed switch LuCI route missing" >&2
   exit 1
 }
-grep -Fq 'update-store-DQkZxaRI.js' "$R/www/webpages/managed-switch.html" || {
-  echo "Error: managed switch SPA page does not use TP-Link authenticated API client" >&2
+grep -Fq 'const ENDPOINT="/cgi-bin/luci/;stok=/admin/managed_switch"' "$R/www/webpages/managed-switch.html" || {
+  echo "Error: managed switch SPA page direct LuCI endpoint missing" >&2
   exit 1
 }
+if grep -Fq 'update-store-DQkZxaRI.js' "$R/www/webpages/managed-switch.html"; then
+  echo "Error: standalone managed-switch page must not import TP-Link update-store" >&2
+  exit 1
+fi
 grep -Fq 'Switch / VLAN' "$R/www/webpages/managed-switch.html" || {
   echo "Error: managed switch SPA page missing" >&2
   exit 1
 }
 python3 "$PATCH_MENU" "$R" >/dev/null
 
-echo "### Managed switch installed (disabled by default, SPA menu + UI included) ###"
+echo "### Managed switch installed (disabled by default, Rede/Network menu + UI included) ###"
