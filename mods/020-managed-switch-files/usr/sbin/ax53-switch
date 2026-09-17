@@ -26,11 +26,21 @@ driver_write()
     local node="$1"
     shift
     if [ -n "$TEST_LOG" ]; then
-        printf '%s %s\n' "$node" "$*" >> "$TEST_LOG"
+        printf '%s %s\n' "$node" "$*" >> "$TEST_LOG" || die "test driver log write failed"
         return 0
     fi
     [ -e "$DRIVER_ROOT/$node" ] || die "driver node missing: $DRIVER_ROOT/$node"
-    printf '%s\n' "$*" > "$DRIVER_ROOT/$node"
+    [ -w "$DRIVER_ROOT/$node" ] || die "driver node not writable: $DRIVER_ROOT/$node"
+    printf '%s\n' "$*" > "$DRIVER_ROOT/$node" || die "driver write failed: $node $*"
+}
+
+preflight_driver()
+{
+    [ -n "$TEST_LOG" ] && return 0
+    [ -e "$DRIVER_ROOT/vlan" ] || die "driver node missing: $DRIVER_ROOT/vlan"
+    [ -w "$DRIVER_ROOT/vlan" ] || die "driver node not writable: $DRIVER_ROOT/vlan"
+    [ -e "$DRIVER_ROOT/port" ] || die "driver node missing: $DRIVER_ROOT/port"
+    [ -w "$DRIVER_ROOT/port" ] || die "driver node not writable: $DRIVER_ROOT/port"
 }
 
 ensure_config()
@@ -94,16 +104,6 @@ port_to_phy()
     esac
 }
 
-contains_word()
-{
-    local needle="$1"
-    shift
-    for x in "$@"; do
-        [ "$x" = "$needle" ] && return 0
-    done
-    return 1
-}
-
 validate_config()
 {
     [ "$profile" = "router-on-a-stick" ] || die "unsupported profile: $profile"
@@ -125,21 +125,15 @@ validate_config()
         seen="$seen $p"
     done
 
-    # v1 deliberately preserves the stock AX53 CPU/LAN interface (eth1.2).
-    # Arbitrary LAN VIDs require a separate network/Wi-Fi rebind implementation.
+    # v1 preserves the stock CPU-facing VLAN interfaces. If the CPU is a
+    # member, keep the corresponding stock VID so Linux keeps seeing eth1.2
+    # (LAN) and eth1.4094 (WAN) without a second network-stack rewrite.
     if [ "$cpu_lan" = "1" ] && [ "$lan_vid" != "2" ]; then
         die "cpu_lan=1 currently requires lan_vid=2 to preserve AX53 management/Wi-Fi"
     fi
-}
-
-mask_for_ports()
-{
-    local mask=0
-    local p
-    for p in "$@"; do
-        mask=$((mask | (1 << p)))
-    done
-    echo "$mask"
+    if [ "$cpu_wan" = "1" ] && [ "$wan_vid" != "4094" ]; then
+        die "cpu_wan=1 currently requires wan_vid=4094 to preserve the stock CPU WAN interface"
+    fi
 }
 
 set_pvid()
@@ -183,6 +177,8 @@ apply_profile_unlocked()
         return 0
     fi
 
+    preflight_driver
+
     local trunk_phy
     local access_phys=""
     local p phy
@@ -204,8 +200,8 @@ apply_profile_unlocked()
     # Stock code configures the CPU port to accept tagged frames.
     driver_write port ptype set 16 1
 
-    # Trunk is tagged on both VLANs. Give untagged ingress on the trunk a LAN
-    # PVID as a recovery-friendly default, while keeping egress tagged.
+    # Trunk is tagged on both VLANs. Untagged ingress on the trunk receives the
+    # LAN PVID as a recovery-friendly default; egress stays tagged.
     set_pvid "$trunk_phy" "$lan_vid"
 
     # Physical WAN is untagged; trunk is tagged; CPU is excluded by default.
@@ -236,24 +232,41 @@ apply_profile()
     return "$rc"
 }
 
-fallback_stock_default()
+fallback_basic_bridge()
 {
+    preflight_driver
     clear_vlans
     driver_write port ptype set 16 1
     set_vlan 4094 "0 16" "0"
     set_vlan 2 "1 2 3 4 16" "1 2 3 4"
-    log "restored stock default switch VLAN layout"
+    log "restored emergency basic bridge fallback (WAN 4094 + LAN 2)"
 }
 
 restore_stock()
 {
+    # Prefer the vendor pipeline. It owns the exact stock VLAN reconstruction
+    # and uses the same switch-set.lock itself.
     if [ -z "$TEST_LOG" ] && [ -x "$ETC_ROOT/init.d/iptv" ]; then
         "$ETC_ROOT/init.d/iptv" restart >/dev/null 2>&1 && {
             log "requested stock IPTV/switch pipeline restore"
             return 0
         }
     fi
-    fallback_stock_default
+
+    # Emergency fallback if the stock pipeline is unavailable/fails. This is
+    # intentionally a basic functional bridge, not a byte-for-byte stock table.
+    if [ -n "$TEST_LOG" ]; then
+        fallback_basic_bridge
+        return $?
+    fi
+
+    lock /var/run/switch-set.lock || die "cannot acquire switch lock for fallback restore"
+    trap 'lock -u /var/run/switch-set.lock >/dev/null 2>&1 || true' EXIT INT TERM
+    fallback_basic_bridge
+    local rc=$?
+    lock -u /var/run/switch-set.lock >/dev/null 2>&1 || true
+    trap - EXIT INT TERM
+    return "$rc"
 }
 
 write_setting()
@@ -300,8 +313,6 @@ write_setting()
         }
     ' "$CONF" > "$tmp" || die "cannot update config"
 
-    # Validate the candidate before replacing the persistent configuration.
-    # A rejected change must never leave the router with a broken config.
     load_config_file "$tmp"
     if ! ( validate_config ); then
         rm -f "$tmp"
@@ -327,7 +338,7 @@ write_full_config()
     local next_access_ports="$4"
     local next_cpu_lan="$5"
     local next_cpu_wan="$6"
-    local tmp="${CONF}.tmp.$"
+    local tmp="${CONF}.tmp.$$"
 
     enabled="$next_enabled"
     profile="router-on-a-stick"
@@ -338,7 +349,6 @@ write_full_config()
     cpu_lan="$next_cpu_lan"
     cpu_wan="$next_cpu_wan"
 
-    # Validate variables before writing/sourcing a candidate file.
     validate_config
 
     cat > "$tmp" <<EOF
@@ -441,8 +451,6 @@ case "$cmd" in
         write_full_config "$2" "$3" "$4" "$5" "$6" "$7"
         ;;
     apply)
-        load_config
-        validate_config
         apply_profile "${2:-}"
         ;;
     enable)
