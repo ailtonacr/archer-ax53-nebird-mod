@@ -62,12 +62,22 @@ python3 - "$fake_root/www/webpages/js/index-D26yCMJF.js.gz" <<'PY'
 import gzip, sys
 with gzip.open(sys.argv[1], "rt", encoding="utf-8") as fh:
     text = fh.read()
-required = ["__AX53_MANAGED_SWITCH_MENU__", "ax53-managed-switch-menu", "/webpages/managed-switch.html", "Switch / VLAN"]
+required = [
+    "__AX53_MANAGED_SWITCH_MENU__",
+    "__AX53_MANAGED_SWITCH_MENU_V2_NETWORK__",
+    "ax53-managed-switch-menu",
+    "/webpages/managed-switch.html",
+    "Switch / VLAN",
+    'n===\"rede\"||n===\"network\"',
+    "findSubmenu",
+]
 missing = [x for x in required if x not in text]
 if missing:
-    raise SystemExit("missing SPA menu tokens: " + ", ".join(missing))
+    raise SystemExit("missing Network-menu SPA tokens: " + ", ".join(missing))
 if text.count("__AX53_MANAGED_SWITCH_MENU__") != 1:
     raise SystemExit("SPA menu patch is not idempotent")
+if "findIptv" in text or "const fallback=()=>" in text:
+    raise SystemExit("legacy top-level/IPTV menu injector still present")
 PY
 
 # Running the patcher twice must remain idempotent.
@@ -78,6 +88,8 @@ with gzip.open(sys.argv[1], "rt", encoding="utf-8") as fh:
     text = fh.read()
 if text.count("__AX53_MANAGED_SWITCH_MENU__") != 1:
     raise SystemExit("second menu patch duplicated launcher")
+if text.count("/*__AX53_MANAGED_SWITCH_MENU_BEGIN__*/") != 1:
+    raise SystemExit("second menu patch duplicated sentinel")
 PY
 
 grep -Fxq 'enabled=0' "$fake_root/etc/managed-switch/default.conf" || fail "default must be disabled"
@@ -116,14 +128,23 @@ MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_
 grep -Fxq 'vlan set 4094 5 1' "$log" || fail "WAN VLAN did not follow trunk move to LAN2"
 grep -Fxq 'vlan set 2 65566 26' "$log" || fail "LAN untagged mask did not follow access-port update"
 
-# Invalid full-profile change must fail and preserve the last valid config.
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" configure 4094 2 2 "2 3 4" 1 0 >/dev/null 2>&1 && fail "invalid full-profile overlap accepted"
+# Invalid full-profile changes must fail and preserve the last valid config.
+MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" configure 4094 2 2 "2 3 4" 1 0 >/dev/null 2>&1 && fail "invalid trunk/access overlap accepted"
+MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" configure 100 2 2 "1 3 4" 1 1 >/dev/null 2>&1 && fail "cpu_wan accepted with non-stock WAN VID"
+MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" configure 4094 100 2 "1 3 4" 1 0 >/dev/null 2>&1 && fail "cpu_lan accepted with non-stock LAN VID"
 MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" check | grep -Fxq OK || fail "rejected full-profile change corrupted config"
 grep -Fxq 'trunk_port=2' "$state/managed-switch/config" || fail "rejected full-profile change replaced trunk"
 grep -Fq 'access_ports="1 3 4"' "$state/managed-switch/config" || fail "rejected full-profile change replaced access ports"
+
+# Test-mode rollback exercises the documented emergency basic-bridge fallback.
+: > "$log"
+MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" rollback >/dev/null
+grep -Fxq 'vlan set 4094 65537 1' "$log" || fail "rollback fallback WAN layout missing"
+grep -Fxq 'vlan set 2 65566 30' "$log" || fail "rollback fallback LAN layout missing"
+grep -Fq 'enabled="0"' "$state/managed-switch/config" || fail "rollback did not persist disabled state"
 
 if command -v luac >/dev/null 2>&1; then
     luac -p "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI controller syntax invalid"
 fi
 
-echo "OK: managed-switch offline contract + SPA menu/UI packaging"
+echo "OK: managed-switch offline contract + Network-menu/UI packaging"
