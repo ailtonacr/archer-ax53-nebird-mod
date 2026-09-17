@@ -69,7 +69,7 @@ with gzip.open(sys.argv[1], "rt", encoding="utf-8") as fh:
     text = fh.read()
 required = [
     "__AX53_MANAGED_SWITCH_MENU__",
-    "__AX53_MANAGED_SWITCH_MENU_V2_NETWORK__",
+    "__AX53_MANAGED_SWITCH_MENU_V3_NETWORK_CHILD__",
     "ax53-managed-switch-menu",
     "/webpages/managed-switch.html",
     "Switch / VLAN",
@@ -78,7 +78,7 @@ required = [
 ]
 missing = [x for x in required if x not in text]
 if missing:
-    raise SystemExit("missing Network-menu SPA tokens: " + ", ".join(missing))
+    raise SystemExit("missing Network-child SPA tokens: " + ", ".join(missing))
 if text.count("__AX53_MANAGED_SWITCH_MENU__") != 1:
     raise SystemExit("SPA menu patch is not idempotent")
 if "findIptv" in text or "const fallback=()=>" in text:
@@ -152,4 +152,4 @@ if command -v luac >/dev/null 2>&1; then
     luac -p "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI controller syntax invalid"
 fi
 
-echo "OK: managed-switch offline contract + Network-menu/single-UI packaging"
+echo "OK: managed-switch offline contract + Network-child/single-UI packaging"
