@@ -65,8 +65,9 @@ firmware: $(TARGET) test-firmware
 		grep -Fq "credentials:\"same-origin\"" rootfs/www/webpages/managed-switch.html || { echo "Error: managed-switch page does not preserve session credentials" >&2; exit 1; }; \
 		if grep -Fq "update-store-DQkZxaRI.js" rootfs/www/webpages/managed-switch.html; then echo "Error: standalone managed-switch page imports SPA-only update-store context" >&2; exit 1; fi; \
 		grep -Fq "__AX53_MANAGED_SWITCH_MENU__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch SPA menu launcher missing" >&2; exit 1; }; \
-		grep -Fq "__AX53_MANAGED_SWITCH_MENU_V2_NETWORK__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher is not the Network/Rede variant" >&2; exit 1; }; \
+		grep -Fq "__AX53_MANAGED_SWITCH_MENU_V3_NETWORK_CHILD__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher is not the Network/Rede child variant" >&2; exit 1; }; \
 		grep -Fq "n===\"rede\"||n===\"network\"" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher is not scoped to Rede/Network" >&2; exit 1; }; \
+		grep -Fq "findSubmenu" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher lacks submenu targeting" >&2; exit 1; }; \
 		grep -Fq "/webpages/managed-switch.html" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch SPA menu target missing" >&2; exit 1; }; \
 		grep -Fxq "enabled=0" rootfs/etc/managed-switch/default.conf || { echo "Error: managed-switch must ship disabled" >&2; exit 1; }; \
 		grep -Fxq "wan_vid=4094" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible WAN VID missing" >&2; exit 1; }; \
@@ -84,7 +85,7 @@ firmware: $(TARGET) test-firmware
 
 tools:
 	$(MAKE) -C vendor/mtd-utils
-	$(MAKE) -C vendor/squashfs
+	$(MAKE) -C vendor/squashfs clean
 	$(MAKE) -C vendor/squashfs4
 
 clean:
