@@ -49,8 +49,11 @@ ROOTFS_DIR="$fake_root" bash -e mods/020-managed-switch.sh >/dev/null
 [ -f "$fake_root/www/webpages/managed-switch.html" ] || fail "SPA managed-switch page not packaged"
 grep -Fq 'entry({"admin", "managed_switch"}' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI route missing"
 grep -Fq 'operation == "save"' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "UI save endpoint missing"
-grep -Fq 'update-store-DQkZxaRI.js' "$fake_root/www/webpages/managed-switch.html" || fail "SPA page does not use stock authenticated API client"
-grep -Fq 'const ENDPOINT="/admin/managed_switch"' "$fake_root/www/webpages/managed-switch.html" || fail "SPA page backend endpoint missing"
+grep -Fq 'const ENDPOINT="/cgi-bin/luci/;stok=/admin/managed_switch"' "$fake_root/www/webpages/managed-switch.html" || fail "standalone page LuCI endpoint missing"
+grep -Fq 'credentials:"same-origin"' "$fake_root/www/webpages/managed-switch.html" || fail "standalone page does not preserve router session credentials"
+if grep -Fq 'update-store-DQkZxaRI.js' "$fake_root/www/webpages/managed-switch.html"; then
+    fail "standalone page must not import SPA update-store context"
+fi
 grep -Fq 'Aplicar agora' "$fake_root/www/webpages/managed-switch.html" || fail "explicit apply action missing"
 [ -L "$fake_root/etc/rc.d/S55devssh" ] || fail "S55devssh missing"
 [ -L "$fake_root/etc/rc.d/S99managed-switch" ] || fail "S99managed-switch missing"
