@@ -1,120 +1,70 @@
 #!/usr/bin/env python3
-"""Inject the Managed Switch launcher under the stock Network/Rede menu.
+"""Install the managed-switch SPA module and add a child under Rede/Network.
 
-The AX53 V1 frontend is a minified, gzipped Vue SPA. LuCI controller entries do
-not automatically become visible SPA routes, so this patch adds one small DOM
-launcher while leaving the stock router/menu implementation intact.
+This follows the proven pattern from the native NetBird branch:
+- authored module lives under www/webpages/js and imports TP-Link update-store;
+- the stock SPA bundle only receives the smallest possible integration patch;
+- requests therefore use TP-Link's initialized encrypted transport/session;
+- no standalone page performs raw fetch() calls to LuCI.
 
-The launcher is intentionally nested under the existing "Rede" / "Network"
-group. There is no top-level fallback: if the Network submenu is not present
-yet, a MutationObserver retries when the SPA materializes it.
-
-The launcher opens:
-    /webpages/managed-switch.html
-
-The standalone page talks directly to the LuCI controller and does not import
-the SPA's update-store singleton.
+The injected child is cloned from a real stock Network submenu item. It is
+removed whenever the stock submenu is collapsed/unmounted, avoiding the stale
+or top-level-looking item seen in earlier DOM-only revisions.
 """
 from __future__ import annotations
 
 import gzip
+import hashlib
 import io
 from pathlib import Path
+import subprocess
 import sys
 
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else "rootfs")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BUNDLE = ROOT / "www/webpages/js/index-D26yCMJF.js.gz"
+SOURCE = PROJECT_ROOT / "src/web/ManagedSwitchPage-AX.js"
+MODULE_DST = ROOT / "www/webpages/js/ManagedSwitchPage-AX.js.gz"
 MARKER = "__AX53_MANAGED_SWITCH_MENU__"
-VERSION = "__AX53_MANAGED_SWITCH_MENU_V3_NETWORK_CHILD__"
+VERSION = "__AX53_MANAGED_SWITCH_MENU_V4_STOCK_CONTEXT__"
 BEGIN = "/*__AX53_MANAGED_SWITCH_MENU_BEGIN__*/"
 END = "/*__AX53_MANAGED_SWITCH_MENU_END__*/"
 
-INJECTOR = rf'''
-{BEGIN}
-;(()=>{{"use strict";
-const M="{MARKER}",V="{VERSION}",ID="ax53-managed-switch-menu";
-if(window[M]===V)return;window[M]=V;
-const managedUrl=()=>"/webpages/managed-switch.html";
-const norm=s=>(s||"").replace(/\s+/g," ").trim().toLowerCase();
-const isNetworkLabel=s=>{{const n=norm(s);return n==="rede"||n==="network";}};
-const clearActiveState=e=>{{
-  if(!e||e.nodeType!==1)return;
-  e.removeAttribute("aria-current");e.removeAttribute("aria-selected");
-  if(e.classList)[...e.classList].forEach(c=>{{if(/active|selected|current/i.test(c))e.classList.remove(c);}});
-}};
-const stripRouterAttrs=e=>{{
-  ["data-route","data-router-link","data-to","to","data-key"].forEach(a=>e.removeAttribute&&e.removeAttribute(a));
-  e.removeAttribute&&e.removeAttribute("target");clearActiveState(e);
-}};
-const wire=e=>{{
-  e.id=ID;stripRouterAttrs(e);
-  if(e.tagName==="A")e.setAttribute("href",managedUrl());
-  e.setAttribute&&e.setAttribute("title","Switch / VLAN");
-  e.textContent="Switch / VLAN";
-  e.addEventListener("click",ev=>{{ev.preventDefault();ev.stopPropagation();location.href=managedUrl();}});
-  return e;
-}};
-const networkTriggers=()=>{{
-  const out=[];
-  const nodes=document.querySelectorAll("a,button,span,div");
-  for(const e of nodes)if(isNetworkLabel(e.textContent))out.push(e);
-  return out;
-}};
-const looksLikeMenu=e=>{{
-  if(!e||e.nodeType!==1)return false;
-  const cls=String(e.className||"").toLowerCase();
-  return e.tagName==="UL"||e.getAttribute("role")==="menu"||/sub.?menu|children|submenu/.test(cls);
-}};
-const findSubmenu=trigger=>{{
-  if(!trigger)return null;
-  const controls=trigger.getAttribute&&trigger.getAttribute("aria-controls");
-  if(controls){{const byId=document.getElementById(controls);if(byId)return byId;}}
-  const root=trigger.closest&&trigger.closest("li");
-  if(root){{
-    const inside=root.querySelector("ul,[role=menu],[class*=submenu],[class*=sub-menu],[class*=children]");
-    if(inside&&inside!==root)return inside;
-    let sib=root.nextElementSibling;
-    while(sib){{if(looksLikeMenu(sib))return sib;sib=sib.nextElementSibling;}}
-  }}
-  const parent=trigger.parentElement;
-  if(parent){{
-    const inside=parent.querySelector("ul,[role=menu],[class*=submenu],[class*=sub-menu],[class*=children]");
-    if(inside&&inside!==parent)return inside;
-    let sib=parent.nextElementSibling;
-    while(sib){{if(looksLikeMenu(sib))return sib;sib=sib.nextElementSibling;}}
-  }}
-  return null;
-}};
-const buildItem=submenu=>{{
-  const children=[...submenu.children];
-  const sample=children.find(c=>c.querySelector&&c.querySelector("a,button"))||null;
-  let wrapper;
-  if(sample){{wrapper=sample.cloneNode(false);stripRouterAttrs(wrapper);wrapper.removeAttribute&&wrapper.removeAttribute("id");}}
-  else wrapper=document.createElement(submenu.tagName==="UL"?"li":"div");
-  const sampleControl=sample&&sample.querySelector&&sample.querySelector("a,button");
-  const control=wire(sampleControl?sampleControl.cloneNode(false):document.createElement("a"));
-  wrapper.appendChild(control);
-  return wrapper;
-}};
-const inject=()=>{{
-  if(document.getElementById(ID))return true;
-  for(const trigger of networkTriggers()){{
-    const submenu=findSubmenu(trigger);
-    if(!submenu)continue;
-    submenu.appendChild(buildItem(submenu));
-    return true;
-  }}
-  return false;
-}};
-let attempts=0;
-const retry=()=>{{if(inject()||attempts++>120)return;setTimeout(retry,250);}};
-if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",retry,{{once:true}});else retry();
-new MutationObserver(()=>{{if(!document.getElementById(ID))inject();}})
-  .observe(document.documentElement,{{childList:true,subtree:true}});
-window.addEventListener("hashchange",()=>setTimeout(inject,50));
-}})();
-{END}
-'''
+
+def gzip_bytes(data: bytes) -> bytes:
+    buf = io.BytesIO()
+    with gzip.GzipFile(filename="", mode="wb", fileobj=buf, mtime=0) as gz:
+        gz.write(data)
+    return buf.getvalue()
+
+
+def check_js(name: str, text: str) -> None:
+    result = subprocess.run(
+        ["node", "--input-type=module", "--check"],
+        input=text.encode("utf-8"), capture_output=True,
+    )
+    if result.returncode:
+        raise SystemExit(f"Error: node --check failed for {name}:\n{result.stderr.decode()[:2000]}")
+
+
+def install_module() -> str:
+    if not SOURCE.is_file():
+        raise SystemExit(f"Error: managed-switch SPA source missing: {SOURCE}")
+    text = SOURCE.read_text(encoding="utf-8")
+    check_js(str(SOURCE), text)
+    required = (
+        'import { s as api } from "./update-store-DQkZxaRI.js"',
+        'api.request(API',
+        'const API = "/admin/managed_switch"',
+        'export function openManagedSwitch()',
+    )
+    missing = [x for x in required if x not in text]
+    if missing:
+        raise SystemExit("Error: managed-switch module is not using stock API contract: " + ", ".join(missing))
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    MODULE_DST.parent.mkdir(parents=True, exist_ok=True)
+    MODULE_DST.write_bytes(gzip_bytes(text.encode("utf-8")))
+    return f"./ManagedSwitchPage-AX.js?v={digest}"
 
 
 def read_bundle() -> str:
@@ -125,10 +75,7 @@ def read_bundle() -> str:
 
 
 def write_bundle(text: str) -> None:
-    buf = io.BytesIO()
-    with gzip.GzipFile(filename="", mode="wb", fileobj=buf, mtime=0) as gz:
-        gz.write(text.encode("utf-8"))
-    BUNDLE.write_bytes(buf.getvalue())
+    BUNDLE.write_bytes(gzip_bytes(text.encode("utf-8")))
 
 
 def strip_previous_injector(text: str) -> str:
@@ -137,50 +84,69 @@ def strip_previous_injector(text: str) -> str:
         end = text.find(END, start)
         if end < 0:
             raise SystemExit("Error: managed-switch menu BEGIN marker has no END marker")
-        end += len(END)
-        return (text[:start] + text[end:]).rstrip() + "\n"
+        return (text[:start] + text[end + len(END):]).rstrip() + "\n"
 
     if MARKER in text:
         marker_pos = text.rfind(MARKER)
         start = text.rfind(';(()=>{"use strict";', 0, marker_pos)
-        if start < 0 or "/webpages/managed-switch.html" not in text[start:]:
-            raise SystemExit("Error: found legacy managed-switch marker but cannot locate its injector safely")
+        if start < 0:
+            raise SystemExit("Error: found legacy managed-switch marker but cannot locate injector safely")
         return text[:start].rstrip() + "\n"
-
     return text
 
 
-def validate(text: str) -> None:
+def injector(module_spec: str) -> str:
+    return rf'''
+{BEGIN}
+;(()=>{{"use strict";
+const M="{MARKER}",V="{VERSION}",ID="ax53-managed-switch-menu",MOD="{module_spec}";
+if(window[M]===V)return;window[M]=V;
+const norm=s=>(s||"").replace(/\s+/g," ").trim().toLowerCase();
+const isNetworkLabel=s=>{{const n=norm(s);return n==="rede"||n==="network";}};
+const clearActive=e=>{{if(!e||e.nodeType!==1)return;e.removeAttribute("aria-current");e.removeAttribute("aria-selected");if(e.classList)[...e.classList].forEach(c=>{{if(/active|selected|current/i.test(c))e.classList.remove(c);}});}};
+const clean=e=>{{if(!e||e.nodeType!==1)return;["id","data-route","data-router-link","data-to","to","data-key"].forEach(a=>e.removeAttribute(a));clearActive(e);for(const x of e.querySelectorAll("[id],[data-route],[data-router-link],[data-to],[to],[data-key]")){{["id","data-route","data-router-link","data-to","to","data-key"].forEach(a=>x.removeAttribute(a));clearActive(x);}}}};
+const networkTriggers=()=>[...document.querySelectorAll("a,button,span,div")].filter(e=>isNetworkLabel(e.textContent));
+const looksLikeMenu=e=>{{if(!e||e.nodeType!==1)return false;const c=String(e.className||"").toLowerCase();return e.tagName==="UL"||e.getAttribute("role")==="menu"||/sub.?menu|children|submenu/.test(c);}};
+const findSubmenu=trigger=>{{if(!trigger)return null;const controls=trigger.getAttribute&&trigger.getAttribute("aria-controls");if(controls){{const x=document.getElementById(controls);if(x)return x;}}const roots=[trigger.closest&&trigger.closest("li"),trigger.parentElement].filter(Boolean);for(const root of roots){{const inside=root.querySelector&&root.querySelector("ul,[role=menu],[class*=submenu],[class*=sub-menu],[class*=children]");if(inside&&inside!==root)return inside;let sib=root.nextElementSibling;while(sib){{if(looksLikeMenu(sib))return sib;sib=sib.nextElementSibling;}}}}return null;}};
+const stockChildren=submenu=>[...submenu.children].filter(c=>c.id!==ID&&!(c.querySelector&&c.querySelector("#"+ID))&&c.querySelector&&c.querySelector("a,button,[role=menuitem]"));
+const openPage=async ev=>{{if(ev){{ev.preventDefault();ev.stopPropagation();}}try{{const m=await import(MOD);const fn=m.openManagedSwitch||(m.default&&m.default.openManagedSwitch);if(typeof fn!=="function")throw new Error("módulo sem openManagedSwitch");fn();}}catch(e){{console.error("Managed Switch UI load failed",e);alert("Falha ao abrir Switch / VLAN: "+(e&&e.message||e));}}}};
+const buildItem=sample=>{{const wrapper=sample.cloneNode(true);clean(wrapper);wrapper.id=ID;const controls=[...wrapper.querySelectorAll("a,button,[role=menuitem]")];const ctl=controls[0]||wrapper;clean(ctl);if(ctl.tagName==="A")ctl.setAttribute("href","#");ctl.setAttribute&&ctl.setAttribute("title","Switch / VLAN");const leaves=[...ctl.querySelectorAll("span")].filter(x=>x.children.length===0);if(leaves.length)leaves[leaves.length-1].textContent="Switch / VLAN";else ctl.textContent="Switch / VLAN";wrapper.addEventListener("click",openPage);return wrapper;}};
+const sync=()=>{{const existing=document.getElementById(ID);let usable=null;for(const trigger of networkTriggers()){{const submenu=findSubmenu(trigger);if(!submenu)continue;const stocks=stockChildren(submenu);if(stocks.length){{usable={{submenu,stocks}};break;}}}}if(!usable){{if(existing)existing.remove();return false;}}if(existing&&existing.parentElement===usable.submenu)return true;if(existing)existing.remove();usable.submenu.insertBefore(buildItem(usable.stocks[0]),usable.stocks[0]);return true;}};
+let attempts=0;const retry=()=>{{if(sync()||attempts++>120)return;setTimeout(retry,250);}};
+if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",retry,{{once:true}});else retry();
+new MutationObserver(()=>sync()).observe(document.documentElement,{{childList:true,subtree:true}});
+window.addEventListener("hashchange",()=>setTimeout(sync,50));
+}})();
+{END}
+'''
+
+
+def validate(text: str, module_spec: str) -> None:
     required = (
-        MARKER,
-        VERSION,
-        BEGIN,
-        END,
-        "ax53-managed-switch-menu",
-        "/webpages/managed-switch.html",
-        "Switch / VLAN",
-        'n==="rede"||n==="network"',
-        "networkTriggers",
-        "findSubmenu",
-        "MutationObserver",
+        MARKER, VERSION, BEGIN, END, "ax53-managed-switch-menu",
+        module_spec, "Switch / VLAN", 'n==="rede"||n==="network"',
+        "stockChildren", "openPage", "import(MOD)", "MutationObserver",
     )
-    missing = [token for token in required if token not in text]
+    missing = [x for x in required if x not in text]
     if missing:
-        raise SystemExit("Error: managed-switch Network-menu injection incomplete: " + ", ".join(missing))
-    if text.count(MARKER) != 1:
-        raise SystemExit(f"Error: managed-switch menu marker count is {text.count(MARKER)}, expected 1")
-    if text.count(BEGIN) != 1 or text.count(END) != 1:
-        raise SystemExit("Error: managed-switch menu sentinel count must be exactly one")
+        raise SystemExit("Error: managed-switch stock-SPA injection incomplete: " + ", ".join(missing))
+    if text.count(MARKER) != 1 or text.count(BEGIN) != 1 or text.count(END) != 1:
+        raise SystemExit("Error: managed-switch menu injector must be present exactly once")
+    if "/webpages/managed-switch.html" in text[text.rfind(BEGIN):]:
+        raise SystemExit("Error: legacy standalone managed-switch navigation still present")
 
 
 def main() -> None:
+    module_spec = install_module()
     text = read_bundle()
-    if VERSION not in text:
+    if VERSION not in text or module_spec not in text:
         text = strip_previous_injector(text)
-        text = text.rstrip() + "\n" + INJECTOR.strip() + "\n"
+        text = text.rstrip() + "\n" + injector(module_spec).strip() + "\n"
+        check_js(str(BUNDLE), text)
         write_bundle(text)
         text = read_bundle()
-    validate(text)
+    validate(text, module_spec)
+    print(f"Managed Switch stock-context module installed: {MODULE_DST}")
     print(f"Managed Switch launcher installed under Network/Rede: {BUNDLE}")
 
 
