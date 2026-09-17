@@ -39,13 +39,22 @@
 </aside>
 </div>
 </main>
-<script type="module">
-import {s as api} from "./js/update-store-DQkZxaRI.js";
-const ENDPOINT="/admin/managed_switch";
+<script>
+const ENDPOINT="/cgi-bin/luci/;stok=/admin/managed_switch";
 const $=id=>document.getElementById(id);let state=null,busy=false;
 function toast(msg,ok){const e=$("toast");e.textContent=msg;e.className="toast show "+(ok?"ok":"err")}
 function setBusy(v){busy=v;document.querySelectorAll("button").forEach(b=>b.disabled=v)}
-async function call(operation,payload){const data=Object.assign({operation},payload||{});const opts={preventSuccess:true,preventError:true};const r=operation==="status"?await api.request(ENDPOINT,data,opts):await api.write(ENDPOINT,data,opts);if(!r||r.success===false)throw new Error((r&&r.error)||"Falha na operação");return r}
+async function call(operation,payload){
+  const body=new URLSearchParams();
+  body.set("operation",operation);
+  Object.entries(payload||{}).forEach(([k,v])=>body.set(k,String(v)));
+  const response=await fetch(ENDPOINT,{method:"POST",credentials:"same-origin",headers:{"Content-Type":"application/x-www-form-urlencoded;charset=UTF-8","Accept":"application/json"},body:body.toString(),cache:"no-store"});
+  const text=await response.text();
+  let r;
+  try{r=JSON.parse(text)}catch(_){throw new Error("Resposta inválida do roteador (HTTP "+response.status+"): "+text.slice(0,180))}
+  if(!response.ok||!r||r.success===false)throw new Error((r&&r.error)||("HTTP "+response.status));
+  return r;
+}
 function selectedAccess(){return [...document.querySelectorAll('#ports input:checked')].map(x=>x.value)}
 function renderPorts(){const trunk=$("trunk").value,configured=state?String(state.access_ports||"").split(/\s+/):[];$("ports").innerHTML="";["1","2","3","4"].forEach(p=>{const l=document.createElement("label");l.className="chip";const i=document.createElement("input");i.type="checkbox";i.value=p;i.disabled=p===trunk;i.checked=p!==trunk&&(state?configured.includes(p):true);i.onchange=renderTopology;l.append(i,document.createTextNode(" LAN"+p));$("ports").appendChild(l)});renderTopology()}
 function renderTopology(){const wan=$("wanVid").value||"—",lan=$("lanVid").value||"—",trunk=$("trunk").value,access=selectedAccess(),rows=[["WAN","Access",wan,"—"]];["1","2","3","4"].forEach(p=>{if(p===trunk)rows.push(["LAN"+p,"Trunk",lan+" (PVID)",lan+", "+wan]);else if(access.includes(p))rows.push(["LAN"+p,"Access",lan,"—"]);else rows.push(["LAN"+p,"Sem membro","—","—"])});const tagged=[];if($("cpuLan").checked)tagged.push(lan);if($("cpuWan").checked)tagged.push(wan);rows.push(["CPU / 16","CPU","—",tagged.join(", ")||"—"]);$("topology").innerHTML=rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`).join("")}
