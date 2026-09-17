@@ -28,8 +28,8 @@
 <label><input id="cpuLan" type="checkbox"> CPU na VLAN LAN <span class="small">(mantém eth1.2 / br-lan / Wi-Fi; exige VLAN LAN 2)</span></label>
 <label><input id="cpuWan" type="checkbox"> CPU na VLAN WAN <span class="small">(normalmente desligado; exige VLAN WAN 4094)</span></label>
 </div>
-<div id="lockedNote" class="locked-note">O perfil está habilitado. Para evitar uma configuração pendente que possa ser aplicada em hotplug/reboot, a edição fica bloqueada enquanto ele estiver ativo. Desabilite/restaure stock antes de alterar o perfil.</div>
-<div class="actions"><button class="primary" type="submit" id="saveBtn">Salvar configuração</button><button class="secondary" type="button" id="toggleBtn">Habilitar perfil</button><button class="warning" type="button" id="applyBtn">Aplicar agora</button><button class="danger" type="button" id="rollbackBtn">Rollback stock</button></div>
+<div id="lockedNote" class="locked-note">O perfil está ativo. Para evitar uma configuração pendente que possa ser reaplicada em hotplug/reboot, a edição fica bloqueada enquanto ele estiver ativo. Use Desabilitar + stock antes de alterar o perfil.</div>
+<div class="actions"><button class="primary" type="submit" id="saveBtn">Salvar configuração</button><button class="danger" type="button" id="toggleBtn" style="display:none">Desabilitar + stock</button><button class="warning" type="button" id="applyBtn">Aplicar agora</button><button class="danger" type="button" id="rollbackBtn">Rollback stock</button></div>
 </form>
 </div>
 <div class="card"><h2 style="font-size:17px;margin-top:0">Topologia resultante</h2><table><thead><tr><th>Porta</th><th>Modo</th><th>Untagged/PVID</th><th>Tagged</th></tr></thead><tbody id="topology"></tbody></table></div>
@@ -64,15 +64,16 @@ function syncControls(){
   configIds.forEach(id=>$(id).disabled=busy||enabled);
   document.querySelectorAll('#ports input').forEach(i=>i.disabled=busy||enabled||i.value===$("trunk").value);
   $("saveBtn").disabled=busy||enabled||!state;
-  $("toggleBtn").disabled=busy||!state||(!enabled&&dirty);
-  $("applyBtn").disabled=busy||!enabled||dirty;
+  $("toggleBtn").style.display=enabled?"inline-block":"none";
+  $("toggleBtn").disabled=busy||!enabled;
+  $("applyBtn").disabled=busy||!state||dirty;
   $("rollbackBtn").disabled=busy||!state;
   $("backBtn").disabled=busy;
   $("lockedNote").className="locked-note"+(enabled?" show":"");
   if(state){
     const badge=$("enabledBadge");
     if(dirty&&!enabled){badge.textContent="Alterações não salvas";badge.className="badge dirty"}
-    else{badge.textContent=enabled?"Perfil habilitado":"Perfil desabilitado";badge.className="badge "+(enabled?"on":"off")}
+    else{badge.textContent=enabled?"Perfil ativo":"Perfil desabilitado";badge.className="badge "+(enabled?"on":"off")}
   }
 }
 function setBusy(v){busy=v;syncControls()}
@@ -99,18 +100,29 @@ function validateDraft(){
 function fill(d){
   state=d;$("wanVid").value=d.wan_vid;$("lanVid").value=d.lan_vid;currentTrunk=String(d.trunk_port);$("trunk").value=currentTrunk;
   draftAccess=new Set(String(d.access_ports||"").split(/\s+/).filter(Boolean));draftAccess.delete(currentTrunk);
-  $("cpuLan").checked=Number(d.cpu_lan)===1;$("cpuWan").checked=Number(d.cpu_wan)===1;
-  const on=Number(d.enabled)===1;$("toggleBtn").textContent=on?"Desabilitar + stock":"Habilitar perfil";$("driver").textContent=d.driver_vlan||"Tabela não disponível";
+  $("cpuLan").checked=Number(d.cpu_lan)===1;$("cpuWan").checked=Number(d.cpu_wan)===1;$("driver").textContent=d.driver_vlan||"Tabela não disponível";
   $("summary").textContent="Perfil: "+d.profile+"\nConfig: "+d.config+"\nTrunk: LAN"+d.trunk_port+"\nAccess: "+d.access_ports+"\nCPU LAN: "+(Number(d.cpu_lan)===1?"sim":"não")+"\nCPU WAN: "+(Number(d.cpu_wan)===1?"sim":"não");
   renderPorts();syncControls();
 }
 async function refresh(){setBusy(true);try{const r=await call("status");fill(r.data)}catch(e){toast(e.message,false)}finally{setBusy(false)}}
-async function action(op,payload,msg){setBusy(true);try{const r=await call(op,payload);if(r.data)fill(r.data);toast(msg||r.message||"Concluído",true)}catch(e){toast(e.message,false)}finally{setBusy(false)}}
+async function action(op,payload,msg){setBusy(true);try{const r=await call(op,payload);if(r.data)fill(r.data);toast(msg||r.message||"Concluído",true);return true}catch(e){toast(e.message,false);return false}finally{setBusy(false)}}
+async function activate(){
+  setBusy(true);
+  try{
+    const enabled=await call("enable");if(enabled.data)fill(enabled.data);
+    try{
+      const applied=await call("apply");if(applied.data)fill(applied.data);toast("Perfil ativado e aplicado ao switch.",true);
+    }catch(e){
+      try{const reverted=await call("disable");if(reverted.data)fill(reverted.data)}catch(_){ }
+      throw new Error("Falha ao aplicar; rollback stock foi solicitado: "+e.message);
+    }
+  }catch(e){toast(e.message,false)}finally{setBusy(false)}
+}
 $("trunk").onchange=()=>{const next=$("trunk").value;if(currentTrunk&&currentTrunk!==next)draftAccess.add(currentTrunk);draftAccess.delete(next);currentTrunk=next;renderPorts();syncControls()};
 ["wanVid","lanVid","cpuLan","cpuWan"].forEach(id=>$(id).oninput=()=>{renderTopology();syncControls()});
-$("form").onsubmit=e=>{e.preventDefault();if(state&&Number(state.enabled)===1)return toast("Desabilite o perfil antes de editar a configuração",false);const err=validateDraft();if(err)return toast(err,false);const p=draftPayload();action("save",p,"Configuração salva; switch físico não foi alterado.")};
-$("toggleBtn").onclick=()=>{if(!state)return;const on=Number(state.enabled)===1;if(!on&&hasUnsavedChanges())return toast("Salve as alterações antes de habilitar o perfil",false);if(on&&!confirm("Desabilitar o perfil e restaurar o layout stock agora?"))return;action(on?"disable":"enable",{},on?"Perfil desabilitado e restauração stock solicitada.":"Perfil habilitado; ainda não aplicado.")};
-$("applyBtn").onclick=()=>{if(!state||Number(state.enabled)!==1)return toast("Habilite o perfil antes de aplicar",false);if(hasUnsavedChanges())return toast("Há alterações não salvas. Salve antes de aplicar",false);if(!confirm("Isso reprograma o RTL8367S imediatamente. Confirme que o Proxmox está preparado, IPTV/VLAN stock está desabilitado e sua sessão não está na porta trunk. Aplicar agora?"))return;action("apply",{},"Perfil persistido aplicado ao switch.")};
+$("form").onsubmit=e=>{e.preventDefault();if(state&&Number(state.enabled)===1)return toast("Desabilite o perfil antes de editar a configuração",false);const err=validateDraft();if(err)return toast(err,false);action("save",draftPayload(),"Configuração salva; switch físico não foi alterado.")};
+$("toggleBtn").onclick=()=>{if(!state||Number(state.enabled)!==1)return;if(!confirm("Desabilitar o perfil e restaurar o layout stock agora?"))return;action("disable",{},"Perfil desabilitado e restauração stock solicitada.")};
+$("applyBtn").onclick=()=>{if(!state)return;if(hasUnsavedChanges())return toast("Há alterações não salvas. Salve antes de aplicar",false);const err=validateDraft();if(err)return toast(err,false);if(!confirm("Isso reprograma o RTL8367S imediatamente. Confirme que o Proxmox está preparado, IPTV/VLAN stock está desabilitado e sua sessão não está na porta trunk. Aplicar agora?"))return;if(Number(state.enabled)===1)action("apply",{},"Perfil reaplicado ao switch.");else activate()};
 $("rollbackBtn").onclick=()=>{if(confirm("Executar rollback para o pipeline/layout stock e desabilitar o perfil gerenciado?"))action("rollback",{},"Rollback solicitado; perfil gerenciado desabilitado.")};
 $("backBtn").onclick=()=>location.href="/webpages/index.html#/";
 refresh();
