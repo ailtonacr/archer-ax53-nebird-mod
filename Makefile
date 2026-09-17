@@ -26,6 +26,7 @@ test: test-firmware
 
 test-firmware:
 	bash -n apply-mods.sh mods/011-devssh.sh mods/020-managed-switch.sh scripts/stamp-switch-build.sh
+	python3 -m py_compile scripts/patch-managed-switch-menu.py
 	sh -n mods/011-devssh-files/etc/init.d/devssh
 	sh -n mods/020-managed-switch-files/usr/sbin/ax53-switch
 	sh -n mods/020-managed-switch-files/etc/init.d/managed-switch
@@ -58,9 +59,11 @@ firmware: $(TARGET) test-firmware
 		test -x rootfs/etc/init.d/managed-switch || { echo "Error: managed-switch init missing" >&2; exit 1; }; \
 		test -x rootfs/etc/hotplug.d/switch/99-managed-switch || { echo "Error: managed-switch hotplug missing" >&2; exit 1; }; \
 		test -f rootfs/usr/lib/lua/luci/controller/admin/managed_switch.lua || { echo "Error: managed-switch LuCI controller missing" >&2; exit 1; }; \
-		test -f rootfs/usr/lib/lua/luci/view/managed-switch.html || { echo "Error: managed-switch LuCI view missing" >&2; exit 1; }; \
+		test -f rootfs/www/webpages/managed-switch.html || { echo "Error: managed-switch SPA page missing" >&2; exit 1; }; \
 		grep -Fq "managed_switch" rootfs/usr/lib/lua/luci/controller/admin/managed_switch.lua || { echo "Error: managed-switch LuCI route missing" >&2; exit 1; }; \
-		grep -Fq "<h1>Switch / VLAN</h1>" rootfs/usr/lib/lua/luci/view/managed-switch.html || { echo "Error: managed-switch UI title missing" >&2; exit 1; }; \
+		grep -Fq "update-store-DQkZxaRI.js" rootfs/www/webpages/managed-switch.html || { echo "Error: managed-switch SPA page is not using the stock authenticated API client" >&2; exit 1; }; \
+		grep -Fq "__AX53_MANAGED_SWITCH_MENU__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch SPA menu launcher missing" >&2; exit 1; }; \
+		grep -Fq "/webpages/managed-switch.html" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch SPA menu target missing" >&2; exit 1; }; \
 		grep -Fxq "enabled=0" rootfs/etc/managed-switch/default.conf || { echo "Error: managed-switch must ship disabled" >&2; exit 1; }; \
 		grep -Fxq "wan_vid=4094" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible WAN VID missing" >&2; exit 1; }; \
 		grep -Fxq "lan_vid=2" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible LAN VID missing" >&2; exit 1; }; \
