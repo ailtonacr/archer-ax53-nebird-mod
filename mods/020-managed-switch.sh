@@ -34,7 +34,6 @@ mkdir -p \
   "$R/etc/rc.d" \
   "$R/usr/sbin" \
   "$R/usr/lib/lua/luci/controller/admin" \
-  "$R/usr/lib/lua/luci/view" \
   "$R/www/webpages"
 
 cp "$FILES/etc/managed-switch/default.conf" "$R/etc/managed-switch/default.conf"
@@ -42,7 +41,6 @@ cp "$FILES/etc/init.d/managed-switch" "$R/etc/init.d/managed-switch"
 cp "$FILES/etc/hotplug.d/switch/99-managed-switch" "$R/etc/hotplug.d/switch/99-managed-switch"
 cp "$FILES/usr/sbin/ax53-switch" "$R/usr/sbin/ax53-switch"
 cp "$FILES/usr/lib/lua/luci/controller/admin/managed_switch.lua" "$R/usr/lib/lua/luci/controller/admin/managed_switch.lua"
-cp "$FILES/usr/lib/lua/luci/view/managed-switch.html" "$R/usr/lib/lua/luci/view/managed-switch.html"
 cp "$FILES/www/webpages/managed-switch.html" "$R/www/webpages/managed-switch.html"
 
 chmod 0644 "$R/etc/managed-switch/default.conf"
@@ -50,7 +48,6 @@ chmod 0755 "$R/etc/init.d/managed-switch"
 chmod 0755 "$R/etc/hotplug.d/switch/99-managed-switch"
 chmod 0755 "$R/usr/sbin/ax53-switch"
 chmod 0644 "$R/usr/lib/lua/luci/controller/admin/managed_switch.lua"
-chmod 0644 "$R/usr/lib/lua/luci/view/managed-switch.html"
 chmod 0644 "$R/www/webpages/managed-switch.html"
 
 ln -sfn "../init.d/managed-switch" "$R/etc/rc.d/S99managed-switch"
@@ -70,6 +67,14 @@ grep -Fq 'entry({"admin", "managed_switch"}' "$R/usr/lib/lua/luci/controller/adm
   echo "Error: managed switch LuCI route missing" >&2
   exit 1
 }
+grep -Fq 'http.redirect(UI)' "$R/usr/lib/lua/luci/controller/admin/managed_switch.lua" || {
+  echo "Error: controller must redirect UI requests to the single SPA page" >&2
+  exit 1
+}
+grep -Fq 'require_same_origin' "$R/usr/lib/lua/luci/controller/admin/managed_switch.lua" || {
+  echo "Error: mutable managed-switch API lacks same-origin guard" >&2
+  exit 1
+}
 grep -Fq 'const ENDPOINT="/cgi-bin/luci/;stok=/admin/managed_switch"' "$R/www/webpages/managed-switch.html" || {
   echo "Error: managed switch SPA page direct LuCI endpoint missing" >&2
   exit 1
@@ -84,4 +89,4 @@ grep -Fq 'Switch / VLAN' "$R/www/webpages/managed-switch.html" || {
 }
 python3 "$PATCH_MENU" "$R" >/dev/null
 
-echo "### Managed switch installed (disabled by default, Rede/Network menu + UI included) ###"
+echo "### Managed switch installed (disabled by default, Rede/Network menu + single UI included) ###"
