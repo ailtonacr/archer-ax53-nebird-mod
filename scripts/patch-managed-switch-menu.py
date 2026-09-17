@@ -5,23 +5,22 @@ The TP-Link AX53 V1 frontend keeps its visual menu/router inside minified,
 gzipped Vue bundles. LuCI controller entries are therefore not materialized as
 SPA menu items automatically.
 
-This patch deliberately does not reimplement or rewrite the stock router. It
-adds one tiny, idempotent DOM launcher to the common application bundle. The
-launcher prefers to place "Switch / VLAN" next to the stock IPTV/VLAN item and
-falls back to the first sidebar/menu list it can identify.
+This patch deliberately avoids reimplementing the stock router. It adds one
+small, idempotent DOM launcher to the common application bundle. The launcher
+prefers to place "Switch / VLAN" next to the stock IPTV/VLAN item and falls
+back to the first sidebar/menu list it can identify.
 
-Clicking the launcher navigates to the authenticated LuCI controller:
-    /cgi-bin/luci/;stok=<current>/admin/managed_switch
+The launcher opens:
+    /webpages/managed-switch.html
 
-When the stock UI uses an empty stok segment (observed on this firmware), the
-fallback is:
-    /cgi-bin/luci/;stok=/admin/managed_switch
+That page imports TP-Link's stock update-store client, so authenticated calls to
+/admin/managed_switch use the same stok/session transport as the rest of the
+SPA. No stok token is parsed from the visible /webpages/index.html#/ URL.
 """
 from __future__ import annotations
 
 import gzip
 import io
-import os
 from pathlib import Path
 import sys
 
@@ -33,11 +32,7 @@ INJECTOR = r'''
 ;(()=>{"use strict";
 const M="__AX53_MANAGED_SWITCH_MENU__",ID="ax53-managed-switch-menu";
 if(window[M])return;window[M]=true;
-const managedUrl=()=>{
-  const p=location.pathname||"";
-  const m=p.match(/^(\/cgi-bin\/luci\/;stok=[^/]*)(?:\/.*)?$/);
-  return(m?m[1]:"/cgi-bin/luci/;stok=")+"/admin/managed_switch";
-};
+const managedUrl=()=>"/webpages/managed-switch.html";
 const stripRouterAttrs=e=>{
   ["data-route","data-router-link","data-to","to"].forEach(a=>e.removeAttribute&&e.removeAttribute(a));
   e.removeAttribute&&e.removeAttribute("target");
@@ -63,17 +58,12 @@ const insertBeside=e=>{
   const parent=anchor.closest&&anchor.closest("li");
   if(parent&&parent.parentNode){
     const wrapper=parent.cloneNode(false);
-    wrapper.removeAttribute("id");
-    wrapper.removeAttribute("data-key");
-    const a=wire(anchor.cloneNode(false));
-    wrapper.appendChild(a);
-    parent.parentNode.insertBefore(wrapper,parent.nextSibling);
-    return true;
+    wrapper.removeAttribute("id");wrapper.removeAttribute("data-key");
+    const a=wire(anchor.cloneNode(false));wrapper.appendChild(a);
+    parent.parentNode.insertBefore(wrapper,parent.nextSibling);return true;
   }
   if(anchor.parentNode){
-    const a=wire(anchor.cloneNode(false));
-    anchor.parentNode.insertBefore(a,anchor.nextSibling);
-    return true;
+    const a=wire(anchor.cloneNode(false));anchor.parentNode.insertBefore(a,anchor.nextSibling);return true;
   }
   return false;
 };
@@ -82,16 +72,14 @@ const fallback=()=>{
   if(!host)return false;
   const sample=host.lastElementChild;
   const li=sample?sample.cloneNode(false):document.createElement("li");
-  li.removeAttribute&&li.removeAttribute("id");
-  li.removeAttribute&&li.removeAttribute("data-key");
+  li.removeAttribute&&li.removeAttribute("id");li.removeAttribute&&li.removeAttribute("data-key");
   const sampleA=sample&&sample.querySelector&&sample.querySelector("a[href]");
   const a=wire(sampleA?sampleA.cloneNode(false):document.createElement("a"));
   li.appendChild(a);host.appendChild(li);return true;
 };
 const inject=()=>{
   if(document.getElementById(ID))return true;
-  const iptv=findIptv();
-  return iptv?insertBeside(iptv):fallback();
+  const iptv=findIptv();return iptv?insertBeside(iptv):fallback();
 };
 let attempts=0;
 const retry=()=>{if(inject()||attempts++>40)return;setTimeout(retry,250)};
@@ -118,20 +106,12 @@ def write_bundle(text: str) -> None:
 
 
 def validate(text: str) -> None:
-    required = (
-        MARKER,
-        "ax53-managed-switch-menu",
-        "/admin/managed_switch",
-        "Switch / VLAN",
-        "MutationObserver",
-    )
+    required = (MARKER, "ax53-managed-switch-menu", "/webpages/managed-switch.html", "Switch / VLAN", "MutationObserver")
     missing = [token for token in required if token not in text]
     if missing:
         raise SystemExit("Error: managed-switch menu injection incomplete: " + ", ".join(missing))
     if text.count(MARKER) != 1:
-        raise SystemExit(
-            f"Error: managed-switch menu marker count is {text.count(MARKER)}, expected 1"
-        )
+        raise SystemExit(f"Error: managed-switch menu marker count is {text.count(MARKER)}, expected 1")
 
 
 def main() -> None:
