@@ -66,10 +66,12 @@ firmware: $(TARGET) test-firmware
 		grep -Fq "update-store-DQkZxaRI.js" <(gzip -dc rootfs/www/webpages/js/ManagedSwitchPage-AX.js.gz) || { echo "Error: managed-switch SPA module does not use stock update-store" >&2; exit 1; }; \
 		grep -Fq "api.request(API" <(gzip -dc rootfs/www/webpages/js/ManagedSwitchPage-AX.js.gz) || { echo "Error: managed-switch SPA module does not use stock API request" >&2; exit 1; }; \
 		if grep -Fq "fetch(" <(gzip -dc rootfs/www/webpages/js/ManagedSwitchPage-AX.js.gz); then echo "Error: managed-switch SPA module bypasses stock request transport" >&2; exit 1; fi; \
-		grep -Fq "__AX53_MANAGED_SWITCH_MENU_V4_STOCK_CONTEXT__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher is not stock-context V4" >&2; exit 1; }; \
+		grep -Fq "__AX53_MANAGED_SWITCH_MENU_V5_IPTV_ANCHOR__" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher is not IPTV/VLAN-anchored V5" >&2; exit 1; }; \
 		grep -Fq "ManagedSwitchPage-AX.js?v=" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch SPA module import missing" >&2; exit 1; }; \
-		grep -Fq "n===\"rede\"||n===\"network\"" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher is not scoped to Rede/Network" >&2; exit 1; }; \
-		grep -Fq "stockChildren" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: launcher does not mirror stock submenu lifecycle" >&2; exit 1; }; \
+		grep -Fq "norm(s)===\"iptv/vlan\"" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: managed-switch launcher is not anchored to stock IPTV/VLAN" >&2; exit 1; }; \
+		grep -Fq "leafIptv" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: launcher lacks IPTV/VLAN leaf discovery" >&2; exit 1; }; \
+		grep -Fq "rowFor" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz) || { echo "Error: launcher lacks stock row discovery" >&2; exit 1; }; \
+		if grep -Fq "n===\"rede\"||n===\"network\"" <(gzip -dc rootfs/www/webpages/js/index-D26yCMJF.js.gz); then echo "Error: fragile Rede/Network text matcher still present" >&2; exit 1; fi; \
 		grep -Fxq "enabled=0" rootfs/etc/managed-switch/default.conf || { echo "Error: managed-switch must ship disabled" >&2; exit 1; }; \
 		grep -Fxq "wan_vid=4094" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible WAN VID missing" >&2; exit 1; }; \
 		grep -Fxq "lan_vid=2" rootfs/etc/managed-switch/default.conf || { echo "Error: stock-compatible LAN VID missing" >&2; exit 1; }; \
