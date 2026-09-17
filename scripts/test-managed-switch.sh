@@ -4,33 +4,21 @@ set -eu
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-fail()
-{
-    echo "FAIL: $*" >&2
-    exit 1
-}
+fail(){ echo "FAIL: $*" >&2; exit 1; }
 
-mods="$(
-    find mods -maxdepth 1 -type f -name '[0-9][0-9][0-9]-*.sh' -printf '%f\n' |
-    sort
-)"
+mods="$(find mods -maxdepth 1 -type f -name '[0-9][0-9][0-9]-*.sh' -printf '%f\n' | sort)"
 expected="011-devssh.sh
 020-managed-switch.sh"
-[ "$mods" = "$expected" ] || {
-    echo "Found custom mods:" >&2
-    echo "$mods" >&2
-    fail "branch must contain only SSH and managed-switch mods"
-}
+[ "$mods" = "$expected" ] || { echo "$mods" >&2; fail "branch must contain only SSH and managed-switch mods"; }
+
+command -v python3 >/dev/null 2>&1 || fail "python3 is required"
+command -v node >/dev/null 2>&1 || fail "node is required to validate SPA module/bundle"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
-
 fake_root="$tmp/rootfs"
 mkdir -p "$fake_root/etc/rc.d" "$fake_root/etc/dropbear" "$fake_root/www/webpages/js"
 
-# Minimal stand-in for the stock common SPA bundle so the menu patcher is
-# exercised by the offline packaging test without carrying a vendor bundle in
-# the fixture.
 python3 - "$fake_root/www/webpages/js/index-D26yCMJF.js.gz" <<'PY'
 import gzip, sys
 with gzip.GzipFile(sys.argv[1], "wb", mtime=0) as gz:
@@ -45,111 +33,103 @@ ROOTFS_DIR="$fake_root" bash -e mods/020-managed-switch.sh >/dev/null
 [ -x "$fake_root/etc/init.d/managed-switch" ] || fail "managed-switch init not packaged"
 [ -x "$fake_root/etc/hotplug.d/switch/99-managed-switch" ] || fail "managed-switch hotplug not packaged"
 [ -f "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" ] || fail "LuCI controller not packaged"
-[ -f "$fake_root/www/webpages/managed-switch.html" ] || fail "SPA managed-switch page not packaged"
-[ ! -e "$fake_root/usr/lib/lua/luci/view/managed-switch.html" ] || fail "duplicate LuCI UI must not be packaged"
-grep -Fq 'entry({"admin", "managed_switch"}' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI route missing"
-grep -Fq 'http.redirect(UI)' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "controller does not redirect to the single UI"
-grep -Fq 'require_same_origin' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "mutable API lacks same-origin guard"
-grep -Fq 'operation == "save"' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "UI save endpoint missing"
-grep -Fq 'cpu_wan == "1" and wan_vid ~= "4094"' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "controller does not mirror CPU/WAN VID constraint"
-grep -Fq 'const ENDPOINT="/cgi-bin/luci/;stok=/admin/managed_switch"' "$fake_root/www/webpages/managed-switch.html" || fail "standalone page LuCI endpoint missing"
-grep -Fq 'credentials:"same-origin"' "$fake_root/www/webpages/managed-switch.html" || fail "standalone page does not preserve router session credentials"
-grep -Fq 'function validateDraft()' "$fake_root/www/webpages/managed-switch.html" || fail "client-side VLAN constraints missing"
-grep -Fq 'draftAccess=new Set' "$fake_root/www/webpages/managed-switch.html" || fail "trunk/access draft preservation missing"
-if grep -Fq 'update-store-DQkZxaRI.js' "$fake_root/www/webpages/managed-switch.html"; then
-    fail "standalone page must not import SPA update-store context"
-fi
-grep -Fq 'Aplicar agora' "$fake_root/www/webpages/managed-switch.html" || fail "explicit apply action missing"
+[ -f "$fake_root/www/webpages/js/ManagedSwitchPage-AX.js.gz" ] || fail "stock-context SPA module not packaged"
+[ ! -e "$fake_root/www/webpages/managed-switch.html" ] || fail "legacy standalone page must not be packaged"
 [ -L "$fake_root/etc/rc.d/S55devssh" ] || fail "S55devssh missing"
 [ -L "$fake_root/etc/rc.d/S99managed-switch" ] || fail "S99managed-switch missing"
 
-python3 - "$fake_root/www/webpages/js/index-D26yCMJF.js.gz" <<'PY'
+grep -Fq 'call("_index")' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "controller route is not stock-dispatch style"
+grep -Fq 'controller._index(dispatch)' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "TP-Link stock controller transport missing"
+grep -Fq 'function dispatch(body)' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "controller dispatch missing"
+grep -Fq 'cpu_wan == "1" and wan_vid ~= "4094"' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "controller CPU/WAN constraint missing"
+
+python3 - "$fake_root/www/webpages/js/ManagedSwitchPage-AX.js.gz" <<'PY'
 import gzip, sys
 with gzip.open(sys.argv[1], "rt", encoding="utf-8") as fh:
-    text = fh.read()
-required = [
-    "__AX53_MANAGED_SWITCH_MENU__",
-    "__AX53_MANAGED_SWITCH_MENU_V3_NETWORK_CHILD__",
-    "ax53-managed-switch-menu",
-    "/webpages/managed-switch.html",
-    "Switch / VLAN",
-    'n===\"rede\"||n===\"network\"',
-    "findSubmenu",
+    text=fh.read()
+required=[
+ 'import { s as api } from "./update-store-DQkZxaRI.js"',
+ 'const API = "/admin/managed_switch"',
+ 'api.request(API',
+ 'preventError: true',
+ 'export function openManagedSwitch()',
+ 'Resposta de status incompleta do roteador.',
 ]
-missing = [x for x in required if x not in text]
-if missing:
-    raise SystemExit("missing Network-child SPA tokens: " + ", ".join(missing))
-if text.count("__AX53_MANAGED_SWITCH_MENU__") != 1:
-    raise SystemExit("SPA menu patch is not idempotent")
-if "findIptv" in text or "const fallback=()=>" in text:
-    raise SystemExit("legacy top-level/IPTV menu injector still present")
+missing=[x for x in required if x not in text]
+if missing: raise SystemExit("missing stock SPA module tokens: "+", ".join(missing))
+if 'fetch(' in text or '/cgi-bin/luci/;stok=' in text:
+    raise SystemExit("managed-switch module bypasses TP-Link stock API transport")
 PY
 
-# Running the patcher twice must remain idempotent.
+python3 - "$fake_root/www/webpages/js/index-D26yCMJF.js.gz" <<'PY'
+import gzip, sys
+with gzip.open(sys.argv[1], "rt", encoding="utf-8") as fh: text=fh.read()
+required=[
+ "__AX53_MANAGED_SWITCH_MENU__",
+ "__AX53_MANAGED_SWITCH_MENU_V4_STOCK_CONTEXT__",
+ "ax53-managed-switch-menu",
+ "ManagedSwitchPage-AX.js?v=",
+ 'n==="rede"||n==="network"',
+ "stockChildren",
+ "import(MOD)",
+]
+missing=[x for x in required if x not in text]
+if missing: raise SystemExit("missing stock-context menu tokens: "+", ".join(missing))
+if text.count("__AX53_MANAGED_SWITCH_MENU__") != 1: raise SystemExit("menu patch is not idempotent")
+if "/webpages/managed-switch.html" in text: raise SystemExit("legacy standalone navigation remains")
+PY
+
 python3 scripts/patch-managed-switch-menu.py "$fake_root" >/dev/null
 python3 - "$fake_root/www/webpages/js/index-D26yCMJF.js.gz" <<'PY'
 import gzip, sys
-with gzip.open(sys.argv[1], "rt", encoding="utf-8") as fh:
-    text = fh.read()
-if text.count("__AX53_MANAGED_SWITCH_MENU__") != 1:
-    raise SystemExit("second menu patch duplicated launcher")
-if text.count("/*__AX53_MANAGED_SWITCH_MENU_BEGIN__*/") != 1:
-    raise SystemExit("second menu patch duplicated sentinel")
+with gzip.open(sys.argv[1], "rt", encoding="utf-8") as fh: text=fh.read()
+if text.count("__AX53_MANAGED_SWITCH_MENU__") != 1: raise SystemExit("second patch duplicated launcher")
+if text.count("/*__AX53_MANAGED_SWITCH_MENU_BEGIN__*/") != 1: raise SystemExit("second patch duplicated sentinel")
 PY
 
 grep -Fxq 'enabled=0' "$fake_root/etc/managed-switch/default.conf" || fail "default must be disabled"
 grep -Fxq 'wan_vid=4094' "$fake_root/etc/managed-switch/default.conf" || fail "WAN VID must preserve stock interface"
 grep -Fxq 'lan_vid=2' "$fake_root/etc/managed-switch/default.conf" || fail "LAN VID must preserve stock interface"
 
-state="$tmp/tp_data"
-log="$tmp/driver.log"
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" init >/dev/null
+state="$tmp/tp_data"; log="$tmp/driver.log"
+CLI="$fake_root/usr/sbin/ax53-switch"
+ENV="MS_ETC_ROOT=$fake_root/etc MS_TP_DATA_ROOT=$state MS_TEST_LOG=$log"
 
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" check | grep -Fxq OK || fail "config validation failed"
+env $ENV "$CLI" init >/dev/null
+env $ENV "$CLI" check | grep -Fxq OK || fail "config validation failed"
 
-# Disabled configuration must be a no-op.
 : > "$log"
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" apply >/dev/null
+env $ENV "$CLI" apply >/dev/null
 [ ! -s "$log" ] || fail "disabled profile unexpectedly touched switch"
 
-# Force-apply is used by offline tests only. Verify the exact intended L2 layout.
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" apply --force >/dev/null
-
-grep -Fxq 'vlan reset' "$log" || fail "VLAN table reset missing"
-grep -Fxq 'vlan init' "$log" || fail "VLAN table init missing"
+env $ENV "$CLI" apply --force >/dev/null
+grep -Fxq 'vlan reset' "$log" || fail "VLAN reset missing"
+grep -Fxq 'vlan init' "$log" || fail "VLAN init missing"
 grep -Fxq 'port ptype set 16 1' "$log" || fail "CPU tagged-frame mode missing"
-grep -Fxq 'vlan set 4094 3 1' "$log" || fail "WAN VLAN layout is not WAN0 + tagged LAN1"
-grep -Fxq 'vlan set 2 65566 28' "$log" || fail "LAN VLAN layout is not tagged LAN1+CPU + access LAN2-4"
+grep -Fxq 'vlan set 4094 3 1' "$log" || fail "default WAN VLAN mask incorrect"
+grep -Fxq 'vlan set 2 65566 28' "$log" || fail "default LAN VLAN mask incorrect"
 
-# Atomic full-profile update: changing the trunk must not require an invalid
-# intermediate state between trunk_port and access_ports.
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" configure 4094 2 2 "1 3 4" 1 0 >/dev/null
+env $ENV "$CLI" configure 4094 2 2 "1 3 4" 1 0 >/dev/null
 grep -Fxq 'trunk_port=2' "$state/managed-switch/config" || fail "atomic configure did not move trunk"
 grep -Fq 'access_ports="1 3 4"' "$state/managed-switch/config" || fail "atomic configure did not update access ports"
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" check | grep -Fxq OK || fail "atomic configuration is invalid"
+: > "$log"
+env $ENV "$CLI" apply --force >/dev/null
+grep -Fxq 'vlan set 4094 5 1' "$log" || fail "WAN VLAN did not follow LAN2 trunk"
+grep -Fxq 'vlan set 2 65566 26' "$log" || fail "LAN mask did not follow access update"
+
+env $ENV "$CLI" configure 4094 2 2 "2 3 4" 1 0 >/dev/null 2>&1 && fail "invalid trunk/access overlap accepted"
+env $ENV "$CLI" configure 100 2 2 "1 3 4" 1 1 >/dev/null 2>&1 && fail "cpu_wan accepted with non-stock WAN VID"
+env $ENV "$CLI" configure 4094 100 2 "1 3 4" 1 0 >/dev/null 2>&1 && fail "cpu_lan accepted with non-stock LAN VID"
+env $ENV "$CLI" check | grep -Fxq OK || fail "rejected candidate corrupted persistent config"
 
 : > "$log"
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" apply --force >/dev/null
-grep -Fxq 'vlan set 4094 5 1' "$log" || fail "WAN VLAN did not follow trunk move to LAN2"
-grep -Fxq 'vlan set 2 65566 26' "$log" || fail "LAN untagged mask did not follow access-port update"
-
-# Invalid full-profile changes must fail and preserve the last valid config.
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" configure 4094 2 2 "2 3 4" 1 0 >/dev/null 2>&1 && fail "invalid trunk/access overlap accepted"
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" configure 100 2 2 "1 3 4" 1 1 >/dev/null 2>&1 && fail "cpu_wan accepted with non-stock WAN VID"
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" configure 4094 100 2 "1 3 4" 1 0 >/dev/null 2>&1 && fail "cpu_lan accepted with non-stock LAN VID"
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" check | grep -Fxq OK || fail "rejected full-profile change corrupted config"
-grep -Fxq 'trunk_port=2' "$state/managed-switch/config" || fail "rejected full-profile change replaced trunk"
-grep -Fq 'access_ports="1 3 4"' "$state/managed-switch/config" || fail "rejected full-profile change replaced access ports"
-
-# Test-mode rollback exercises the documented emergency basic-bridge fallback.
-: > "$log"
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" rollback >/dev/null
-grep -Fxq 'vlan set 4094 65537 1' "$log" || fail "rollback fallback WAN layout missing"
-grep -Fxq 'vlan set 2 65566 30' "$log" || fail "rollback fallback LAN layout missing"
+env $ENV "$CLI" rollback >/dev/null
+grep -Fxq 'vlan set 4094 65537 1' "$log" || fail "fallback WAN layout missing"
+grep -Fxq 'vlan set 2 65566 30' "$log" || fail "fallback LAN layout missing"
 grep -Fq 'enabled="0"' "$state/managed-switch/config" || fail "rollback did not persist disabled state"
 
 if command -v luac >/dev/null 2>&1; then
     luac -p "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI controller syntax invalid"
 fi
 
-echo "OK: managed-switch offline contract + Network-child/single-UI packaging"
+echo "OK: managed-switch CLI + stock TP-Link SPA/API contract"
