@@ -13,9 +13,13 @@ back to the first sidebar/menu list it can identify.
 The launcher opens:
     /webpages/managed-switch.html
 
-That page imports TP-Link's stock update-store client, so authenticated calls to
-/admin/managed_switch use the same stok/session transport as the rest of the
-SPA. No stok token is parsed from the visible /webpages/index.html#/ URL.
+The standalone page talks directly to the authenticated LuCI dispatcher using
+same-origin fetch and the stock AX53 empty-stok URL convention:
+    /cgi-bin/luci/;stok=/admin/managed_switch
+
+It intentionally does not import TP-Link's update-store module, because that
+module expects Vue/SPA application context that is not initialized on a
+standalone HTML page.
 """
 from __future__ import annotations
 
