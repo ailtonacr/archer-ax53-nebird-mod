@@ -167,19 +167,58 @@ end
 
 Isso deixa o transporte/session/crypto com a própria infraestrutura TP-Link.
 
-## Menu Rede
+## Menu Rede — engenharia reversa do bundle stock
 
-`scripts/patch-managed-switch-menu.py` aplica patch mínimo e idempotente no bundle comum do SPA.
+### EVIDÊNCIA — bundle observado no hardware
 
-O item `Switch / VLAN`:
+O bundle `/www/webpages/js/index-D26yCMJF.js.gz` foi extraído do AX53 via DEV SSH em 2026-09-17.
 
-- só é criado como filho de `Rede` / `Network`;
-- é clonado de um item real do submenu para herdar estrutura/classes stock;
-- não possui fallback top-level;
-- é removido quando o submenu stock é desmontado/fechado;
-- carrega dinamicamente `ManagedSwitchPage-AX.js` dentro do contexto já inicializado do SPA.
+- SHA256 do `.gz`: `95b11ac5181775faaf25e4e880663f3ba23c8d82589b20acb44e8ea5f35e88ad`.
+- Conteúdo descompactado observado: `20.988` caracteres.
+- A imagem em execução ainda continha o injetor V5 anterior no final do arquivo.
+- Removendo somente o bloco delimitado pelo marcador legado, o trecho vendor/stock restante possui `17.682` caracteres.
 
-Isso corrige o comportamento antigo em que `Switch / VLAN` continuava visível mesmo com `Rede` recolhido.
+A análise mostrou que o menu não nasce do DOM. O bundle possui dois contratos separados.
+
+Rotas são declaradas em uma tabela `k`:
+
+```js
+{name:"networkStatus",path:"networkStatus",component:...}
+{name:"lanAdv",path:"lanAdv",component:...}
+{name:"dhcpServerAdv",path:"dhcpServer",component:...}
+{name:"iptvAdv",path:"iptvAdv",component:...}
+```
+
+`H.getRouteConfig()` coleta os `key` das folhas do menu e mantém as rotas de `k` cujo `name` aparece nessa árvore.
+
+A navegação vem do store `navConfig`. Ele seleciona `O.base`/configuração regional e depois a árvore do modo de operação. A árvore usa nós `key`, `text` e `children`. Em seguida `H.getExcludedMenu()` clona e filtra módulos ocultos/permissões antes da renderização.
+
+### INCIDENTE — V5 clonava o DOM renderizado
+
+A variante anterior procurava visualmente `IPTV/VLAN`, fazia `cloneNode()` da linha e mantinha o item com `MutationObserver`. Isso produziu a renderização quebrada observada no hardware, com `IPTV/VLAN` e `Switch / VLAN` ocupando a mesma estrutura/linha do submenu.
+
+A causa não era CSS do managed-switch: estávamos duplicando uma representação já renderizada em vez de declarar outro nó no modelo de navegação.
+
+### DECISÃO — V6 usa o mesmo modelo do menu stock
+
+`scripts/patch-managed-switch-menu.py` agora:
+
+1. remove de forma explícita o injetor DOM legado, se presente;
+2. adiciona uma rota normal à tabela stock:
+   ```js
+   {name:"managedSwitch",path:"managedSwitch",component:...}
+   ```
+3. adiciona ao `modeMenu` um nó stock-shaped:
+   ```js
+   {key:"managedSwitch",text:"Switch / VLAN"}
+   ```
+4. insere esse nó imediatamente depois do filho cujo `key` é `iptvAdv`;
+5. preserva sem alteração o filtro stock `H.getExcludedMenu(...)`;
+6. usa um wrapper de lifecycle da rota apenas para abrir/fechar `ManagedSwitchPage-AX.js`.
+
+Não existe mais `MutationObserver`, polling de DOM, `cloneNode()`, `leafIptv` ou `rowFor` no bundle final. O menu é montado pela própria TP-Link e, portanto, herda a mesma estrutura, largura, seleção e comportamento dos outros filhos de `Rede`.
+
+O patch é fail-closed: se os anchors de rota, `navConfig`, `modeMenu` ou filtro visível mudarem no firmware base, o build aborta em vez de aplicar um patch aproximado.
 
 ## Segurança da UI
 
@@ -237,13 +276,18 @@ Comprovado em código/vendor:
 - primitives RTL8367S;
 - VIDs stock;
 - persistência/validação da CLI;
-- arquitetura frontend/backend baseada no transporte stock.
+- arquitetura frontend/backend baseada no transporte stock;
+- contrato real do menu/roteador SPA no bundle extraído do hardware;
+- patch V6 aplicado com sucesso ao bundle real fornecido, validado por `node --check`;
+- idempotência da V6 validada localmente no mesmo bundle.
 
 Ainda requer validação na imagem/hardware da revisão atual:
 
 - `make test-firmware` executado no clone local;
 - build/repack completo;
-- menu Rede após reboot/cache limpo;
+- flash da nova imagem;
+- menu `Switch / VLAN` como linha independente dentro de `Rede`;
+- navegação `#/managedSwitch` e retorno pelo botão `Voltar`;
 - status decriptado pelo `update-store`;
 - save sem alteração do switch;
 - apply real do trunk;
