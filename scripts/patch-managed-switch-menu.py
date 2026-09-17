@@ -2,7 +2,7 @@
 """Inject the Managed Switch launcher under the stock Network/Rede menu.
 
 The AX53 V1 frontend is a minified, gzipped Vue SPA. LuCI controller entries do
-not automatically become visible SPA routes, so this patch adds one tiny DOM
+not automatically become visible SPA routes, so this patch adds one small DOM
 launcher while leaving the stock router/menu implementation intact.
 
 The launcher is intentionally nested under the existing "Rede" / "Network"
@@ -25,7 +25,7 @@ import sys
 ROOT = Path(sys.argv[1] if len(sys.argv) > 1 else "rootfs")
 BUNDLE = ROOT / "www/webpages/js/index-D26yCMJF.js.gz"
 MARKER = "__AX53_MANAGED_SWITCH_MENU__"
-VERSION = "__AX53_MANAGED_SWITCH_MENU_V2_NETWORK__"
+VERSION = "__AX53_MANAGED_SWITCH_MENU_V3_NETWORK_CHILD__"
 BEGIN = "/*__AX53_MANAGED_SWITCH_MENU_BEGIN__*/"
 END = "/*__AX53_MANAGED_SWITCH_MENU_END__*/"
 
@@ -37,9 +37,14 @@ if(window[M]===V)return;window[M]=V;
 const managedUrl=()=>"/webpages/managed-switch.html";
 const norm=s=>(s||"").replace(/\s+/g," ").trim().toLowerCase();
 const isNetworkLabel=s=>{{const n=norm(s);return n==="rede"||n==="network";}};
+const clearActiveState=e=>{{
+  if(!e||e.nodeType!==1)return;
+  e.removeAttribute("aria-current");e.removeAttribute("aria-selected");
+  if(e.classList)[...e.classList].forEach(c=>{{if(/active|selected|current/i.test(c))e.classList.remove(c);}});
+}};
 const stripRouterAttrs=e=>{{
   ["data-route","data-router-link","data-to","to","data-key"].forEach(a=>e.removeAttribute&&e.removeAttribute(a));
-  e.removeAttribute&&e.removeAttribute("target");
+  e.removeAttribute&&e.removeAttribute("target");clearActiveState(e);
 }};
 const wire=e=>{{
   e.id=ID;stripRouterAttrs(e);
@@ -49,13 +54,11 @@ const wire=e=>{{
   e.addEventListener("click",ev=>{{ev.preventDefault();ev.stopPropagation();location.href=managedUrl();}});
   return e;
 }};
-const networkTrigger=()=>{{
+const networkTriggers=()=>{{
+  const out=[];
   const nodes=document.querySelectorAll("a,button,span,div");
-  for(const e of nodes){{
-    if(!isNetworkLabel(e.textContent))continue;
-    return e;
-  }}
-  return null;
+  for(const e of nodes)if(isNetworkLabel(e.textContent))out.push(e);
+  return out;
 }};
 const looksLikeMenu=e=>{{
   if(!e||e.nodeType!==1)return false;
@@ -95,11 +98,13 @@ const buildItem=submenu=>{{
 }};
 const inject=()=>{{
   if(document.getElementById(ID))return true;
-  const trigger=networkTrigger();
-  const submenu=findSubmenu(trigger);
-  if(!submenu)return false;
-  submenu.appendChild(buildItem(submenu));
-  return true;
+  for(const trigger of networkTriggers()){{
+    const submenu=findSubmenu(trigger);
+    if(!submenu)continue;
+    submenu.appendChild(buildItem(submenu));
+    return true;
+  }}
+  return false;
 }};
 let attempts=0;
 const retry=()=>{{if(inject()||attempts++>120)return;setTimeout(retry,250);}};
@@ -155,6 +160,7 @@ def validate(text: str) -> None:
         "/webpages/managed-switch.html",
         "Switch / VLAN",
         'n==="rede"||n==="network"',
+        "networkTriggers",
         "findSubmenu",
         "MutationObserver",
     )
