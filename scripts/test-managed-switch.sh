@@ -36,6 +36,12 @@ ROOTFS_DIR="$fake_root" bash -e mods/020-managed-switch.sh >/dev/null
 [ -x "$fake_root/usr/sbin/ax53-switch" ] || fail "ax53-switch not packaged"
 [ -x "$fake_root/etc/init.d/managed-switch" ] || fail "managed-switch init not packaged"
 [ -x "$fake_root/etc/hotplug.d/switch/99-managed-switch" ] || fail "managed-switch hotplug not packaged"
+[ -f "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" ] || fail "LuCI controller not packaged"
+[ -f "$fake_root/usr/lib/lua/luci/view/managed-switch.html" ] || fail "managed-switch UI not packaged"
+grep -Fq 'entry({"admin", "managed_switch"}' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI route missing"
+grep -Fq 'operation == "save"' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "UI save endpoint missing"
+grep -Fq '<h1>Switch / VLAN</h1>' "$fake_root/usr/lib/lua/luci/view/managed-switch.html" || fail "UI title missing"
+grep -Fq 'Aplicar agora' "$fake_root/usr/lib/lua/luci/view/managed-switch.html" || fail "explicit apply action missing"
 [ -L "$fake_root/etc/rc.d/S55devssh" ] || fail "S55devssh missing"
 [ -L "$fake_root/etc/rc.d/S99managed-switch" ] || fail "S99managed-switch missing"
 
@@ -63,9 +69,26 @@ grep -Fxq 'port ptype set 16 1' "$log" || fail "CPU tagged-frame mode missing"
 grep -Fxq 'vlan set 4094 3 1' "$log" || fail "WAN VLAN layout is not WAN0 + tagged LAN1"
 grep -Fxq 'vlan set 2 65566 28' "$log" || fail "LAN VLAN layout is not tagged LAN1+CPU + access LAN2-4"
 
-# Invalid overlap must fail and preserve the last valid persistent config.
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" set access_ports "1 2 3" >/dev/null 2>&1 && fail "trunk/access overlap accepted"
-MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" check | grep -Fxq OK || fail "rejected change corrupted persistent config"
-grep -Fq 'access_ports="2 3 4"' "$state/managed-switch/config" || fail "rejected change replaced access_ports"
+# Atomic full-profile update: changing the trunk must not require an invalid
+# intermediate state between trunk_port and access_ports.
+MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" configure 4094 2 2 "1 3 4" 1 0 >/dev/null
+grep -Fxq 'trunk_port=2' "$state/managed-switch/config" || fail "atomic configure did not move trunk"
+grep -Fq 'access_ports="1 3 4"' "$state/managed-switch/config" || fail "atomic configure did not update access ports"
+MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" check | grep -Fxq OK || fail "atomic configuration is invalid"
 
-echo "OK: managed-switch offline contract"
+: > "$log"
+MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" apply --force >/dev/null
+grep -Fxq 'vlan set 4094 5 1' "$log" || fail "WAN VLAN did not follow trunk move to LAN2"
+grep -Fxq 'vlan set 2 65566 26' "$log" || fail "LAN untagged mask did not follow access-port update"
+
+# Invalid full-profile change must fail and preserve the last valid config.
+MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" configure 4094 2 2 "2 3 4" 1 0 >/dev/null 2>&1 && fail "invalid full-profile overlap accepted"
+MS_ETC_ROOT="$fake_root/etc" MS_TP_DATA_ROOT="$state" MS_TEST_LOG="$log" "$fake_root/usr/sbin/ax53-switch" check | grep -Fxq OK || fail "rejected full-profile change corrupted config"
+grep -Fxq 'trunk_port=2' "$state/managed-switch/config" || fail "rejected full-profile change replaced trunk"
+grep -Fq 'access_ports="1 3 4"' "$state/managed-switch/config" || fail "rejected full-profile change replaced access ports"
+
+if command -v luac >/dev/null 2>&1; then
+    luac -p "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI controller syntax invalid"
+fi
+
+echo "OK: managed-switch offline contract + LuCI packaging"
