@@ -45,12 +45,17 @@ ROOTFS_DIR="$fake_root" bash -e mods/020-managed-switch.sh >/dev/null
 [ -x "$fake_root/etc/init.d/managed-switch" ] || fail "managed-switch init not packaged"
 [ -x "$fake_root/etc/hotplug.d/switch/99-managed-switch" ] || fail "managed-switch hotplug not packaged"
 [ -f "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" ] || fail "LuCI controller not packaged"
-[ -f "$fake_root/usr/lib/lua/luci/view/managed-switch.html" ] || fail "LuCI fallback view not packaged"
 [ -f "$fake_root/www/webpages/managed-switch.html" ] || fail "SPA managed-switch page not packaged"
+[ ! -e "$fake_root/usr/lib/lua/luci/view/managed-switch.html" ] || fail "duplicate LuCI UI must not be packaged"
 grep -Fq 'entry({"admin", "managed_switch"}' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI route missing"
+grep -Fq 'http.redirect(UI)' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "controller does not redirect to the single UI"
+grep -Fq 'require_same_origin' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "mutable API lacks same-origin guard"
 grep -Fq 'operation == "save"' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "UI save endpoint missing"
+grep -Fq 'cpu_wan == "1" and wan_vid ~= "4094"' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "controller does not mirror CPU/WAN VID constraint"
 grep -Fq 'const ENDPOINT="/cgi-bin/luci/;stok=/admin/managed_switch"' "$fake_root/www/webpages/managed-switch.html" || fail "standalone page LuCI endpoint missing"
 grep -Fq 'credentials:"same-origin"' "$fake_root/www/webpages/managed-switch.html" || fail "standalone page does not preserve router session credentials"
+grep -Fq 'function validateDraft()' "$fake_root/www/webpages/managed-switch.html" || fail "client-side VLAN constraints missing"
+grep -Fq 'draftAccess=new Set' "$fake_root/www/webpages/managed-switch.html" || fail "trunk/access draft preservation missing"
 if grep -Fq 'update-store-DQkZxaRI.js' "$fake_root/www/webpages/managed-switch.html"; then
     fail "standalone page must not import SPA update-store context"
 fi
@@ -147,4 +152,4 @@ if command -v luac >/dev/null 2>&1; then
     luac -p "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI controller syntax invalid"
 fi
 
-echo "OK: managed-switch offline contract + Network-menu/UI packaging"
+echo "OK: managed-switch offline contract + Network-menu/single-UI packaging"
