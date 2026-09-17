@@ -19,10 +19,18 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 fake_root="$tmp/rootfs"
 mkdir -p "$fake_root/etc/rc.d" "$fake_root/etc/dropbear" "$fake_root/www/webpages/js"
 
+# Minimal syntactically-valid fixture containing the stock contracts observed on
+# hardware in index-D26yCMJF.js.gz:
+# - route declarations live in `k` and end immediately before class H;
+# - navConfig builds a visible menu by filtering the selected stock menu tree.
 python3 - "$fake_root/www/webpages/js/index-D26yCMJF.js.gz" <<'PY'
 import gzip, sys
+text = r'''const C=(e)=>e;
+const k=[{name:"networkStatus",path:"networkStatus",component:()=>C((()=>import("./status.js")),[],import.meta.url)},{name:"lanAdv",path:"lanAdv",component:()=>C((()=>import("./lan.js")),[],import.meta.url)},{name:"iptvAdv",path:"iptvAdv",component:()=>C((()=>import("./iptv.js")),[],import.meta.url)}];class H{static getTopMenuInfo(e,t){return e.find((({key:e})=>e===t))}static getExcludedMenu(e,t){return e}}
+const de=t("navConfig",(()=>{const{setting:e,deviceConfig:t}=o(T()),{currentDialType:n,mode:r}=o(ie()),a=i((()=>{const t=O.base,n=e.value.region.toLowerCase();if(0===n.length)return t;const i=O[n];return i?{...t,...i}:t})),s=i((()=>{const e=t.value.supportOperationMode[0];return a.value[r.value]||a.value[e]||[]})),u=i((()=>{const e=[...t.value.hiddenFunction.modules,...oe.getToHideModules(n.value),...le.getHideMenus()];return H.getExcludedMenu(s.value,e)}));return{modeMenu:s,menu:u}}));
+'''
 with gzip.GzipFile(sys.argv[1], "wb", mtime=0) as gz:
-    gz.write(b'console.log("stock-spa-fixture");\n')
+    gz.write(text.encode())
 PY
 
 ROOTFS_DIR="$fake_root" bash -e mods/011-devssh.sh >/dev/null
@@ -65,28 +73,46 @@ python3 - "$fake_root/www/webpages/js/index-D26yCMJF.js.gz" <<'PY'
 import gzip, sys
 with gzip.open(sys.argv[1], "rt", encoding="utf-8") as fh: text=fh.read()
 required=[
- "__AX53_MANAGED_SWITCH_MENU__",
- "__AX53_MANAGED_SWITCH_MENU_V5_IPTV_ANCHOR__",
- "ax53-managed-switch-menu",
+ "/*__AX53_MANAGED_SWITCH_NATIVE_MENU_V6__*/",
+ 'name:"managedSwitch"',
+ 'path:"managedSwitch"',
  "ManagedSwitchPage-AX.js?v=",
- 'norm(s)==="iptv/vlan"',
- "leafIptv",
- "rowFor",
- "import(MOD)",
+ "ManagedSwitchRoute",
+ "ax53ManagedSwitchMenu",
+ 'findIndex((e=>"iptvAdv"===e.key))',
+ '{key:"managedSwitch",text:"Switch / VLAN"}',
+ 'return ax53ManagedSwitchMenu(n),n',
+ 'return H.getExcludedMenu(s.value,e)',
+ "e.openManagedSwitch()",
+ "window.history.back()",
 ]
 missing=[x for x in required if x not in text]
-if missing: raise SystemExit("missing IPTV-anchored menu tokens: "+", ".join(missing))
-if text.count("__AX53_MANAGED_SWITCH_MENU__") != 1: raise SystemExit("menu patch is not idempotent")
-if "/webpages/managed-switch.html" in text: raise SystemExit("legacy standalone navigation remains")
-if 'n==="rede"||n==="network"' in text: raise SystemExit("fragile parent Rede/Network text matcher still present")
+if missing: raise SystemExit("missing native route/menu tokens: "+", ".join(missing))
+if text.count('name:"managedSwitch"') != 1: raise SystemExit("managed-switch route is not unique")
+if text.count('key:"managedSwitch"') != 1: raise SystemExit("managed-switch menu node is not unique")
+if text.count("/*__AX53_MANAGED_SWITCH_NATIVE_MENU_V6__*/") != 1: raise SystemExit("native menu marker is not unique")
+for forbidden in (
+    "__AX53_MANAGED_SWITCH_MENU__",
+    "MutationObserver",
+    "cloneNode(",
+    "leafIptv",
+    "rowFor",
+    "/webpages/managed-switch.html",
+):
+    if forbidden in text:
+        raise SystemExit("retired DOM/standalone integration remains: "+forbidden)
 PY
+
+gzip -dc "$fake_root/www/webpages/js/index-D26yCMJF.js.gz" | node --input-type=module --check
 
 python3 scripts/patch-managed-switch-menu.py "$fake_root" >/dev/null
 python3 - "$fake_root/www/webpages/js/index-D26yCMJF.js.gz" <<'PY'
 import gzip, sys
 with gzip.open(sys.argv[1], "rt", encoding="utf-8") as fh: text=fh.read()
-if text.count("__AX53_MANAGED_SWITCH_MENU__") != 1: raise SystemExit("second patch duplicated launcher")
-if text.count("/*__AX53_MANAGED_SWITCH_MENU_BEGIN__*/") != 1: raise SystemExit("second patch duplicated sentinel")
+if text.count('name:"managedSwitch"') != 1: raise SystemExit("second patch duplicated route")
+if text.count('key:"managedSwitch"') != 1: raise SystemExit("second patch duplicated menu node")
+if text.count("/*__AX53_MANAGED_SWITCH_NATIVE_MENU_V6__*/") != 1: raise SystemExit("second patch duplicated native marker")
+if text.count("ManagedSwitchPage-AX.js?v=") != 1: raise SystemExit("second patch duplicated module import")
 PY
 
 grep -Fxq 'enabled=0' "$fake_root/etc/managed-switch/default.conf" || fail "default must be disabled"
@@ -134,4 +160,4 @@ if command -v luac >/dev/null 2>&1; then
     luac -p "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI controller syntax invalid"
 fi
 
-echo "OK: managed-switch CLI + stock TP-Link SPA/API contract + IPTV/VLAN menu anchor"
+echo "OK: managed-switch CLI + stock TP-Link SPA/API contract + native route/nav menu model"
