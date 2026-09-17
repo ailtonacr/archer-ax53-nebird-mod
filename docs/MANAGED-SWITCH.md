@@ -111,6 +111,55 @@ ax53-switch rollback
 
 A restauração prefere o pipeline stock de IPTV/switch. Existe fallback para o layout stock básico (WAN 4094 + CPU; LAN 2 + CPU).
 
+## Interface web
+
+A branch inclui uma interface autenticada própria do LuCI, registrada em:
+
+```text
+admin/managed_switch
+```
+
+O controller fica em:
+
+```text
+/usr/lib/lua/luci/controller/admin/managed_switch.lua
+```
+
+e a view em:
+
+```text
+/usr/lib/lua/luci/view/managed-switch.html
+```
+
+A tela permite:
+
+- ler o estado persistente e a tabela VLAN ativa do RTL8367S;
+- configurar VLAN WAN e VLAN LAN;
+- escolher a porta trunk para o Proxmox;
+- escolher quais LANs permanecem access/untagged;
+- controlar participação da CPU nas VLANs LAN/WAN;
+- visualizar a topologia resultante antes de salvar;
+- salvar o perfil de forma atômica, sem alterar o hardware;
+- habilitar/desabilitar o perfil;
+- aplicar explicitamente a configuração L2;
+- executar rollback para o pipeline/layout stock.
+
+O salvamento usa um único comando atômico:
+
+```sh
+ax53-switch configure <wan_vid> <lan_vid> <trunk_port> "<access_ports>" <cpu_lan> <cpu_wan>
+```
+
+Isso evita estados intermediários inválidos ao trocar a porta trunk.
+
+### Segurança da UI
+
+`Salvar configuração` altera apenas `/tp_data/managed-switch/config`.
+
+`Aplicar agora` é separado e apresenta confirmação explícita no navegador. A UI também recomenda que o primeiro cutover seja executado por Wi-Fi ou por uma porta access, e não pela porta escolhida como trunk.
+
+A rota LuCI está implementada no firmware. A exibição automática dessa entrada dentro do menu SPA específico da TP-Link ainda precisa ser validada no hardware/browser stock; mesmo que o SPA não materialize o item visualmente, o endpoint autenticado continua registrado no dispatcher LuCI.
+
 ## Segurança operacional
 
 Antes de `apply`:
