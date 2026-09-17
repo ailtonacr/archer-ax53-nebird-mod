@@ -85,7 +85,7 @@ firmware: $(TARGET) test-firmware
 
 tools:
 	$(MAKE) -C vendor/mtd-utils
-	$(MAKE) -C vendor/squashfs clean
+	$(MAKE) -C vendor/squashfs
 	$(MAKE) -C vendor/squashfs4
 
 clean:
