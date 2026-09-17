@@ -5,7 +5,7 @@ local sys = require "luci.sys"
 local json = require "luci.json"
 
 local CLI = "/usr/sbin/ax53-switch"
-local VIEW = "/usr/lib/lua/luci/view/managed-switch.html"
+local UI = "/webpages/managed-switch.html"
 
 function index()
     local page = entry({"admin", "managed_switch"}, call("action_index"), "Switch / VLAN", 98)
@@ -141,6 +141,23 @@ local function require_post()
     return true
 end
 
+local function require_same_origin()
+    local origin = tostring(http.getenv("HTTP_ORIGIN") or "")
+    local host = tostring(http.getenv("HTTP_HOST") or "")
+
+    -- Browsers normally send Origin on fetch POSTs. Keep CLI/diagnostic callers
+    -- without Origin working, but reject an explicit cross-origin browser POST.
+    if origin ~= "" and host ~= "" then
+        local origin_host = origin:match("^https?://([^/]+)$")
+        if not origin_host or origin_host ~= host then
+            respond(403, { success = false, error = "cross-origin request rejected" })
+            return false
+        end
+    end
+
+    return true
+end
+
 local function handle_status()
     local status, err = current_status()
     if not status then
@@ -190,6 +207,13 @@ local function handle_save()
         })
     end
 
+    if cpu_wan == "1" and wan_vid ~= "4094" then
+        return respond(400, {
+            success = false,
+            error = "WAN VLAN must remain 4094 while CPU/WAN membership is enabled"
+        })
+    end
+
     local rc, output = run_cli({
         "configure",
         wan_vid,
@@ -234,34 +258,18 @@ local function handle_simple(command)
     })
 end
 
-local function render_page()
-    local file = io.open(VIEW, "r")
-    if not file then
-        http.status(500, "Error")
-        http.prepare_content("text/plain")
-        http.write("Managed switch view not found")
-        return
-    end
-
-    local content = file:read("*a")
-    file:close()
-
-    http.prepare_content("text/html; charset=utf-8")
-    http.write(content)
-end
-
 function action_index()
     local operation = tostring(http.formvalue("operation") or "")
 
     if operation == "" then
-        return render_page()
+        return http.redirect(UI)
     end
 
     if operation == "status" then
         return handle_status()
     end
 
-    if not require_post() then
+    if not require_post() or not require_same_origin() then
         return
     end
 
