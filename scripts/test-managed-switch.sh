@@ -22,12 +22,20 @@ expected="011-devssh.sh
     fail "branch must contain only SSH and managed-switch mods"
 }
 
-
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
 fake_root="$tmp/rootfs"
-mkdir -p "$fake_root/etc/rc.d" "$fake_root/etc/dropbear"
+mkdir -p "$fake_root/etc/rc.d" "$fake_root/etc/dropbear" "$fake_root/www/webpages/js"
+
+# Minimal stand-in for the stock common SPA bundle so the menu patcher is
+# exercised by the offline packaging test without carrying a vendor bundle in
+# the fixture.
+python3 - "$fake_root/www/webpages/js/index-D26yCMJF.js.gz" <<'PY'
+import gzip, sys
+with gzip.GzipFile(sys.argv[1], "wb", mtime=0) as gz:
+    gz.write(b'console.log("stock-spa-fixture");\n')
+PY
 
 ROOTFS_DIR="$fake_root" bash -e mods/011-devssh.sh >/dev/null
 ROOTFS_DIR="$fake_root" bash -e mods/020-managed-switch.sh >/dev/null
@@ -37,13 +45,37 @@ ROOTFS_DIR="$fake_root" bash -e mods/020-managed-switch.sh >/dev/null
 [ -x "$fake_root/etc/init.d/managed-switch" ] || fail "managed-switch init not packaged"
 [ -x "$fake_root/etc/hotplug.d/switch/99-managed-switch" ] || fail "managed-switch hotplug not packaged"
 [ -f "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" ] || fail "LuCI controller not packaged"
-[ -f "$fake_root/usr/lib/lua/luci/view/managed-switch.html" ] || fail "managed-switch UI not packaged"
+[ -f "$fake_root/usr/lib/lua/luci/view/managed-switch.html" ] || fail "LuCI fallback view not packaged"
+[ -f "$fake_root/www/webpages/managed-switch.html" ] || fail "SPA managed-switch page not packaged"
 grep -Fq 'entry({"admin", "managed_switch"}' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI route missing"
 grep -Fq 'operation == "save"' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "UI save endpoint missing"
-grep -Fq '<h1>Switch / VLAN</h1>' "$fake_root/usr/lib/lua/luci/view/managed-switch.html" || fail "UI title missing"
-grep -Fq 'Aplicar agora' "$fake_root/usr/lib/lua/luci/view/managed-switch.html" || fail "explicit apply action missing"
+grep -Fq 'update-store-DQkZxaRI.js' "$fake_root/www/webpages/managed-switch.html" || fail "SPA page does not use stock authenticated API client"
+grep -Fq 'const ENDPOINT="/admin/managed_switch"' "$fake_root/www/webpages/managed-switch.html" || fail "SPA page backend endpoint missing"
+grep -Fq 'Aplicar agora' "$fake_root/www/webpages/managed-switch.html" || fail "explicit apply action missing"
 [ -L "$fake_root/etc/rc.d/S55devssh" ] || fail "S55devssh missing"
 [ -L "$fake_root/etc/rc.d/S99managed-switch" ] || fail "S99managed-switch missing"
+
+python3 - "$fake_root/www/webpages/js/index-D26yCMJF.js.gz" <<'PY'
+import gzip, sys
+with gzip.open(sys.argv[1], "rt", encoding="utf-8") as fh:
+    text = fh.read()
+required = ["__AX53_MANAGED_SWITCH_MENU__", "ax53-managed-switch-menu", "/webpages/managed-switch.html", "Switch / VLAN"]
+missing = [x for x in required if x not in text]
+if missing:
+    raise SystemExit("missing SPA menu tokens: " + ", ".join(missing))
+if text.count("__AX53_MANAGED_SWITCH_MENU__") != 1:
+    raise SystemExit("SPA menu patch is not idempotent")
+PY
+
+# Running the patcher twice must remain idempotent.
+python3 scripts/patch-managed-switch-menu.py "$fake_root" >/dev/null
+python3 - "$fake_root/www/webpages/js/index-D26yCMJF.js.gz" <<'PY'
+import gzip, sys
+with gzip.open(sys.argv[1], "rt", encoding="utf-8") as fh:
+    text = fh.read()
+if text.count("__AX53_MANAGED_SWITCH_MENU__") != 1:
+    raise SystemExit("second menu patch duplicated launcher")
+PY
 
 grep -Fxq 'enabled=0' "$fake_root/etc/managed-switch/default.conf" || fail "default must be disabled"
 grep -Fxq 'wan_vid=4094' "$fake_root/etc/managed-switch/default.conf" || fail "WAN VID must preserve stock interface"
@@ -91,4 +123,4 @@ if command -v luac >/dev/null 2>&1; then
     luac -p "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI controller syntax invalid"
 fi
 
-echo "OK: managed-switch offline contract + LuCI packaging"
+echo "OK: managed-switch offline contract + SPA menu/UI packaging"
