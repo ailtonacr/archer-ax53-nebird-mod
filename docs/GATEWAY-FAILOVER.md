@@ -6,7 +6,7 @@ Base: feat/managed-switch-router-on-a-stick. No NetBird, new NAND partitions, CI
   gate. Auto refuses unqualified adapters; stock default remains unchanged.
 - Observer service is packaged but not linked at boot. Only observe can start
   via init. No hardware writes from the included adapter.
-- Local/offline shell tests with mock adapter, including manual return only after stable recovery and verified fallback. Initial auto operation requires verified primary layout. No hardware qualification implied.
+- Shared nonblocking custom switch/failover lock, strict non-executable config parsing, switch intent marker, bounded adapter calls and monotonic sample windows. Vendor boot/hotplug remains an outstanding integration gate.\n- Local/offline shell tests with mock adapter, including manual return only after stable recovery and verified fallback. Initial auto operation requires verified primary layout. No hardware qualification implied. A stale lock or interrupted journal requires operator reconciliation; do not remove it blindly.
 ## Hardware gates before real transitions
 1. Inspect installed build, vendor network UCI/state, actual bridge/VLAN table,
    DHCP and IPv6 RA processes, NAT/firewall and WAN address; secure physical

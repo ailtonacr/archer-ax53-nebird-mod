@@ -10,7 +10,9 @@ LIB=${GF_LIB_ROOT:-/usr/lib/gateway-failover}
 CONF="$DATA/gateway-failover/config"
 STATE="$RUN/gateway-failover.state"
 JOURNAL="$DATA/gateway-failover/journal"
-LOCK="$RUN/gateway-failover.lock"
+LOCK="$RUN/ax53-network.lock"
+SWITCH_PENDING="$DATA/managed-switch/transition.pending"
+CLOCK="${GF_CLOCK_FILE:-/proc/uptime}"
 ADAPTER="$LIB/board-adapter"
 . "$LIB/core.sh"
 die() { echo "ax53-failover: $*" >&2; exit 1; }
@@ -21,12 +23,16 @@ atomic() {
 }
 init() {
     mkdir -p "$DATA/gateway-failover" "$RUN"
-    [ -f "$CONF" ] || cp "$ETC/gateway-failover/default.conf" "$CONF"
+    [ -f "$CONF" ] || { cp "$ETC/gateway-failover/default.conf" "$CONF.tmp.$" && mv "$CONF.tmp.$" "$CONF"; }
 }
 read_conf() {
     init
     mode=disabled interval=5 fail_samples=6 recovery_samples=24 auto_return=0
-    while IFS='=' read -r key value; do
+    seen=""
+    while IFS='=' read -r key value || [ -n "$key$value" ]; do
+        case "$key" in ""|\#*) continue;; esac
+        case " $seen " in *" $key "*) die "duplicate configuration key";; esac
+        seen="$seen $key"
         case "$key" in
             mode) mode=$value ;;
             interval) interval=$value ;;
@@ -37,6 +43,9 @@ read_conf() {
             *) die "unknown config key: $key" ;;
         esac
     done < "$CONF"
+    for key in mode interval fail_samples recovery_samples auto_return; do
+        case " $seen " in *" $key "*) ;; *) die "missing configuration key: $key";; esac
+    done
     case "$mode" in disabled|observe|auto) ;; *) die "invalid mode";; esac
     case "$auto_return" in 0|1) ;; *) die "invalid auto_return";; esac
     for num in "$interval" "$fail_samples" "$recovery_samples"; do
@@ -49,25 +58,61 @@ read_conf() {
 acquire() {
     # Directory lock releases on ordinary exit via this trap; no stale PID
     # guessing, no parallel transition. The caller must resolve stale lock.
-    mkdir "$LOCK" 2>/dev/null || die "locked: $LOCK"
+    mkdir -p "$RUN"
+    if ! mkdir "$LOCK" 2>/dev/null; then
+        say "network controller busy or stale lock" >&2
+        exit 75
+    fi
     trap 'rmdir "$LOCK" 2>/dev/null || :' EXIT
     trap 'exit 1' HUP INT TERM
 }
+bounded_adapter() {
+    limit=$1; shift
+    # Require timeout implementation with a hard-kill grace period. The
+    # qualified adapter must not leave asynchronous hardware writers behind.
+    command -v timeout >/dev/null 2>&1 || return 1
+    timeout -k 2 "$limit" "$ADAPTER" "$@"
+}
 adapter_ok() {
-    [ -x "$ADAPTER" ] && "$ADAPTER" preflight >/dev/null 2>&1
+    [ -x "$ADAPTER" ] && bounded_adapter 10 preflight >/dev/null 2>&1
+}
+monotonic_now() {
+    value=$(awk 'NR == 1 && $1 ~ /^[0-9]+([.][0-9]+)?$/ {sub(/[.].*/, "", $1); print $1; exit}' "$CLOCK")
+    case "$value" in ''|*[!0-9]*) die "monotonic clock unavailable";; esac
+    [ "${#value}" -le 9 ] || die "clock out of range"
+    echo "$value"
+}
+save_state() {
+    atomic "$STATE" "$phase $count $probe $action $last $since $policy"
+}
+reset_samples() {
+    count=0 last=0 since=0 probe=unknown action=none
+}
+block() {
+    phase=ERROR; reset_samples; action=blocked; save_state
+    die "$*"
 }
 load_state() {
-    phase=NORMAL count=0 probe=unknown action=none
+    phase=NORMAL count=0 probe=unknown action=none last=0 since=0
+    policy="$mode:$interval:$fail_samples:$recovery_samples"
     if [ -f "$STATE" ]; then
-        read -r phase count probe action < "$STATE" || die "invalid runtime state"
+        read -r phase count probe action last since previous_policy extra < "$STATE" || die "invalid runtime state"
+        [ -z "${extra:-}" ] || die "invalid runtime state fields"
+        # Never automatically trust a previous state from an older format.
+        [ -n "${last:-}" ] && [ -n "${since:-}" ] && [ -n "${previous_policy:-}" ] || die "old state format requires reconciliation"
         case "$phase" in NORMAL|SUSPECT|FAILOVER|RECOVERY|ERROR) ;; *) die "invalid phase";; esac
         case "$count" in ''|*[!0-9]*) die "invalid count";; esac
         [ "${#count}" -le 4 ] || die "invalid count size"
+        for number in "$last" "$since"; do
+            case "$number" in ""|*[!0-9]*) die "invalid sample time";; esac
+            [ "${#number}" -le 9 ] || die "invalid sample time size"
+        done
+        if [ "$previous_policy" != "$policy" ]; then reset_samples; fi
     fi
 }
 probe_primary() {
     if adapter_ok; then
-        result=$("$ADAPTER" probe-primary 2>/dev/null) || result=unknown
+        result=$(bounded_adapter 10 probe-primary 2>/dev/null) || result=unknown
         case "$result" in healthy|down|unknown|upstream-down) echo "$result";; *) echo unknown;; esac
     else
         # ICMP alone is not a qualified health check. No takeover on this.
@@ -86,80 +131,110 @@ transition() {
     # require explicit reconciliation; boot must never blindly retry.
     atomic "$JOURNAL" "pending:$direction"
     sync || die "cannot sync transition intent"
-    if "$ADAPTER" "$direction" && "$ADAPTER" "verify-$direction"; then
+    if bounded_adapter 60 "$direction" && bounded_adapter 15 "verify-$direction"; then
         case "$direction" in takeover) next=FAILOVER;; return) next=NORMAL;; esac
         atomic "$JOURNAL" "stable:$next"
         sync || die "cannot sync transition completion"
-        atomic "$STATE" "$next 0 unknown none"
+        phase=$next; reset_samples; save_state
         say "transition verified: $next"
     else
-        atomic "$STATE" "ERROR 0 unknown blocked"
+        phase=ERROR; reset_samples; action=blocked; save_state
         say "transition failed; pending journal retained, manual reconciliation required"
         return 1
     fi
 }
+reconcile() {
+    [ "$phase" != ERROR ] || die "manual reconciliation required"
+    if [ -f "$JOURNAL" ]; then
+        IFS= read -r journal < "$JOURNAL" || block "unreadable journal"
+        case "$journal" in
+            pending:*) block "interrupted transition: $journal";;
+            stable:FAILOVER) physical=FAILOVER; verify=verify-takeover;;
+            stable:NORMAL) physical=NORMAL; verify=verify-return;;
+            *) block "invalid journal";;
+        esac
+    else
+        physical=NORMAL; verify=verify-return
+    fi
+    if [ "$mode" = auto ]; then
+        [ ! -f "$SWITCH_PENDING" ] || block "switch transition pending"
+        adapter_ok || die "auto refused: board adapter not qualified"
+        # Verify layout, NOT reachability of the failed gateway. Adapter
+        # verification must be defined to succeed for a fenced/down primary.
+        bounded_adapter 15 "$verify" || block "physical layout not reconciled"
+    elif [ "$physical" = FAILOVER ]; then
+        die "fallback journal requires qualified auto reconciliation"
+    fi
+    case "$physical:$phase" in
+        NORMAL:NORMAL|NORMAL:SUSPECT|FAILOVER:FAILOVER|FAILOVER:RECOVERY) ;;
+        *) phase=$physical; reset_samples;;
+    esac
+}
 tick() {
+    acquire
     read_conf
     [ "$mode" != disabled ] || return 0
-    acquire
     load_state
-    if [ -f "$JOURNAL" ]; then
-        IFS= read -r journal < "$JOURNAL"
-        case "$journal" in
-            pending:*) atomic "$STATE" "ERROR 0 unknown blocked"; die "interrupted transition: $journal";;
-            stable:FAILOVER)
-                # Runtime state is volatile. Adapter must prove physical state
-                # after reboot; a state file is never evidence of fencing.
-                if [ ! -f "$STATE" ]; then
-                    adapter_ok && "$ADAPTER" verify-takeover || die "fallback not reconciled"
-                    phase=FAILOVER
-                fi ;;
-            stable:NORMAL)
-                if [ ! -f "$STATE" ]; then
-                    adapter_ok && "$ADAPTER" verify-return || die "primary not reconciled"
-                fi ;;
-            *) die "invalid journal";;
-        esac
-    fi
-    [ "$phase" != ERROR ] || die "manual reconciliation required"
-    if [ "$mode" = auto ]; then
-        adapter_ok || die "auto refused: board adapter not qualified"
-        if [ ! -f "$JOURNAL" ]; then
-            "$ADAPTER" verify-return || die "initial primary layout not verified"
-        fi
+    reconcile
+    now=$(monotonic_now)
+    if [ "$count" -gt 0 ] && [ "$now" -ge "$last" ] && [ $((now-last)) -lt "$interval" ]; then
+        return 0
     fi
     probe=$(probe_primary)
+    now=$(monotonic_now)
+    # Do not count a long scheduling/probe gap or a reset of the boot clock
+    # as continuous healthy/unhealthy time.
+    if [ "$count" -gt 0 ] && { [ "$now" -lt "$last" ] || [ $((now-last)) -gt $((interval*3)) ]; }; then
+        reset_samples
+        probe=$(probe_primary)
+        now=$(monotonic_now)
+    fi
+    previous_count=$count
+    previous_phase=$phase
     set -- $(fo_step "$phase" "$count" "$probe" "$fail_samples" "$recovery_samples" "$auto_return")
     phase=$1 count=$2 action=$3
-    atomic "$STATE" "$phase $count $probe $action"
+    if [ "$count" -eq 0 ]; then since=0
+    elif [ "$previous_count" -eq 0 ] || [ "$phase" != "$previous_phase" ]; then since=$now
+    fi
+    last=$now
+    # Both the sample threshold and the full elapsed interval are mandatory.
+    # E.g. six 5s intervals require 30s elapsed since first down observation.
+    case "$action" in
+        takeover) [ $((now-since)) -ge $((interval*fail_samples)) ] || action=none;;
+        return) [ $((now-since)) -ge $((interval*recovery_samples)) ] || action=none;;
+    esac
+    save_state
     if [ "$mode" = auto ]; then
         case "$action" in takeover|return) transition "$action";; esac
     fi
 }
 case "${1:-}" in
-    init) read_conf ;;
+    init) acquire; read_conf ;;
     status)
-        read_conf; load_state
-        printf 'mode=%s\nphase=%s\nconsecutive=%s\nprobe=%s\naction=%s\n' "$mode" "$phase" "$count" "$probe" "$action"
+        acquire; read_conf; load_state
+        printf 'mode=%s\nphase=%s\nconsecutive=%s\nprobe=%s\naction=%s\nlast_sample=%s\nfirst_sample=%s\n' "$mode" "$phase" "$count" "$probe" "$action" "$last" "$since"
         if adapter_ok; then echo adapter=qualified; else echo adapter=unqualified; fi
         if [ -f "$JOURNAL" ]; then printf 'journal='; cat "$JOURNAL"; fi ;;
     tick) tick ;;
     manual-return)
-        read_conf
+        acquire; read_conf
         [ "$mode" = auto ] || die "manual return requires auto mode"
-        acquire
-        load_state
+        load_state; reconcile
         [ "$phase" = RECOVERY ] && [ "$count" -ge "$recovery_samples" ] || die "primary recovery not stable"
         [ -f "$JOURNAL" ] && grep -qx "stable:FAILOVER" "$JOURNAL" || die "fallback journal not stable"
-        adapter_ok && "$ADAPTER" verify-takeover || die "fallback layout not verified"
+        now=$(monotonic_now)
+        [ "$now" -ge "$last" ] && [ $((now-last)) -le $((interval*3)) ] && [ $((now-since)) -ge $((interval*recovery_samples)) ] || die "recovery samples stale or insufficient"
         [ "$(probe_primary)" = healthy ] || die "primary no longer healthy"
         transition return ;;
     run)
         while :; do
             read_conf
             [ "$mode" != disabled ] || exit 0
-            # Execute tick in a child so its lock/traps cannot leak to loop.
-            "$0" tick || exit 1
+            # Busy lock is transient; all other errors require intervention.
+            if "$0" tick; then :; else
+                rc=$?
+                [ "$rc" -eq 75 ] || { say "watchdog stopped (rc=$rc)" >&2; exit "$rc"; }
+            fi
             sleep "$interval"
         done ;;
     *) die "usage: ax53-failover init|status|tick|run|manual-return" ;;
