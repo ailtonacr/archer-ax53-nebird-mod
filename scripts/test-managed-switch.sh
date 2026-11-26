@@ -174,6 +174,11 @@ env $ENV "$CLI" check >/dev/null 2>&1 && fail "invalid config accepted"
 [ ! -e "$tmp/executed" ] || fail "persistent config executed"
 cp "$tmp/config-good" "$state/managed-switch/config"
 
+if command -v lua5.1 >/dev/null 2>&1; then
+    lua5.1 scripts/test-managed-switch-controller.lua "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua"
+else
+    echo "SKIP: Lua 5.1 behavioral tests (install lua5.1)" >&2
+fi
 if command -v luac >/dev/null 2>&1; then
     luac -p "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI controller syntax invalid"
 fi

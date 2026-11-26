@@ -23,7 +23,7 @@ atomic() {
 }
 init() {
     mkdir -p "$DATA/gateway-failover" "$RUN"
-    [ -f "$CONF" ] || { cp "$ETC/gateway-failover/default.conf" "$CONF.tmp.$" && mv "$CONF.tmp.$" "$CONF"; }
+    [ -f "$CONF" ] || { cp "$ETC/gateway-failover/default.conf" "$CONF.tmp.$$" && mv "$CONF.tmp.$$" "$CONF"; }
 }
 read_conf() {
     init
@@ -101,13 +101,16 @@ load_state() {
         # Never automatically trust a previous state from an older format.
         [ -n "${last:-}" ] && [ -n "${since:-}" ] && [ -n "${previous_policy:-}" ] || die "old state format requires reconciliation"
         case "$phase" in NORMAL|SUSPECT|FAILOVER|RECOVERY|ERROR) ;; *) die "invalid phase";; esac
-        case "$count" in ''|*[!0-9]*) die "invalid count";; esac
+        case "$count" in ''|0[0-9]*|*[!0-9]*) die "invalid count";; esac
         [ "${#count}" -le 4 ] || die "invalid count size"
         for number in "$last" "$since"; do
-            case "$number" in ""|*[!0-9]*) die "invalid sample time";; esac
+            case "$number" in ""|0[0-9]*|*[!0-9]*) die "invalid sample time";; esac
             [ "${#number}" -le 9 ] || die "invalid sample time size"
         done
         if [ "$previous_policy" != "$policy" ]; then reset_samples; fi
+        [ "$since" -le "$last" ] || die "invalid sample chronology"
+        case "$probe" in unknown|healthy|down|upstream-down|local-reachable|local-unreachable) ;; *) die "invalid probe state";; esac
+        case "$action" in none|takeover|return|blocked) ;; *) die "invalid action state";; esac
     fi
 }
 probe_primary() {
@@ -116,7 +119,7 @@ probe_primary() {
         case "$result" in healthy|down|unknown|upstream-down) echo "$result";; *) echo unknown;; esac
     else
         # ICMP alone is not a qualified health check. No takeover on this.
-        if ping -c 1 -W 1 172.24.0.1 >/dev/null 2>&1; then
+        if command -v timeout >/dev/null 2>&1 && timeout -k 2 3 ping -c 1 -W 1 172.24.0.1 >/dev/null 2>&1; then
             echo local-reachable
         else
             echo local-unreachable
@@ -173,7 +176,11 @@ reconcile() {
 tick() {
     acquire
     read_conf
-    [ "$mode" != disabled ] || return 0
+    if [ "$mode" = disabled ]; then
+        # Disabled ticks cannot mutate hardware or discard unresolved evidence.
+        if [ ! -f "$JOURNAL" ]; then rm -f "$STATE"; fi
+        return 0
+    fi
     load_state
     reconcile
     now=$(monotonic_now)
@@ -224,7 +231,10 @@ case "${1:-}" in
         [ -f "$JOURNAL" ] && grep -qx "stable:FAILOVER" "$JOURNAL" || die "fallback journal not stable"
         now=$(monotonic_now)
         [ "$now" -ge "$last" ] && [ $((now-last)) -le $((interval*3)) ] && [ $((now-since)) -ge $((interval*recovery_samples)) ] || die "recovery samples stale or insufficient"
-        [ "$(probe_primary)" = healthy ] || die "primary no longer healthy"
+        if [ "$(probe_primary)" != healthy ]; then
+            phase=FAILOVER; reset_samples; save_state
+            die "primary no longer healthy"
+        fi
         transition return ;;
     run)
         while :; do

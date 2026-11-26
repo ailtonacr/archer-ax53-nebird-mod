@@ -51,8 +51,9 @@ local function shell_quote(value)
 end
 
 local function run_cli(args)
-    local cmd = CLI
-    for i = 1, #args do cmd = cmd .. " " .. shell_quote(args[i]) end
+    local parts = { CLI }
+    for i = 1, #args do parts[#parts + 1] = shell_quote(args[i]) end
+    local cmd = table.concat(parts, " ")
     local output = sys.exec(cmd .. " 2>&1; printf '\\n__AX53_RC:%s\\n' $?") or ""
     local rc = tonumber(output:match("__AX53_RC:(%d+)%s*$")) or 1
     output = output:gsub("\n?__AX53_RC:%d+%s*$", "")
@@ -104,6 +105,9 @@ local function parse_status_output(output)
         seen[port] = true
     end
     if not next(seen) then return nil, "empty access port status" end
+    if (data.cpu_lan == 1 and data.lan_vid ~= 2) or (data.cpu_wan == 1 and data.wan_vid ~= 4094) then
+        return nil, "invalid CPU VLAN status"
+    end
     data.driver_vlan = table.concat(raw, "\n")
     return data
 end

@@ -53,7 +53,7 @@ ensure_config()
     [ -f "$DEFAULT_CONF" ] || die "default config missing: $DEFAULT_CONF"
     if [ ! -f "$CONF" ]; then
         mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
-        cp "$DEFAULT_CONF" "$CONF.tmp.$" && chmod 0600 "$CONF.tmp.$" && mv "$CONF.tmp.$" "$CONF" || die "cannot initialize $CONF"
+        cp "$DEFAULT_CONF" "$CONF.tmp.$$" && chmod 0600 "$CONF.tmp.$$" && mv "$CONF.tmp.$$" "$CONF" || die "cannot initialize $CONF"
     fi
 }
 

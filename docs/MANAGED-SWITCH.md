@@ -293,3 +293,8 @@ Ainda requer validação na imagem/hardware da revisão atual:
 - apply real do trunk;
 - reboot/hotplug;
 - rollback real.
+
+## Transaction safety update (2026-11-25)
+- `ax53-switch activate` (legacy `enable` alias) persists the intent and applies the managed layout in one custom-controller transaction. Do not use the old separate enable/apply sequence. `apply` is an idempotent reapply for the existing enabled profile; `--force` is reserved for the fake driver tests.
+- Config is parsed as data. Active configuration cannot be edited until an explicit stock restore. Status reports enabled **configuration intent**, not independently verified physical VLAN membership. A pending switch transition blocks reapplication; explicit recovery/rollback is required from a safe local path, after checking the Proxmox trunk and gateway. No automatic rollback to stock on failed activation (stock may reconnect LAN1).
+- The shared custom lock does not cover all stock services. Do not use failover auto mode until vendor boot/hotplug fencing, independent recovery and hardware validation are complete.
