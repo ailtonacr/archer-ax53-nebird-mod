@@ -60,7 +60,7 @@ function template() {
 <main>
 <div data-role="toast" class="ms-toast"></div>
 <div class="ms-warn"><strong>Salvar não altera o switch.</strong> O RTL8367S só é reprogramado ao clicar em <strong>Aplicar agora</strong>. No primeiro cutover, mantenha acesso por Wi-Fi ou por uma porta access. Não use o perfil gerenciado simultaneamente com IPTV/VLAN customizado da TP-Link.</div>
-<div class="ms-grid"><section>
+<div class="ms-card"><h2 style="font-size:17px;margin-top:0">Modo de operação</h2><div data-role="gateway-state" class="ms-small">Consultando política…</div><div class="ms-actions"><button type="button" class="ms-secondary" data-act="mode-stock">Roteador stock</button><button type="button" class="ms-primary" data-act="mode-managed">Switch gerenciado</button><button type="button" class="ms-warning" data-act="mode-auto" disabled>Failover automático (bloqueado)</button></div><div class="ms-actions"><button type="button" class="ms-secondary" data-act="observe">Configurar observação</button><button type="button" class="ms-secondary" data-act="observe-off">Desativar observação</button></div><p class="ms-small">Modo stock restaura apenas o layout L2; confirme DHCP, gateway e NAT pelos menus nativos. Observação configura a política; o serviço deve ser iniciado localmente. A alternância automática exige plataforma homologada.</p></div><div class="ms-grid"><section>
 <div class="ms-card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2 style="margin:0;font-size:17px">Perfil gerenciado</h2><span data-role="badge" class="ms-badge ms-off">Carregando…</span></div>
 <form data-role="form" style="margin-top:16px"><div class="ms-fields">
 <div class="ms-field"><label>VLAN WAN</label><input data-f="wan" type="number" min="1" max="4094" required></div>
@@ -88,6 +88,7 @@ export function openManagedSwitch() {
   const q = s => root.querySelector(s);
   const qa = s => Array.from(root.querySelectorAll(s));
   let state = null;
+  let gateway = null;
   let busy = false;
   let draftAccess = new Set(["2", "3", "4"]);
   let currentTrunk = "1";
@@ -123,6 +124,13 @@ export function openManagedSwitch() {
     q('[data-act="apply"]').disabled = busy || blocked || changed;
     q('[data-act="rollback"]').disabled = busy || !state;
     q('[data-role="locked"]').className = "ms-locked" + (on ? " show" : "");
+    const policyBlocked = !gateway || gateway.mode === "auto" || (gateway.journal && gateway.journal !== "stable:NORMAL");
+    q('[data-act="mode-stock"]').disabled = busy || !state || policyBlocked;
+    q('[data-act="mode-managed"]').disabled = busy || blocked || changed || policyBlocked;
+    q('[data-act="observe"]').disabled = busy || blocked || !on || policyBlocked || gateway.mode === "observe";
+    q('[data-act="observe-off"]').disabled = busy || policyBlocked || gateway.mode !== "observe";
+    q('[data-act="apply"]').disabled = busy || blocked || changed || policyBlocked;
+    q('[data-act="rollback"]').disabled = busy || !state || policyBlocked;
     const badge = q('[data-role="badge"]');
     if (!state || pending()) { badge.textContent=state?"Transição pendente":"Estado não verificado"; badge.className="ms-badge ms-dirty"; }
     else if (changed && !on) { badge.textContent="Alterações não salvas"; badge.className="ms-badge ms-dirty"; }
@@ -169,17 +177,38 @@ export function openManagedSwitch() {
     q('[data-role="driver"]').textContent=d.driver_vlan||"Tabela não disponível";
     renderPorts();
   }
+  async function readGateway(operation="gateway_status") {
+    gateway=null;
+    const el=q('[data-role="gateway-state"]');
+    try {
+      const data=unwrap(await req(operation));
+      if (!data || !["disabled","observe","auto"].includes(data.mode) || !data.phase) throw new Error("Política indisponível");
+      gateway=data;
+      el.textContent="Política: "+data.mode+" | Estado registrado: "+data.phase+" | Adaptador: "+data.adapter+
+        (data.journal?" | Journal: "+data.journal:"");
+    } catch(e) {
+      el.textContent="Política não verificada: "+errMsg(e);
+      throw e;
+    }
+  }
+  async function gatewayPolicy(operation) {
+    if (busy) return;
+    busy=true;syncControls();
+    try { await readGateway(operation); toast("Política registrada; nenhuma VLAN alterada.",true); }
+    catch(e){ toast(errMsg(e),false); }
+    finally { busy=false;syncControls(); }
+  }
   async function refresh() {
     if (busy) return;
     busy=true;syncControls();
-    try { fill(await req("status")); }
+    try { fill(await req("status")); await readGateway(); }
     catch(e){ state=null; toast(errMsg(e),false); }
     finally { busy=false;syncControls(); }
   }
   async function action(operation, payload, success) {
     if (busy) return false;
     busy=true;syncControls();
-    try { fill(await req(operation,payload)); toast(success,true); return true; }
+    try { fill(await req(operation,payload)); await readGateway(); toast(success,true); return true; }
     catch(e){ state=null; toast(errMsg(e),false); return false; }
     finally { busy=false;syncControls(); }
   }
@@ -191,6 +220,10 @@ export function openManagedSwitch() {
   q('[data-role="form"]').onsubmit=e=>{e.preventDefault();if(enabled())return toast("Desabilite/restaure stock antes de editar.",false);const error=validate();if(error)return toast(error,false);action("save",draft(),"Configuração salva; switch físico não foi alterado.")};
   q('[data-act="apply"]').onclick=async()=>{if(!state)return;if(dirty())return toast("Salve as alterações antes de aplicar.",false);if(!confirm("Isso reprograma o RTL8367S imediatamente. Confirme que o Proxmox está preparado, IPTV/VLAN custom está desabilitado e sua sessão não está na porta trunk. Aplicar agora?"))return;await action("apply",{},"Aplicação solicitada; confira a tabela VLAN física.")};
   q('[data-act="rollback"]').onclick=()=>{if(confirm("Executar rollback para o pipeline/layout stock e desabilitar o perfil gerenciado?"))action("rollback",{},"Rollback solicitado; perfil gerenciado desabilitado.")};
+  q('[data-act="mode-stock"]').onclick=()=>q('[data-act="rollback"]').click();
+  q('[data-act="mode-managed"]').onclick=()=>q('[data-act="apply"]').click();
+  q('[data-act="observe"]').onclick=()=>gatewayPolicy("gateway_observe");
+  q('[data-act="observe-off"]').onclick=()=>gatewayPolicy("gateway_disabled");
   root.__managedSwitchRefresh=refresh;
   refresh();
   return root;

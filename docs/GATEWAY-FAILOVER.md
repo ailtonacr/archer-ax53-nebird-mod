@@ -34,3 +34,10 @@ Base: feat/managed-switch-router-on-a-stick. No NetBird, new NAND partitions, CI
 ## Local test
 Run make test-firmware. The test mocks the adapter; it does not touch switch,
 UCI, firewall or physical hardware. Factory config mode=disabled.
+
+## Stage 2 — ordered adapter and mode policy (not hardware qualified)
+- board-adapter dispatches an ordered takeover/return transaction from transition.sh. No qualified-platform is shipped. The reference layout.sh generates the primary, fenced and fallback membership masks for the documented AX53 LAN1 topology; control VID is an explicit input, not a production allocation.
+- Platform preflight must validate exact firmware, hardware readback, vendor writers, recovery network and DHCP reservations. Each step must be synchronous and check its physical postcondition. Fencing is checked before WAN access, firewall/gateway claim and after takeover. Return requires isolated primary health, stops DHCP/DNS/routing and releases address/WAN before reconnecting primary. No blind rollback after failure.
+- Platform commands: preflight, primary-layout, local-services-off, fence-primary, verify-fenced, enable-local-wan, prepare-firewall, claim-gateway, start-routing, start-dns-dhcp, verify-local-gateway, primary-ready-isolated, stop-dns-dhcp, stop-routing, release-gateway, disable-local-wan, reconnect-primary, probe-primary. The first-party platform must be implemented against observed vendor runtime; do not replace with an unconditional success script. The driver masks alone do not prove filtering or PVID behavior.
+- UI exposes stock L2 restore, managed L2 apply and a disabled auto option. Observe/disabled policy can be saved through the existing stock API; the observer is not started automatically by the UI and must be started explicitly. No automatic mode can be enabled through this API.
+- Read-only diagnostics: board-adapter diagnostics. Local tests: scripts/test-gateway-transition.sh (mock platform, failure injection, fixed mask fixtures). Hardware testing and service implementation remain mandatory.

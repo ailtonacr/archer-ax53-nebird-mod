@@ -1,6 +1,40 @@
 #!/bin/sh
-# Deliberately fail closed until the AX53 running firmware, switch fencing,
-# vendor DHCP/NAT/firewall and isolated recovery channel are validated.
-# See docs/GATEWAY-FAILOVER.md. Never replace this with an unconditional OK.
-echo "board adapter not qualified for live transitions" >&2
-exit 1
+set -eu
+LIB="${GF_LIB_ROOT:-/usr/lib/gateway-failover}"
+# Platform is NOT shipped as a live implementation. A qualified, board-specific
+# implementation must provide hardware readback, stock-service coordination,
+# boot fencing, validated control VLAN and native DHCP/NAT/DNS postconditions.
+# Never provide a fake qualification flag or a blanket success implementation.
+PLATFORM="$LIB/qualified-platform"
+. "$LIB/transition.sh"
+. "$LIB/layout.sh"
+platform() {
+    "$PLATFORM" "$@"
+}
+case "${1:-}" in
+    plan)
+        [ "$#" -eq 3 ] || exit 2
+        gf_layout "$2" "$3"; exit $?;;
+    diagnostics)
+        # Read-only; do not print config files, credentials or private keys.
+        for node in vlan port; do
+            if [ -r "/proc/driver/rtl8367s/$node" ]; then
+                printf '%s\n' "--- rtl8367s/$node ---"
+                cat "/proc/driver/rtl8367s/$node"
+            fi
+        done
+        command -v ip >/dev/null && { ip -4 addr show; ip -4 route show; } || :
+        exit 0;;
+esac
+[ -x "$PLATFORM" ] || { echo "board platform not qualified" >&2; exit 1; }
+# Qualification must prove live safety, not only check a file or marker.
+platform preflight || exit 1
+case "${1:-}" in
+    preflight) exit 0;;
+    probe-primary) platform probe-primary;;
+    takeover) gf_takeover;;
+    verify-takeover) gf_verify_takeover;;
+    return) gf_return;;
+    verify-return) gf_verify_return;;
+    *) exit 2;;
+esac

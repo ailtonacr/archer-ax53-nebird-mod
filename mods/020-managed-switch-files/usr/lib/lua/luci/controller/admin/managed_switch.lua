@@ -5,6 +5,7 @@ local sys = require "luci.sys"
 local controller = require "luci.model.controller"
 
 local CLI = "/usr/sbin/ax53-switch"
+local FAILOVER_CLI = "/usr/sbin/ax53-failover"
 
 function index()
     entry({"admin", "managed_switch"}, call("_index"), "Switch / VLAN", 98).leaf = true
@@ -50,8 +51,8 @@ local function shell_quote(value)
     return "'" .. value:gsub("'", "'\\''") .. "'"
 end
 
-local function run_cli(args)
-    local parts = { CLI }
+local function run_cli(args, executable)
+    local parts = { executable or CLI }
     for i = 1, #args do parts[#parts + 1] = shell_quote(args[i]) end
     local cmd = table.concat(parts, " ")
     local output = sys.exec(cmd .. " 2>&1; printf '\\n__AX53_RC:%s\\n' $?") or ""
@@ -146,6 +147,41 @@ local function access_ports_value(body)
     return table.concat(ports, " ")
 end
 
+local function gateway_status()
+    local rc, output = run_cli({"status"}, FAILOVER_CLI)
+    if rc ~= 0 then return nil, "gateway status unavailable" end
+    local data, allowed = {}, {
+        mode=true, phase=true, consecutive=true, probe=true, action=true,
+        last_sample=true, first_sample=true, adapter=true, journal=true,
+    }
+    for line in output:gmatch("[^\r\n]+") do
+        local key, value = line:match("^([%w_]+)=(.*)$")
+        if key and allowed[key] then
+            if data[key] then return nil, "duplicate gateway status" end
+            data[key] = value
+        end
+    end
+    local modes = {disabled=true, observe=true, auto=true}
+    local phases = {NORMAL=true, SUSPECT=true, FAILOVER=true, RECOVERY=true, ERROR=true}
+    if not modes[data.mode] or not phases[data.phase]
+        or (data.adapter ~= "qualified" and data.adapter ~= "unqualified") then
+        return nil, "invalid gateway status"
+    end
+    return data
+end
+
+local function op_gateway_status()
+    local data, err = gateway_status()
+    if not data then return error_reply("gateway_status_failed", err) end
+    return reply(data)
+end
+
+local function op_gateway_policy(command)
+    local rc, output = run_cli({command}, FAILOVER_CLI)
+    if rc ~= 0 then return error_reply("gateway_policy_failed", output) end
+    return op_gateway_status()
+end
+
 local function op_status()
     local status, err = current_status()
     if not status then return error_reply("status_failed", err) end
@@ -211,6 +247,9 @@ function dispatch(body)
     local ok, result = pcall(function()
         local operation = request_value(body, "operation") or "status"
         if operation == "status" then return op_status()
+        elseif operation == "gateway_status" then return op_gateway_status()
+        elseif operation == "gateway_observe" then return op_gateway_policy("set-observe")
+        elseif operation == "gateway_disabled" then return op_gateway_policy("set-disabled")
         elseif operation == "save" then return op_save(body)
         elseif operation == "enable" then return op_apply()
         elseif operation == "disable" then return op_simple("disable")

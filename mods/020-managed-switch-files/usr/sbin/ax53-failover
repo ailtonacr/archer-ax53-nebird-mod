@@ -182,6 +182,11 @@ tick() {
         return 0
     fi
     load_state
+    if [ "$mode" = observe ]; then
+        [ -f "$DATA/managed-switch/config" ] &&
+            grep -Eq '^enabled=(1|"1")$' "$DATA/managed-switch/config" ||
+            die "observation requires managed profile"
+    fi
     reconcile
     now=$(monotonic_now)
     if [ "$count" -gt 0 ] && [ "$now" -ge "$last" ] && [ $((now-last)) -lt "$interval" ]; then
@@ -217,6 +222,26 @@ tick() {
 }
 case "${1:-}" in
     init) acquire; read_conf ;;
+    set-observe|set-disabled)
+        acquire; read_conf
+        [ "$mode" != auto ] || die "auto owner requires explicit reconciliation"
+        [ ! -f "$SWITCH_PENDING" ] || die "switch transition pending"
+        if [ -f "$JOURNAL" ]; then
+            grep -qx 'stable:NORMAL' "$JOURNAL" || die "failover journal requires reconciliation"
+        fi
+        case "$1" in
+            set-observe)
+                [ -f "$DATA/managed-switch/config" ] &&
+                    grep -Eq '^enabled=(1|"1")$' "$DATA/managed-switch/config" ||
+                    die "activate managed profile before observing"
+                mode=observe;;
+            set-disabled) mode=disabled;;
+        esac
+        # Only policy/volatile state; no L2/L3 mutation and no auto activation.
+        atomic "$CONF" "$(printf 'mode=%s\ninterval=%s\nfail_samples=%s\nrecovery_samples=%s\nauto_return=%s' "$mode" "$interval" "$fail_samples" "$recovery_samples" "$auto_return")"
+        sync
+        rm -f "$STATE"
+        ;;
     status)
         acquire; read_conf; load_state
         printf 'mode=%s\nphase=%s\nconsecutive=%s\nprobe=%s\naction=%s\nlast_sample=%s\nfirst_sample=%s\n' "$mode" "$phase" "$count" "$probe" "$action" "$last" "$since"
@@ -247,5 +272,5 @@ case "${1:-}" in
             fi
             sleep "$interval"
         done ;;
-    *) die "usage: ax53-failover init|status|tick|run|manual-return" ;;
+    *) die "usage: ax53-failover init|status|tick|run|manual-return|set-observe|set-disabled" ;;
 esac
