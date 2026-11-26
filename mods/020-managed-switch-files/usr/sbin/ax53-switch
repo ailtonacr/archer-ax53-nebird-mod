@@ -421,7 +421,7 @@ access_ports=$access_ports
 cpu_lan=$cpu_lan
 cpu_wan=$cpu_wan
 EOF
-    if [ -f "$PENDING" ]; then echo transition=pending; else echo transition=idle; fi
+    if [ -f "$PENDING" ] || [ -f "$RUN_ROOT/ax53-reapply.required" ]; then echo transition=pending; else echo transition=idle; fi
 
     if [ -z "$TEST_LOG" ] && [ -r "$DRIVER_ROOT/vlan" ]; then
         echo "--- rtl8367s/vlan ---"
@@ -459,7 +459,7 @@ EOF
 acquire_network()
 {
     mkdir -p "$RUN_ROOT" || die "cannot initialize runtime directory"
-    mkdir "$NETWORK_LOCK" 2>/dev/null || die "network controller busy or stale lock"
+    mkdir "$NETWORK_LOCK" 2>/dev/null || { echo "network controller busy or stale lock" >&2; exit 75; }
     trap 'rmdir "$NETWORK_LOCK" 2>/dev/null || true' EXIT
     trap 'exit 1' HUP INT TERM
 }
@@ -536,6 +536,7 @@ case "$cmd" in
             begin_change apply
             apply_profile "${2:-}" || die "apply failed; transition retained"
             finish_change
+            rm -f "$RUN_ROOT/ax53-reapply.required"
         fi
         ;;
     activate|enable)
@@ -544,6 +545,7 @@ case "$cmd" in
         write_setting enabled 1
         apply_profile || die "activation failed; transition retained; no automatic stock rollback"
         finish_change
+        rm -f "$RUN_ROOT/ax53-reapply.required"
         ;;
     disable|rollback)
         begin_change rollback

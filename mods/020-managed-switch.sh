@@ -87,8 +87,11 @@ mkdir -p "$R/etc/gateway-failover" "$R/usr/lib/gateway-failover"
 cp "$FILES/etc/gateway-failover/default.conf" "$R/etc/gateway-failover/default.conf"
 cp "$FILES/etc/init.d/gateway-failover" "$R/etc/init.d/gateway-failover"
 cp "$FILES/usr/sbin/ax53-failover" "$R/usr/sbin/ax53-failover"
-cp "$FILES/usr/lib/gateway-failover/"* "$R/usr/lib/gateway-failover/"
+for file in board-adapter core.sh layout.sh rtl8367s.sh transition.sh vendor-guard.sh; do
+  cp "$FILES/usr/lib/gateway-failover/$file" "$R/usr/lib/gateway-failover/$file"
+done
+python3 "$PROJECT_ROOT/scripts/patch-gateway-vendor-guards.py" "$R"
 chmod 0755 "$R/etc/init.d/gateway-failover" "$R/usr/sbin/ax53-failover" "$R/usr/lib/gateway-failover/board-adapter"
-chmod 0644 "$R/usr/lib/gateway-failover/core.sh" "$R/etc/gateway-failover/default.conf"
+chmod 0644 "$R/usr/lib/gateway-failover/"*.sh "$R/etc/gateway-failover/default.conf"
 grep -Fxq 'mode=disabled' "$R/etc/gateway-failover/default.conf" || exit 1
 echo "### Managed switch installed (disabled by default, stock SPA/API integration) ###"

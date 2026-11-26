@@ -1,7 +1,15 @@
 #!/bin/sh
-# The vendor 65-iptv hook owns the stock switch table. Re-apply our profile
-# afterwards only when the persistent managed-switch setting is enabled.
-
+# Coalesce hotplug reapply with active custom transactions. A lock conflict
+# must not silently lose the request; other failures remain explicit.
 [ -x /usr/sbin/ax53-switch ] || exit 0
-/usr/sbin/ax53-switch apply >/dev/null 2>&1 || logger -t ax53-switch "hotplug re-apply failed"
-exit 0
+attempt=0
+while [ "$attempt" -lt 10 ]; do
+    if /usr/sbin/ax53-switch apply >/dev/null 2>&1; then exit 0; else rc=$?; fi
+    [ "$rc" -eq 75 ] || { logger -t ax53-switch "hotplug re-apply failed rc=$rc"; exit "$rc"; }
+    attempt=$((attempt+1))
+    sleep 1
+done
+logger -t ax53-switch "hotplug re-apply deferred: network lock busy"
+# Retain evidence; an operator must reapply after the writer completes.
+: > /var/run/ax53-reapply.required
+exit 75
