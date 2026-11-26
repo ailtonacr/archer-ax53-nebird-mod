@@ -1,5 +1,6 @@
 #!/bin/sh
-set -u
+set -uf
+umask 077
 
 ETC_ROOT="${MS_ETC_ROOT:-/etc}"
 TP_DATA_ROOT="${MS_TP_DATA_ROOT:-/tp_data}"
@@ -8,6 +9,10 @@ DEFAULT_CONF="$ETC_ROOT/managed-switch/default.conf"
 STATE_DIR="$TP_DATA_ROOT/managed-switch"
 CONF="${MS_CONF:-$STATE_DIR/config}"
 TEST_LOG="${MS_TEST_LOG:-}"
+RUN_ROOT="${MS_RUN_ROOT:-/var/run}"
+NETWORK_LOCK="$RUN_ROOT/ax53-network.lock"
+PENDING="$STATE_DIR/transition.pending"
+FAILOVER_DIR="$TP_DATA_ROOT/gateway-failover"
 
 die()
 {
@@ -48,8 +53,7 @@ ensure_config()
     [ -f "$DEFAULT_CONF" ] || die "default config missing: $DEFAULT_CONF"
     if [ ! -f "$CONF" ]; then
         mkdir -p "$STATE_DIR" || die "cannot create $STATE_DIR"
-        cp "$DEFAULT_CONF" "$CONF" || die "cannot initialize $CONF"
-        chmod 0600 "$CONF" 2>/dev/null || true
+        cp "$DEFAULT_CONF" "$CONF.tmp.$" && chmod 0600 "$CONF.tmp.$" && mv "$CONF.tmp.$" "$CONF" || die "cannot initialize $CONF"
     fi
 }
 
@@ -64,8 +68,28 @@ load_config_file()
     access_ports="2 3 4"
     cpu_lan=1
     cpu_wan=0
-    # Root-owned persistent config; values are validated before use.
-    . "$file"
+    # Read data, never source persistent config as shell code.
+    local key value seen="" line
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in ''|\#*) continue;; *=*) ;; *) die "invalid config line";; esac
+        key=${line%%=*}; value=${line#*=}
+        case "$key" in enabled|profile|wan_vid|lan_vid|trunk_port|access_ports|cpu_lan|cpu_wan) ;; *) die "unknown config key";; esac
+        case " $seen " in *" $key "*) die "duplicate config key";; esac
+        seen="$seen $key"
+        case "$value" in
+            \"*\") value=${value#\"}; value=${value%\"};;
+        esac
+        case "$value" in *\"*|*\'*) die "invalid config quoting";; esac
+        case "$key" in
+            enabled) enabled=$value;; profile) profile=$value;;
+            wan_vid) wan_vid=$value;; lan_vid) lan_vid=$value;;
+            trunk_port) trunk_port=$value;; access_ports) access_ports=$value;;
+            cpu_lan) cpu_lan=$value;; cpu_wan) cpu_wan=$value;;
+        esac
+    done < "$file"
+    for key in enabled profile wan_vid lan_vid trunk_port access_ports cpu_lan cpu_wan; do
+        case " $seen " in *" $key "*) ;; *) die "missing config field: $key";; esac
+    done
 }
 
 load_config()
@@ -77,14 +101,14 @@ load_config()
 is_uint()
 {
     case "${1:-}" in
-        ''|*[!0-9]*) return 1 ;;
+        ''|0*|*[!0-9]*) return 1 ;;
         *) return 0 ;;
     esac
 }
 
 validate_vid()
 {
-    is_uint "$1" || return 1
+    is_uint "$1" && [ "${#1}" -le 4 ] || return 1
     [ "$1" -ge 1 ] && [ "$1" -le 4094 ]
 }
 
@@ -214,7 +238,7 @@ apply_profile_unlocked()
 }
 
 apply_profile()
-{
+(
     # Offline tests use a fake driver log and do not need the vendor lock tool.
     if [ -n "$TEST_LOG" ]; then
         apply_profile_unlocked "$@"
@@ -222,15 +246,16 @@ apply_profile()
     fi
 
     lock /var/run/switch-set.lock || die "cannot acquire switch lock"
-    trap 'lock -u /var/run/switch-set.lock >/dev/null 2>&1 || true' EXIT INT TERM
+    trap 'lock -u /var/run/switch-set.lock >/dev/null 2>&1 || true' EXIT
+    trap 'exit 1' HUP INT TERM
 
     apply_profile_unlocked "$@"
     local rc=$?
 
     lock -u /var/run/switch-set.lock >/dev/null 2>&1 || true
-    trap - EXIT INT TERM
+    trap - EXIT HUP INT TERM
     return "$rc"
-}
+)
 
 fallback_basic_bridge()
 {
@@ -243,7 +268,7 @@ fallback_basic_bridge()
 }
 
 restore_stock()
-{
+(
     # Prefer the vendor pipeline. It owns the exact stock VLAN reconstruction
     # and uses the same switch-set.lock itself.
     if [ -z "$TEST_LOG" ] && [ -x "$ETC_ROOT/init.d/iptv" ]; then
@@ -261,13 +286,14 @@ restore_stock()
     fi
 
     lock /var/run/switch-set.lock || die "cannot acquire switch lock for fallback restore"
-    trap 'lock -u /var/run/switch-set.lock >/dev/null 2>&1 || true' EXIT INT TERM
+    trap 'lock -u /var/run/switch-set.lock >/dev/null 2>&1 || true' EXIT
+    trap 'exit 1' HUP INT TERM
     fallback_basic_bridge
     local rc=$?
     lock -u /var/run/switch-set.lock >/dev/null 2>&1 || true
-    trap - EXIT INT TERM
+    trap - EXIT HUP INT TERM
     return "$rc"
-}
+)
 
 write_setting()
 {
@@ -299,7 +325,9 @@ write_setting()
             ;;
     esac
 
-    ensure_config
+    load_config
+    validate_config
+    [ "$key" = enabled ] || [ "$enabled" = 0 ] || die "active profile cannot be edited"
     awk -v key="$key" -v value="$value" '
         BEGIN { done=0 }
         $0 ~ ("^" key "=") {
@@ -331,6 +359,8 @@ write_full_config()
     [ "$#" -eq 6 ] || die "configure requires: <wan_vid> <lan_vid> <trunk_port> <access_ports> <cpu_lan> <cpu_wan>"
 
     load_config
+    validate_config
+    [ "$enabled" = 0 ] || die "active profile cannot be edited"
     local next_enabled="$enabled"
     local next_wan_vid="$1"
     local next_lan_vid="$2"
@@ -391,6 +421,7 @@ access_ports=$access_ports
 cpu_lan=$cpu_lan
 cpu_wan=$cpu_wan
 EOF
+    if [ -f "$PENDING" ]; then echo transition=pending; else echo transition=idle; fi
 
     if [ -z "$TEST_LOG" ] && [ -r "$DRIVER_ROOT/vlan" ]; then
         echo "--- rtl8367s/vlan ---"
@@ -408,7 +439,7 @@ Usage:
   ax53-switch set <enabled|wan_vid|lan_vid|trunk_port|access_ports|cpu_lan|cpu_wan> <value>
   ax53-switch configure <wan_vid> <lan_vid> <trunk_port> "<access_ports>" <cpu_lan> <cpu_wan>
   ax53-switch apply [--force]
-  ax53-switch enable
+  ax53-switch activate (enable is an alias)
   ax53-switch disable
   ax53-switch rollback
 
@@ -417,33 +448,69 @@ Safe deployment:
   2. ax53-switch check
   3. ax53-switch status
   4. configure Proxmox VLAN 4094 (WAN) and VLAN 2 (LAN)
-  5. ax53-switch enable
-  6. ax53-switch apply
+  5. ax53-switch activate
 Rollback:
   ax53-switch rollback
 EOF
 }
 
+# One nonblocking lock for custom switch mutations and failover. The vendor
+# switch-set.lock is nested only inside driver operations, not vendor restart.
+acquire_network()
+{
+    mkdir -p "$RUN_ROOT" || die "cannot initialize runtime directory"
+    mkdir "$NETWORK_LOCK" 2>/dev/null || die "network controller busy or stale lock"
+    trap 'rmdir "$NETWORK_LOCK" 2>/dev/null || true' EXIT
+    trap 'exit 1' HUP INT TERM
+}
+
+guard_failover()
+{
+    if [ -f "$FAILOVER_DIR/journal" ]; then
+        case "$(cat "$FAILOVER_DIR/journal")" in stable:NORMAL) ;; *) die "failover journal requires reconciliation";; esac
+    fi
+    if [ -f "$FAILOVER_DIR/config" ] && grep -qx 'mode=auto' "$FAILOVER_DIR/config"; then
+        die "automatic controller owns network configuration"
+    fi
+}
+
+begin_change()
+{
+    mkdir -p "$STATE_DIR" || die "cannot create state directory"
+    printf '%s\n' "$1" > "$PENDING.tmp.$$" && mv "$PENDING.tmp.$$" "$PENDING" || die "cannot record switch intent"
+    sync || die "cannot sync switch intent"
+}
+
+finish_change()
+{
+    rm -f "$PENDING" && sync || die "cannot clear switch intent"
+}
+
 cmd="${1:-}"
 case "$cmd" in
-    init)
+    init|check|status|set|configure|apply|activate|enable|disable|rollback)
+        acquire_network
         ensure_config
-        load_config
-        validate_config
-        log "persistent configuration initialized at $CONF"
         ;;
-    check)
-        load_config
-        validate_config
-        echo "OK"
+    *) usage; exit 2;;
+esac
+case "$cmd" in
+    init|check|status) ;;
+    *)
+        guard_failover
+        if [ -f "$PENDING" ]; then
+            case "$cmd" in disable|rollback) ;; *) die "switch transition pending; explicit recovery required";; esac
+        fi
         ;;
-    status)
-        show_status
-        ;;
+esac
+case "$cmd" in
+    init) load_config; validate_config; log "persistent configuration initialized at $CONF";;
+    check) load_config; validate_config; echo OK;;
+    status) show_status;;
     set)
         [ "$#" -ge 3 ] || { usage; exit 2; }
-        key="$2"
-        shift 2
+        key="$2"; shift 2
+        [ "$key" != enabled ] || die "use activate or rollback"
         write_setting "$key" "$*"
         ;;
     configure)
@@ -451,22 +518,30 @@ case "$cmd" in
         write_full_config "$2" "$3" "$4" "$5" "$6" "$7"
         ;;
     apply)
-        apply_profile "${2:-}"
+        case "${2:-}" in
+            '') ;;
+            --force) [ -n "$TEST_LOG" ] || die "force is reserved for offline tests";;
+            *) die "unknown apply option";;
+        esac
+        load_config; validate_config
+        if [ "$enabled" = 1 ] || [ "${2:-}" = --force ]; then
+            # Reapply is safe to retry only after a verified recovery if interrupted.
+            begin_change apply
+            apply_profile "${2:-}" || die "apply failed; transition retained"
+            finish_change
+        fi
         ;;
-    enable)
+    activate|enable)
+        load_config; validate_config; preflight_driver
+        begin_change activate
         write_setting enabled 1
-        log "enabled persistently; run 'ax53-switch apply' when ready"
+        apply_profile || die "activation failed; transition retained; no automatic stock rollback"
+        finish_change
         ;;
-    disable)
+    disable|rollback)
+        begin_change rollback
         write_setting enabled 0
-        restore_stock
-        ;;
-    rollback)
-        write_setting enabled 0
-        restore_stock
-        ;;
-    *)
-        usage
-        exit 2
+        restore_stock || die "stock restore failed; transition retained"
+        finish_change
         ;;
 esac

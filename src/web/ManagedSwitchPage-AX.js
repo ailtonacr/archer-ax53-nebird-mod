@@ -12,6 +12,7 @@ function req(operation, extra) {
 }
 
 function unwrap(value) {
+  if (value && value.success === false) throw new Error(errMsg(value.data || value));
   if (value && value.success !== undefined && value.data !== undefined) return value.data;
   return value || {};
 }
@@ -68,7 +69,7 @@ function template() {
 <div class="ms-field ms-full"><label>Portas access LAN</label><div data-role="ports" class="ms-ports"></div><span class="ms-small">A porta trunk fica tagged; as portas selecionadas ficam untagged na VLAN LAN.</span></div></div>
 <div class="ms-advanced"><label><input data-f="cpuLan" type="checkbox"> CPU na VLAN LAN <span class="ms-small">(mantém eth1.2 / br-lan / Wi-Fi; exige VLAN LAN 2)</span></label><label><input data-f="cpuWan" type="checkbox"> CPU na VLAN WAN <span class="ms-small">(normalmente desligado; exige VLAN WAN 4094)</span></label></div>
 <div data-role="locked" class="ms-locked">O perfil está ativo. Desabilite/restaure stock antes de editar para evitar divergência entre estado persistente e tabela L2.</div>
-<div class="ms-actions"><button class="ms-primary" type="submit" data-act="save">Salvar configuração</button><button class="ms-warning" type="button" data-act="apply">Aplicar agora</button><button class="ms-danger" type="button" data-act="rollback">Rollback stock</button></div></form></div>
+<div class="ms-actions"><button class="ms-primary" type="submit" data-act="save">Salvar configuração</button><button class="ms-warning" type="button" data-act="apply">Aplicar agora</button><button class="ms-danger" type="button" data-act="rollback">Rollback stock</button><button class="ms-secondary" type="button" data-act="refresh">Atualizar estado</button></div></form></div>
 <div class="ms-card"><h2 style="font-size:17px;margin-top:0">Topologia resultante</h2><table><thead><tr><th>Porta</th><th>Modo</th><th>Untagged/PVID</th><th>Tagged</th></tr></thead><tbody data-role="topology"></tbody></table></div>
 </section><aside><div class="ms-card"><h2 style="font-size:17px;margin-top:0">Estado persistente</h2><div data-role="summary" class="ms-small">Carregando…</div></div><div class="ms-card"><h2 style="font-size:17px;margin-top:0">Tabela VLAN ativa</h2><pre data-role="driver">Carregando…</pre></div></aside></div></main>`;
 }
@@ -113,17 +114,19 @@ export function openManagedSwitch() {
     return d.wan_vid!==String(state.wan_vid)||d.lan_vid!==String(state.lan_vid)||d.trunk_port!==String(state.trunk_port)||d.access_ports!==String(state.access_ports||"").trim()||d.cpu_lan!==String(Number(state.cpu_lan)||0)||d.cpu_wan!==String(Number(state.cpu_wan)||0);
   }
   function enabled() { return !!state && Number(state.enabled) === 1; }
+  function pending() { return !!state && state.transition === "pending"; }
   function syncControls() {
-    const on = enabled(), changed = dirty();
-    [f.wan,f.lan,f.trunk,f.cpuLan,f.cpuWan].forEach(el => el.disabled = busy || on);
-    qa('[data-role="ports"] input').forEach(el => el.disabled = busy || on || el.value === f.trunk.value);
-    q('[data-act="save"]').disabled = busy || on || !state || !changed;
-    q('[data-act="apply"]').disabled = busy || !state || changed;
+    const on = enabled(), changed = dirty(), blocked = !state || pending();
+    [f.wan,f.lan,f.trunk,f.cpuLan,f.cpuWan].forEach(el => el.disabled = busy || on || blocked);
+    qa('[data-role="ports"] input').forEach(el => el.disabled = busy || on || blocked || el.value === f.trunk.value);
+    q('[data-act="save"]').disabled = busy || on || blocked || !changed;
+    q('[data-act="apply"]').disabled = busy || blocked || changed;
     q('[data-act="rollback"]').disabled = busy || !state;
     q('[data-role="locked"]').className = "ms-locked" + (on ? " show" : "");
     const badge = q('[data-role="badge"]');
-    if (changed && !on) { badge.textContent="Alterações não salvas"; badge.className="ms-badge ms-dirty"; }
-    else { badge.textContent=on?"Perfil ativo":"Perfil desabilitado"; badge.className="ms-badge "+(on?"ms-on":"ms-off"); }
+    if (!state || pending()) { badge.textContent=state?"Transição pendente":"Estado não verificado"; badge.className="ms-badge ms-dirty"; }
+    else if (changed && !on) { badge.textContent="Alterações não salvas"; badge.className="ms-badge ms-dirty"; }
+    else { badge.textContent=on?"Perfil habilitado (configuração)":"Perfil desabilitado"; badge.className="ms-badge "+(on?"ms-on":"ms-off"); }
   }
   function renderPorts() {
     const trunk = f.trunk.value;
@@ -136,7 +139,15 @@ export function openManagedSwitch() {
     const wan=f.wan.value||"—",lan=f.lan.value||"—",trunk=f.trunk.value,access=selectedAccess(),rows=[["WAN","Access",wan,"—"]];
     ["1","2","3","4"].forEach(p=>{if(p===trunk)rows.push(["LAN"+p,"Trunk",lan+" (PVID)",lan+", "+wan]);else if(access.includes(p))rows.push(["LAN"+p,"Access",lan,"—"]);else rows.push(["LAN"+p,"Sem membro","—","—"])});
     const tagged=[];if(f.cpuLan.checked)tagged.push(lan);if(f.cpuWan.checked)tagged.push(wan);rows.push(["CPU / 16","CPU","—",tagged.join(", ")||"—"]);
-    q('[data-role="topology"]').innerHTML=rows.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`).join("");
+    const tbody=q('[data-role="topology"]');
+    tbody.textContent="";
+    for (const row of rows) {
+      const tr=document.createElement("tr");
+      for (const value of row) {
+        const td=document.createElement("td"); td.textContent=String(value); tr.appendChild(td);
+      }
+      tbody.appendChild(tr);
+    }
   }
   function validate() {
     const wan=Number(f.wan.value),lan=Number(f.lan.value),access=selectedAccess();
@@ -150,7 +161,7 @@ export function openManagedSwitch() {
   }
   function fill(value) {
     const d=unwrap(value);
-    if(!d || d.wan_vid===undefined || d.lan_vid===undefined || d.trunk_port===undefined) throw new Error("Resposta de status incompleta do roteador.");
+    if(!d || d.wan_vid===undefined || d.lan_vid===undefined || d.trunk_port===undefined || !["idle","pending"].includes(d.transition)) throw new Error("Resposta de status incompleta do roteador.");
     state=d; f.wan.value=d.wan_vid; f.lan.value=d.lan_vid; currentTrunk=String(d.trunk_port); f.trunk.value=currentTrunk;
     draftAccess=new Set(String(d.access_ports||"").split(/\s+/).filter(Boolean)); draftAccess.delete(currentTrunk);
     f.cpuLan.checked=Number(d.cpu_lan)===1; f.cpuWan.checked=Number(d.cpu_wan)===1;
@@ -159,23 +170,26 @@ export function openManagedSwitch() {
     renderPorts();
   }
   async function refresh() {
+    if (busy) return;
     busy=true;syncControls();
     try { fill(await req("status")); }
-    catch(e){ toast(errMsg(e),false); }
+    catch(e){ state=null; toast(errMsg(e),false); }
     finally { busy=false;syncControls(); }
   }
   async function action(operation, payload, success) {
+    if (busy) return false;
     busy=true;syncControls();
-    try { const r=await req(operation,payload); if (r) { const u=unwrap(r); if(u&&u.wan_vid!==undefined) fill(u); else await refresh(); } toast(success,true); return true; }
-    catch(e){ toast(errMsg(e),false); return false; }
+    try { fill(await req(operation,payload)); toast(success,true); return true; }
+    catch(e){ state=null; toast(errMsg(e),false); return false; }
     finally { busy=false;syncControls(); }
   }
 
   q('[data-act="close"]').onclick=close;
+  q('[data-act="refresh"]').onclick=refresh;
   f.trunk.onchange=()=>{const next=f.trunk.value;if(currentTrunk&&currentTrunk!==next)draftAccess.add(currentTrunk);draftAccess.delete(next);currentTrunk=next;renderPorts()};
   [f.wan,f.lan,f.cpuLan,f.cpuWan].forEach(el=>el.oninput=()=>{renderTopology();syncControls()});
   q('[data-role="form"]').onsubmit=e=>{e.preventDefault();if(enabled())return toast("Desabilite/restaure stock antes de editar.",false);const error=validate();if(error)return toast(error,false);action("save",draft(),"Configuração salva; switch físico não foi alterado.")};
-  q('[data-act="apply"]').onclick=async()=>{if(!state)return;if(dirty())return toast("Salve as alterações antes de aplicar.",false);if(!confirm("Isso reprograma o RTL8367S imediatamente. Confirme que o Proxmox está preparado, IPTV/VLAN custom está desabilitado e sua sessão não está na porta trunk. Aplicar agora?"))return;const ok=enabled()||await action("enable",{},"Perfil habilitado; aplicando…");if(ok)await action("apply",{},"Perfil aplicado ao switch.")};
+  q('[data-act="apply"]').onclick=async()=>{if(!state)return;if(dirty())return toast("Salve as alterações antes de aplicar.",false);if(!confirm("Isso reprograma o RTL8367S imediatamente. Confirme que o Proxmox está preparado, IPTV/VLAN custom está desabilitado e sua sessão não está na porta trunk. Aplicar agora?"))return;await action("apply",{},"Aplicação solicitada; confira a tabela VLAN física.")};
   q('[data-act="rollback"]').onclick=()=>{if(confirm("Executar rollback para o pipeline/layout stock e desabilitar o perfil gerenciado?"))action("rollback",{},"Rollback solicitado; perfil gerenciado desabilitado.")};
   root.__managedSwitchRefresh=refresh;
   refresh();

@@ -121,7 +121,7 @@ grep -Fxq 'lan_vid=2' "$fake_root/etc/managed-switch/default.conf" || fail "LAN 
 
 state="$tmp/tp_data"; log="$tmp/driver.log"
 CLI="$fake_root/usr/sbin/ax53-switch"
-ENV="MS_ETC_ROOT=$fake_root/etc MS_TP_DATA_ROOT=$state MS_TEST_LOG=$log"
+ENV="MS_ETC_ROOT=$fake_root/etc MS_TP_DATA_ROOT=$state MS_RUN_ROOT=$tmp/run MS_TEST_LOG=$log"
 
 env $ENV "$CLI" init >/dev/null
 env $ENV "$CLI" check | grep -Fxq OK || fail "config validation failed"
@@ -155,6 +155,24 @@ env $ENV "$CLI" rollback >/dev/null
 grep -Fxq 'vlan set 4094 65537 1' "$log" || fail "fallback WAN layout missing"
 grep -Fxq 'vlan set 2 65566 30' "$log" || fail "fallback LAN layout missing"
 grep -Fq 'enabled="0"' "$state/managed-switch/config" || fail "rollback did not persist disabled state"
+
+# Atomic activation, immutable active config and shared lock.
+env $ENV "$CLI" activate >/dev/null
+env $ENV "$CLI" configure 4094 2 1 "2 3 4" 1 0 >/dev/null 2>&1 && fail "active profile edited"
+env $ENV "$CLI" set enabled 0 >/dev/null 2>&1 && fail "direct enabled mutation accepted"
+mkdir "$tmp/run/ax53-network.lock"
+env $ENV "$CLI" rollback >/dev/null 2>&1 && fail "concurrent mutation accepted"
+rmdir "$tmp/run/ax53-network.lock"
+echo apply > "$state/managed-switch/transition.pending"
+env $ENV "$CLI" apply >/dev/null 2>&1 && fail "interrupted transition retried"
+env $ENV "$CLI" rollback >/dev/null
+[ ! -f "$state/managed-switch/transition.pending" ] || fail "rollback left pending intent"
+# Persistent config is data, not executable shell.
+cp "$state/managed-switch/config" "$tmp/config-good"
+printf '\nunknown=$(touch %s)\n' "$tmp/executed" >> "$state/managed-switch/config"
+env $ENV "$CLI" check >/dev/null 2>&1 && fail "invalid config accepted"
+[ ! -e "$tmp/executed" ] || fail "persistent config executed"
+cp "$tmp/config-good" "$state/managed-switch/config"
 
 if command -v luac >/dev/null 2>&1; then
     luac -p "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI controller syntax invalid"
