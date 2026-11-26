@@ -26,17 +26,18 @@ test: test-firmware
 
 test-firmware:
 	bash -n apply-mods.sh mods/011-devssh.sh mods/020-managed-switch.sh scripts/stamp-switch-build.sh
-	python3 -m py_compile scripts/patch-managed-switch-menu.py
+	python3 -m py_compile scripts/patch-managed-switch-menu.py scripts/patch-gateway-vendor-guards.py
 	node --input-type=module --check < src/web/ManagedSwitchPage-AX.js
 	sh -n mods/011-devssh-files/etc/init.d/devssh
 	sh -n mods/020-managed-switch-files/usr/sbin/ax53-switch
 	sh -n mods/020-managed-switch-files/etc/init.d/managed-switch
 	sh -n mods/020-managed-switch-files/etc/hotplug.d/switch/99-managed-switch
 	sh -n scripts/test-managed-switch.sh
-	@if command -v luac >/dev/null 2>&1; then luac -p mods/020-managed-switch-files/usr/lib/lua/luci/controller/admin/managed_switch.lua; else echo "luac not found; controller syntax will be checked when available"; fi
+	command -v lua5.1 >/dev/null
 	sh scripts/test-managed-switch.sh
 	sh -n mods/020-managed-switch-files/usr/sbin/ax53-failover
 	sh -n mods/020-managed-switch-files/etc/init.d/gateway-failover
+	for f in mods/020-managed-switch-files/usr/lib/gateway-failover/*.sh mods/020-managed-switch-files/usr/lib/gateway-failover/board-adapter scripts/test-gateway-transition.sh; do sh -n "$$f" || exit 1; done
 	sh scripts/test-gateway-failover.sh
 
 firmware: $(TARGET) test-firmware

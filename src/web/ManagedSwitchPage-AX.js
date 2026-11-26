@@ -134,6 +134,7 @@ export function openManagedSwitch() {
     q('[data-act="rollback"]').disabled = busy || !state || policyBlocked || gateway.mode === "observe";
     const badge = q('[data-role="badge"]');
     if (!state || pending()) { badge.textContent=state?"Transição pendente":"Estado não verificado"; badge.className="ms-badge ms-dirty"; }
+    else if (state.transition==="deferred") { badge.textContent="Reaplicação necessária"; badge.className="ms-badge ms-dirty"; }
     else if (changed && !on) { badge.textContent="Alterações não salvas"; badge.className="ms-badge ms-dirty"; }
     else { badge.textContent=on?"Perfil habilitado (configuração)":"Perfil desabilitado"; badge.className="ms-badge "+(on?"ms-on":"ms-off"); }
   }
@@ -170,7 +171,7 @@ export function openManagedSwitch() {
   }
   function fill(value) {
     const d=unwrap(value);
-    if(!d || d.wan_vid===undefined || d.lan_vid===undefined || d.trunk_port===undefined || !["idle","pending"].includes(d.transition)) throw new Error("Resposta de status incompleta do roteador.");
+    if(!d || d.wan_vid===undefined || d.lan_vid===undefined || d.trunk_port===undefined || !["idle","pending","deferred"].includes(d.transition)) throw new Error("Resposta de status incompleta do roteador.");
     state=d; f.wan.value=d.wan_vid; f.lan.value=d.lan_vid; currentTrunk=String(d.trunk_port); f.trunk.value=currentTrunk;
     draftAccess=new Set(String(d.access_ports||"").split(/\s+/).filter(Boolean)); draftAccess.delete(currentTrunk);
     f.cpuLan.checked=Number(d.cpu_lan)===1; f.cpuWan.checked=Number(d.cpu_wan)===1;

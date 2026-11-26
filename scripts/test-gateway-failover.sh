@@ -96,3 +96,13 @@ if sh "$CLI" tick; then echo "FAIL pending journal accepted" >&2; exit 1; fi
 grep -q '^ERROR ' "$GF_RUN_ROOT/gateway-failover.state"
 echo "OK: policy, qualified mock transitions, hysteresis, recovery and fail-closed journal"
 sh "$ROOT/scripts/test-gateway-transition.sh"
+# Source the read-only guard in the fake data root, without touching stock.
+. "$LIB/vendor-guard.sh"
+rm -f "$GF_DATA_ROOT/gateway-failover/journal"
+printf 'mode=disabled\n' > "$GF_DATA_ROOT/gateway-failover/config"
+ax53_vendor_allowed
+printf 'pending:takeover\n' > "$GF_DATA_ROOT/gateway-failover/journal"
+if ax53_vendor_allowed; then echo "vendor writer allowed with pending journal" >&2; exit 1; fi
+printf 'stable:NORMAL\n' > "$GF_DATA_ROOT/gateway-failover/journal"
+printf 'mode=auto\n' > "$GF_DATA_ROOT/gateway-failover/config"
+if ax53_vendor_allowed; then echo "vendor writer allowed in auto" >&2; exit 1; fi

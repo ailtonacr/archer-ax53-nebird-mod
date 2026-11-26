@@ -17,7 +17,11 @@ command -v node >/dev/null 2>&1 || fail "node is required to validate SPA module
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 fake_root="$tmp/rootfs"
-mkdir -p "$fake_root/etc/rc.d" "$fake_root/etc/dropbear" "$fake_root/www/webpages/js"
+mkdir -p "$fake_root/etc/rc.d" "$fake_root/etc/dropbear" "$fake_root/www/webpages/js" "$fake_root/etc/init.d" "$fake_root/etc/hotplug.d/switch" "$fake_root/lib/iptv"
+# Exact stock files are copied as inert fixtures; no vendor code is executed.
+for f in etc/init.d/switch etc/hotplug.d/switch/65-iptv lib/iptv/iptv_core.sh; do
+    cp "rootfs/$f" "$fake_root/$f"
+done
 
 # Minimal syntactically-valid fixture containing the stock contracts observed on
 # hardware in index-D26yCMJF.js.gz:
@@ -35,6 +39,11 @@ PY
 
 ROOTFS_DIR="$fake_root" bash -e mods/011-devssh.sh >/dev/null
 ROOTFS_DIR="$fake_root" bash -e mods/020-managed-switch.sh >/dev/null
+# Guards must be idempotent, including direct vendor hook invocation.
+python3 scripts/patch-gateway-vendor-guards.py "$fake_root"
+grep -Fq AX53_REAPPLY_AFTER_VENDOR_UNLOCK "$fake_root/etc/hotplug.d/switch/65-iptv" || fail "direct vendor reapply missing"
+grep -Fq AX53_GATEWAY_VENDOR_GUARD_V1 "$fake_root/etc/init.d/switch" || fail "stock switch guard missing"
+grep -Fq AX53_GATEWAY_VENDOR_GUARD_V1 "$fake_root/lib/iptv/iptv_core.sh" || fail "IPTV guard missing"
 
 [ -x "$fake_root/etc/init.d/devssh" ] || fail "devssh not packaged"
 [ -x "$fake_root/usr/sbin/ax53-switch" ] || fail "ax53-switch not packaged"
@@ -163,6 +172,10 @@ env $ENV "$CLI" set enabled 0 >/dev/null 2>&1 && fail "direct enabled mutation a
 mkdir "$tmp/run/ax53-network.lock"
 env $ENV "$CLI" rollback >/dev/null 2>&1 && fail "concurrent mutation accepted"
 rmdir "$tmp/run/ax53-network.lock"
+: > "$tmp/run/ax53-reapply.required"
+env $ENV "$CLI" status | grep -qx 'transition=deferred' || fail "deferred reapply not reported"
+env $ENV "$CLI" apply >/dev/null
+[ ! -f "$tmp/run/ax53-reapply.required" ] || fail "deferred reapply not cleared"
 echo apply > "$state/managed-switch/transition.pending"
 env $ENV "$CLI" apply >/dev/null 2>&1 && fail "interrupted transition retried"
 env $ENV "$CLI" rollback >/dev/null
@@ -177,7 +190,7 @@ cp "$tmp/config-good" "$state/managed-switch/config"
 if command -v lua5.1 >/dev/null 2>&1; then
     lua5.1 scripts/test-managed-switch-controller.lua "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua"
 else
-    echo "SKIP: Lua 5.1 behavioral tests (install lua5.1)" >&2
+    fail "Lua 5.1 is required for behavioral controller tests"
 fi
 if command -v luac >/dev/null 2>&1; then
     luac -p "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "LuCI controller syntax invalid"

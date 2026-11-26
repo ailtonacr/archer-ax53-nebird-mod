@@ -92,7 +92,7 @@ local function parse_status_output(output)
     for key in pairs(expected) do
         if data[key] == nil or data[key] == "" then return nil, "missing status: " .. key end
     end
-    if data.profile ~= "router-on-a-stick" or (data.transition ~= "idle" and data.transition ~= "pending")
+    if data.profile ~= "router-on-a-stick" or (data.transition ~= "idle" and data.transition ~= "pending" and data.transition ~= "deferred")
         or data.wan_vid < 1 or data.wan_vid > 4094 or data.lan_vid < 1 or data.lan_vid > 4094
         or data.wan_vid == data.lan_vid then return nil, "invalid status values" end
     for _, key in ipairs({"enabled", "cpu_lan", "cpu_wan"}) do

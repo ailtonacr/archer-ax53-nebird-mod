@@ -1,7 +1,12 @@
 #!/bin/sh
 # Coalesce hotplug reapply with active custom transactions. A lock conflict
 # must not silently lose the request; other failures remain explicit.
+# Patched 65-iptv calls us directly after releasing switch-set.lock.
+# hotplug-call also sources this file; avoid resetting twice.
+[ "${1:-}" = vendor-reapply ] || exit 0
 [ -x /usr/sbin/ax53-switch ] || exit 0
+[ -f /tp_data/managed-switch/config ] || exit 0
+grep -Eq '^enabled=(1|"1")$' /tp_data/managed-switch/config || exit 0
 attempt=0
 while [ "$attempt" -lt 10 ]; do
     if /usr/sbin/ax53-switch apply >/dev/null 2>&1; then exit 0; else rc=$?; fi

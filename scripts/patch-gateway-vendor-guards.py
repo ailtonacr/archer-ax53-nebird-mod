@@ -24,12 +24,13 @@ def patch(path, edits):
 # Do not run custom apply from here: it would nest the vendor lock.
 patch("etc/hotplug.d/switch/65-iptv", [
     ("lock /var/run/switch-set.lock\n", "lock /var/run/switch-set.lock\n" + marker + "\n" + source + "\n" + exitguard + "\n"),
+    ("lock -u /var/run/switch-set.lock\t\n", "lock -u /var/run/switch-set.lock\t\n# AX53_REAPPLY_AFTER_VENDOR_UNLOCK\n/etc/hotplug.d/switch/99-managed-switch vendor-reapply || logger -t ax53-switch 'managed reapply requires attention'\n"),
 ])
 # Block the other observed entrypoints before mutation. These guards are not
 # proof that all proprietary writers are covered; auto is still gated.
 patch("etc/init.d/switch", [
-    ("start() {\n", "start() {\n    " + marker + "\n    " + source + "\n    " + guard + "\n"),
-    ("stop() {\n", "stop() {\n    " + marker + "\n    " + source + "\n    " + guard + "\n"),
+    ("\nstart() {\n", "\nstart() {\n    " + marker + "\n    " + source + "\n    " + guard + "\n"),
+    ("\nstop() {\n", "\nstop() {\n    " + marker + "\n    " + source + "\n    " + guard + "\n"),
 ])
 patch("lib/iptv/iptv_core.sh", [
     (name + "()\n{\n", name + "()\n{\n    " + marker + "\n    " + source + "\n    " + guard + "\n")

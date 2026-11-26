@@ -421,7 +421,10 @@ access_ports=$access_ports
 cpu_lan=$cpu_lan
 cpu_wan=$cpu_wan
 EOF
-    if [ -f "$PENDING" ] || [ -f "$RUN_ROOT/ax53-reapply.required" ]; then echo transition=pending; else echo transition=idle; fi
+    if [ -f "$PENDING" ]; then echo transition=pending
+    elif [ -f "$RUN_ROOT/ax53-reapply.required" ]; then echo transition=deferred
+    else echo transition=idle
+    fi
 
     if [ -z "$TEST_LOG" ] && [ -r "$DRIVER_ROOT/vlan" ]; then
         echo "--- rtl8367s/vlan ---"
@@ -552,5 +555,6 @@ case "$cmd" in
         write_setting enabled 0
         restore_stock || die "stock restore failed; transition retained"
         finish_change
+        rm -f "$RUN_ROOT/ax53-reapply.required"
         ;;
 esac
