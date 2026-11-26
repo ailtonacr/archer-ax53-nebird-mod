@@ -35,6 +35,9 @@ test-firmware:
 	sh -n scripts/test-managed-switch.sh
 	@if command -v luac >/dev/null 2>&1; then luac -p mods/020-managed-switch-files/usr/lib/lua/luci/controller/admin/managed_switch.lua; else echo "luac not found; controller syntax will be checked when available"; fi
 	sh scripts/test-managed-switch.sh
+	sh -n mods/020-managed-switch-files/usr/sbin/ax53-failover
+	sh -n mods/020-managed-switch-files/etc/init.d/gateway-failover
+	sh scripts/test-gateway-failover.sh
 
 firmware: $(TARGET) test-firmware
 	@bash -o pipefail -c 'set -e; \

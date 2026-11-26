@@ -1,0 +1,151 @@
+#!/bin/sh
+# Gateway failover policy runner. Hardware operations are delegated to an
+# explicitly qualified board adapter; never infer qualification from ping.
+set -eu
+umask 077
+ETC=${GF_ETC_ROOT:-/etc}
+DATA=${GF_DATA_ROOT:-/tp_data}
+RUN=${GF_RUN_ROOT:-/var/run}
+LIB=${GF_LIB_ROOT:-/usr/lib/gateway-failover}
+CONF="$DATA/gateway-failover/config"
+STATE="$RUN/gateway-failover.state"
+JOURNAL="$DATA/gateway-failover/journal"
+LOCK="$RUN/gateway-failover.lock"
+ADAPTER="$LIB/board-adapter"
+. "$LIB/core.sh"
+die() { echo "ax53-failover: $*" >&2; exit 1; }
+say() { logger -t ax53-failover "$*" 2>/dev/null || :; echo "$*"; }
+atomic() {
+    target=$1; shift
+    printf '%s\n' "$*" > "$target.tmp.$$" && mv "$target.tmp.$$" "$target"
+}
+init() {
+    mkdir -p "$DATA/gateway-failover" "$RUN"
+    [ -f "$CONF" ] || cp "$ETC/gateway-failover/default.conf" "$CONF"
+}
+read_conf() {
+    init
+    mode=disabled interval=5 fail_samples=6 recovery_samples=24 auto_return=0
+    while IFS='=' read -r key value; do
+        case "$key" in
+            mode) mode=$value ;;
+            interval) interval=$value ;;
+            fail_samples) fail_samples=$value ;;
+            recovery_samples) recovery_samples=$value ;;
+            auto_return) auto_return=$value ;;
+            ''|\#*) ;;
+            *) die "unknown config key: $key" ;;
+        esac
+    done < "$CONF"
+    case "$mode" in disabled|observe|auto) ;; *) die "invalid mode";; esac
+    case "$auto_return" in 0|1) ;; *) die "invalid auto_return";; esac
+    for num in "$interval" "$fail_samples" "$recovery_samples"; do
+        case "$num" in ''|0*|*[!0-9]*) die "invalid positive integer";; esac
+        [ "${#num}" -le 4 ] && [ "$num" -le 3600 ] || die "out of range"
+    done
+    [ "$interval" -ge 2 ] || die "interval too short"
+    [ "$fail_samples" -ge 2 ] && [ "$recovery_samples" -ge 2 ] || die "insufficient hysteresis"
+}
+acquire() {
+    # Vendor lock releases on process exit only via this trap; no stale PID
+    # guessing, no parallel transition. The caller must resolve stale lock.
+    mkdir "$LOCK" 2>/dev/null || die "locked: $LOCK"
+    trap 'rmdir "$LOCK" 2>/dev/null || :' EXIT
+    trap 'exit 1' HUP INT TERM
+}
+adapter_ok() {
+    [ -x "$ADAPTER" ] && "$ADAPTER" preflight >/dev/null 2>&1
+}
+load_state() {
+    phase=NORMAL count=0 probe=unknown action=none
+    if [ -f "$STATE" ]; then
+        read -r phase count probe action < "$STATE" || die "invalid runtime state"
+        case "$phase" in NORMAL|SUSPECT|FAILOVER|RECOVERY|ERROR) ;; *) die "invalid phase";; esac
+        case "$count" in ''|*[!0-9]*) die "invalid count";; esac
+        [ "${#count}" -le 4 ] || die "invalid count size"
+    fi
+}
+probe_primary() {
+    if adapter_ok; then
+        result=$("$ADAPTER" probe-primary 2>/dev/null) || result=unknown
+        case "$result" in healthy|down|unknown|upstream-down) echo "$result";; *) echo unknown;; esac
+    else
+        # ICMP alone is not a qualified health check. No takeover on this.
+        if ping -c 1 -W 1 172.24.0.1 >/dev/null 2>&1; then
+            echo local-reachable
+        else
+            echo local-unreachable
+        fi
+    fi
+}
+transition() {
+    direction=$1
+    [ "$mode" = auto ] || die "transition requires auto mode"
+    adapter_ok || die "board adapter not qualified"
+    # Durable intent precedes any hardware mutation. Interrupted transitions
+    # require explicit reconciliation; boot must never blindly retry.
+    atomic "$JOURNAL" "pending:$direction"
+    if "$ADAPTER" "$direction" && "$ADAPTER" "verify-$direction"; then
+        case "$direction" in takeover) next=FAILOVER;; return) next=NORMAL;; esac
+        atomic "$JOURNAL" "stable:$next"
+        atomic "$STATE" "$next 0 unknown none"
+        say "transition verified: $next"
+    else
+        atomic "$STATE" "ERROR 0 unknown blocked"
+        say "transition failed; pending journal retained, manual reconciliation required"
+        return 1
+    fi
+}
+tick() {
+    read_conf
+    [ "$mode" != disabled ] || return 0
+    acquire
+    load_state
+    if [ -f "$JOURNAL" ]; then
+        IFS= read -r journal < "$JOURNAL"
+        case "$journal" in
+            pending:*) atomic "$STATE" "ERROR 0 unknown blocked"; die "interrupted transition: $journal";;
+            stable:FAILOVER)
+                # Runtime state is volatile. Adapter must prove physical state
+                # after reboot; a state file is never evidence of fencing.
+                if [ ! -f "$STATE" ]; then
+                    adapter_ok && "$ADAPTER" verify-takeover || die "fallback not reconciled"
+                    phase=FAILOVER
+                fi ;;
+            stable:NORMAL)
+                if [ ! -f "$STATE" ]; then
+                    adapter_ok && "$ADAPTER" verify-return || die "primary not reconciled"
+                fi ;;
+            *) die "invalid journal";;
+        esac
+    fi
+    [ "$phase" != ERROR ] || die "manual reconciliation required"
+    if [ "$mode" = auto ]; then
+        adapter_ok || die "auto refused: board adapter not qualified"
+    fi
+    probe=$(probe_primary)
+    set -- $(fo_step "$phase" "$count" "$probe" "$fail_samples" "$recovery_samples" "$auto_return")
+    phase=$1 count=$2 action=$3
+    atomic "$STATE" "$phase $count $probe $action"
+    if [ "$mode" = auto ]; then
+        case "$action" in takeover|return) transition "$action";; esac
+    fi
+}
+case "${1:-}" in
+    init) read_conf ;;
+    status)
+        read_conf; load_state
+        printf 'mode=%s\nphase=%s\nconsecutive=%s\nprobe=%s\naction=%s\n' "$mode" "$phase" "$count" "$probe" "$action"
+        if adapter_ok; then echo adapter=qualified; else echo adapter=unqualified; fi
+        if [ -f "$JOURNAL" ]; then printf 'journal='; cat "$JOURNAL"; fi ;;
+    tick) tick ;;
+    run)
+        while :; do
+            read_conf
+            [ "$mode" != disabled ] || exit 0
+            # Execute tick in a child so its lock/traps cannot leak to loop.
+            "$0" tick || exit 1
+            sleep "$interval"
+        done ;;
+    *) die "usage: ax53-failover init|status|tick|run" ;;
+esac

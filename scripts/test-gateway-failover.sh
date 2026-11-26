@@ -1,0 +1,62 @@
+#!/bin/sh
+set -eu
+ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+LIB="$ROOT/mods/020-managed-switch-files/usr/lib/gateway-failover"
+CLI="$ROOT/mods/020-managed-switch-files/usr/sbin/ax53-failover"
+. "$LIB/core.sh"
+assert() {
+    expected=$1; shift
+    actual=$(fo_step "$@")
+    [ "$actual" = "$expected" ] || { echo "FAIL expected $expected got $actual" >&2; exit 1; }
+}
+assert 'NORMAL 0 none' NORMAL 0 healthy 6 24 0
+assert 'SUSPECT 1 none' NORMAL 0 down 6 24 0
+assert 'SUSPECT 5 none' SUSPECT 4 down 6 24 0
+assert 'SUSPECT 6 takeover' SUSPECT 5 down 6 24 0
+assert 'SUSPECT 0 none' SUSPECT 5 upstream-down 6 24 0
+assert 'SUSPECT 0 none' SUSPECT 5 local-unreachable 6 24 0
+assert 'NORMAL 0 none' SUSPECT 5 healthy 6 24 0
+assert 'RECOVERY 24 none' RECOVERY 23 healthy 6 24 0
+assert 'RECOVERY 24 return' RECOVERY 23 healthy 6 24 1
+assert 'FAILOVER 0 none' RECOVERY 23 down 6 24 1
+assert 'ERROR 0 none' ERROR 0 healthy 6 24 1
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT INT TERM
+export GF_ETC_ROOT="$ROOT/mods/020-managed-switch-files/etc" GF_DATA_ROOT="$tmp/data" GF_RUN_ROOT="$tmp/run" GF_LIB_ROOT="$tmp/lib"
+mkdir -p "$GF_LIB_ROOT"
+cp "$LIB/"* "$GF_LIB_ROOT/"
+chmod +x "$GF_LIB_ROOT/board-adapter"
+sh "$CLI" init
+sh "$CLI" status | grep -qx 'mode=disabled'
+sh "$CLI" tick
+[ ! -f "$GF_RUN_ROOT/gateway-failover.state" ]
+sed 's/mode=disabled/mode=auto/' "$GF_DATA_ROOT/gateway-failover/config" > "$tmp/c"
+mv "$tmp/c" "$GF_DATA_ROOT/gateway-failover/config"
+if sh "$CLI" tick; then echo "FAIL unqualified auto" >&2; exit 1; fi
+[ ! -f "$GF_DATA_ROOT/gateway-failover/journal" ]
+# Mock adapter: no real hardware commands.
+cat > "$GF_LIB_ROOT/board-adapter" <<'EOF'
+#!/bin/sh
+case "$1" in
+ preflight|takeover|verify-takeover|return|verify-return) exit 0;;
+ probe-primary) cat "$GF_DATA_ROOT/probe";;
+ *) exit 1;;
+esac
+EOF
+chmod +x "$GF_LIB_ROOT/board-adapter"
+echo down > "$GF_DATA_ROOT/probe"
+for n in 1 2 3 4 5; do sh "$CLI" tick; done
+[ ! -f "$GF_DATA_ROOT/gateway-failover/journal" ]
+sh "$CLI" tick
+grep -qx 'stable:FAILOVER' "$GF_DATA_ROOT/gateway-failover/journal"
+echo healthy > "$GF_DATA_ROOT/probe"
+for n in $(seq 1 24); do sh "$CLI" tick; done
+grep -qx 'stable:FAILOVER' "$GF_DATA_ROOT/gateway-failover/journal"
+sed 's/auto_return=0/auto_return=1/' "$GF_DATA_ROOT/gateway-failover/config" > "$tmp/c"
+mv "$tmp/c" "$GF_DATA_ROOT/gateway-failover/config"
+sh "$CLI" tick
+grep -qx 'stable:NORMAL' "$GF_DATA_ROOT/gateway-failover/journal"
+echo pending:takeover > "$GF_DATA_ROOT/gateway-failover/journal"
+if sh "$CLI" tick; then echo "FAIL pending journal accepted" >&2; exit 1; fi
+grep -q '^ERROR ' "$GF_RUN_ROOT/gateway-failover.state"
+echo "OK: policy, qualified mock transitions, hysteresis, recovery and fail-closed journal"

@@ -1,0 +1,6 @@
+#!/bin/sh
+# Deliberately fail closed until the AX53 running firmware, switch fencing,
+# vendor DHCP/NAT/firewall and isolated recovery channel are validated.
+# See docs/GATEWAY-FAILOVER.md. Never replace this with an unconditional OK.
+echo "board adapter not qualified for live transitions" >&2
+exit 1

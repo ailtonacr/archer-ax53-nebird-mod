@@ -1,0 +1,24 @@
+#!/bin/sh /etc/rc.common
+# Observer/runner is explicitly started after boot reconciliation is qualified.
+START=99
+STOP=4
+PID=/var/run/gateway-failover.pid
+start() {
+    /usr/sbin/ax53-failover init || return 1
+    grep -qx 'mode=observe' /tp_data/gateway-failover/config || return 0
+    if [ -f "$PID" ] && kill -0 "$(cat "$PID")" 2>/dev/null; then return 0; fi
+    /usr/sbin/ax53-failover run >/dev/null 2>&1 &
+    echo "$!" > "$PID"
+}
+stop() {
+    if [ -f "$PID" ]; then
+        pid="$(cat "$PID")"
+        case "$pid" in ''|*[!0-9]*) return 1;; esac
+        [ "$pid" -gt 1 ] || return 1
+        # Only stop the exact runner, never an unrelated reused PID.
+        if [ -r "/proc/$pid/cmdline" ] && tr '\000' '\n' < "/proc/$pid/cmdline" | grep -Fxq /usr/sbin/ax53-failover; then
+            kill "$pid" 2>/dev/null || :
+        fi
+        rm -f "$PID"
+    fi
+}
