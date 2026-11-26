@@ -51,11 +51,11 @@ case "$1" in
     primary-layout) rtl_verify primary "$control";;
     verify-fenced)
         rtl_verify fenced "$control" || rtl_verify fallback "$control";;
-    local-services-off) gf_l3_off && "$QUAL" verify-native-services-off;;
+    local-services-off) gf_l3_off && "$QUAL" verify-native-services-off && "$QUAL" verify-l3-off;;
     probe-primary) "$QUAL" probe-primary;;
     primary-ready-isolated) "$QUAL" verify-primary-ready-isolated;;
     verify-local-gateway)
-        rtl_verify fallback "$control" && gf_l3_verify && "$QUAL" verify-native-services-off;;
+        rtl_verify fallback "$control" && gf_l3_verify && "$QUAL" verify-native-services-off && "$QUAL" verify-l3-fallback;;
     fence-primary) require_intent takeover && rtl_fence "$control";;
     enable-local-wan) require_intent takeover && rtl_enable_local_wan "$control";;
     prepare-firewall) require_intent takeover && gf_l3_prepare_firewall;;
@@ -68,6 +68,6 @@ case "$1" in
     disable-local-wan) require_intent return && rtl_disable_local_wan "$control";;
     reconnect-primary)
         require_intent return && gf_l3_off &&
-            "$QUAL" verify-native-services-off && rtl_reconnect "$control";;
+            "$QUAL" verify-native-services-off && "$QUAL" verify-l3-off && rtl_reconnect "$control";;
     *) fail "unknown platform operation";;
 esac

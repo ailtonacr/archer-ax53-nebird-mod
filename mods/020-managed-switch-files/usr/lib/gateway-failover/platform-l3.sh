@@ -37,7 +37,14 @@ gf_l3_load() {
     GF_WAN_IP=$1 GF_POOL_START=$2 GF_POOL_END=$3 GF_DNS1=$4 GF_DNS2=$5
 }
 gf_has_addr() {
-    gf_ip -4 addr show dev "$1" | awk -v addr="$2" '$1=="inet" && $2==addr {found=1} END{exit !found}'
+    local output
+    output=$(gf_ip -4 addr show dev "$1") || return 1
+    printf '%s\n' "$output" | awk -v addr="$2" '$1=="inet" && $2==addr {found=1} END{exit !found}'
+}
+gf_no_addr() {
+    local output
+    output=$(gf_ip -4 addr show dev "$1") || return 1
+    printf '%s\n' "$output" | awk -v addr="$2" '$1=="inet" && $2==addr {found=1} END{exit found}'
 }
 gf_chain_present() { gf_ipt -t "$1" -S "$2" >/dev/null 2>&1; }
 gf_hook_present() { gf_ipt -t "$1" -C "$2" -j "$3" >/dev/null 2>&1; }
@@ -68,8 +75,8 @@ gf_l3_prepare_firewall() {
     gf_ipt -t nat -I POSTROUTING 1 -j AX53GF_NAT
 }
 gf_l3_claim() {
-    ! gf_has_addr "$GF_LAN" "$GF_GW/24" || return 1
-    ! gf_has_addr "$GF_WAN" "$GF_WAN_IP/24" || return 1
+    gf_no_addr "$GF_LAN" "$GF_GW/24" || return 1
+    gf_no_addr "$GF_WAN" "$GF_WAN_IP/24" || return 1
     gf_ip link set "$GF_WAN" up &&
     gf_ip addr add "$GF_WAN_IP/24" dev "$GF_WAN" &&
     gf_ip addr add "$GF_GW/24" dev "$GF_LAN" &&
@@ -97,7 +104,7 @@ gf_l3_dns_running() {
         tr '\000' '\n' < "/proc/$pid/cmdline" | grep -Fxq "$GF_RUN/dnsmasq.conf"
 }
 gf_l3_start_dns() {
-    ! gf_l3_dns_running || return 1
+    [ ! -e "$GF_RUN/dnsmasq.pid" ] || return 1
     mkdir -p "$GF_RUN" || return 1
     umask 077
     cat > "$GF_RUN/dnsmasq.conf" <<EOF
@@ -169,10 +176,12 @@ gf_l3_verify() {
     gf_l3_dns_running
 }
 gf_l3_off() {
-    ! gf_has_addr "$GF_LAN" "$GF_GW/24" &&
-    ! gf_has_addr "$GF_WAN" "$GF_WAN_IP/24" &&
+    gf_no_addr "$GF_LAN" "$GF_GW/24" &&
+    gf_no_addr "$GF_WAN" "$GF_WAN_IP/24" &&
     [ "$(cat /proc/sys/net/ipv4/ip_forward)" = 0 ] &&
-    ! gf_l3_dns_running &&
+    [ ! -e "$GF_RUN/dnsmasq.pid" ] &&
+    gf_ipt -S INPUT >/dev/null && gf_ipt -S FORWARD >/dev/null &&
+    gf_ipt -t nat -S POSTROUTING >/dev/null &&
     ! gf_chain_present filter AX53GF_IN &&
     ! gf_chain_present filter AX53GF_FWD &&
     ! gf_chain_present nat AX53GF_NAT

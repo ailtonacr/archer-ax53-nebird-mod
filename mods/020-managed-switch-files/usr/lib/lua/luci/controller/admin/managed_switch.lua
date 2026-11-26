@@ -152,7 +152,7 @@ local function gateway_status()
     if rc ~= 0 then return nil, "gateway status unavailable" end
     local data, allowed = {}, {
         mode=true, phase=true, consecutive=true, probe=true, action=true,
-        last_sample=true, first_sample=true, adapter=true, journal=true, freshness=true,
+        last_sample=true, first_sample=true, adapter=true, journal=true, freshness=true, running=true,
     }
     for line in output:gmatch("[^\r\n]+") do
         local key, value = line:match("^([%w_]+)=(.*)$")
@@ -174,7 +174,8 @@ local function gateway_status()
     local journals = {none=true, ["stable:NORMAL"]=true, ["stable:FAILOVER"]=true,
         ["pending:takeover"]=true, ["pending:return"]=true}
     if not freshness[data.freshness] or not probes[data.probe] or not actions[data.action]
-        or not journals[data.journal] then return nil, "invalid gateway status fields" end
+        or not journals[data.journal] or (data.running ~= "yes" and data.running ~= "no") then
+        return nil, "invalid gateway status fields" end
     for _, key in ipairs({"consecutive", "first_sample", "last_sample"}) do
         local value = data[key]
         if not value or #value > 9 or not value:match("^%d+$") then return nil, "invalid sample field" end
@@ -193,6 +194,11 @@ end
 local function op_gateway_policy(command)
     local rc, output = run_cli({command}, FAILOVER_CLI)
     if rc ~= 0 then return error_reply("gateway_policy_failed", output) end
+    -- Policy is already committed; do not claim the runner started if the
+    -- vendor init call fails. The operator can retry/disable explicitly.
+    local service_action = command == "set-observe" and "start" or "stop"
+    local service_rc, service_output = run_cli({service_action}, "/etc/init.d/gateway-failover")
+    if service_rc ~= 0 then return error_reply("gateway_service_failed", "policy saved; service action failed: " .. service_output) end
     return op_gateway_status()
 end
 

@@ -54,6 +54,9 @@ grep -Fq AX53_GATEWAY_VENDOR_GUARD_V1 "$fake_root/lib/iptv/iptv_core.sh" || fail
 [ ! -e "$fake_root/www/webpages/managed-switch.html" ] || fail "legacy standalone page must not be packaged"
 [ -L "$fake_root/etc/rc.d/S55devssh" ] || fail "S55devssh missing"
 [ -L "$fake_root/etc/rc.d/S99managed-switch" ] || fail "S99managed-switch missing"
+[ -L "$fake_root/etc/rc.d/S99zgateway-failover" ] || fail "observer boot link missing"
+[ -x "$fake_root/usr/lib/gateway-failover/qualified-platform" ] || fail "platform dispatcher missing"
+[ ! -e "$fake_root/usr/lib/gateway-failover/board-qualification" ] || fail "unqualified firmware must not ship qualification"
 
 grep -Fq 'call("_index")' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "controller route is not stock-dispatch style"
 grep -Fq 'controller._index(dispatch)' "$fake_root/usr/lib/lua/luci/controller/admin/managed_switch.lua" || fail "TP-Link stock controller transport missing"

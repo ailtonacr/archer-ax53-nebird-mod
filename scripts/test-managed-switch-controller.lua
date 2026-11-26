@@ -7,7 +7,7 @@ local status = table.concat({
     "mock table", "",
 }, "\n")
 local calls, form, result, fail = {}, {}, status, false
-local gateway = "mode=disabled\nphase=NORMAL\nadapter=unqualified\nconsecutive=0\nprobe=unknown\naction=none\nlast_sample=0\nfirst_sample=0\nfreshness=disabled\njournal=none\n"
+local gateway = "mode=disabled\nphase=NORMAL\nadapter=unqualified\nconsecutive=0\nprobe=unknown\naction=none\nlast_sample=0\nfirst_sample=0\nfreshness=disabled\njournal=none\nrunning=no\n"
 package.loaded["luci.http"] = { formvalue = function(k) return form[k] end }
 package.loaded["luci.sys"] = {
     exec = function(cmd)
@@ -52,6 +52,7 @@ assert(invoke({operation="apply"}).success)
 assert(#calls == 2 and calls[1]:find("'activate'",1,true), "apply must be single mutation")
 assert(invoke({operation="gateway_status"}).data.mode == "disabled")
 assert(invoke({operation="gateway_observe"}).data.mode == "observe")
+assert(#calls == 3 and calls[2]:find("/etc/init.d/gateway-failover",1,true) and calls[2]:find("'start'",1,true))
 assert(invoke({operation="gateway_disabled"}).data.mode == "disabled")
 reject({operation="gateway_auto"})
 fail = true

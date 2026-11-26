@@ -82,7 +82,7 @@ if [ -e "$R/www/webpages/managed-switch.html" ]; then
 fi
 python3 "$PATCH_MENU" "$R" >/dev/null
 
-# Failover policy and observer; no boot link or live adapter in stage 1.
+# Read-only observer at boot if explicitly selected; auto is not started.
 mkdir -p "$R/etc/gateway-failover" "$R/usr/lib/gateway-failover"
 cp "$FILES/etc/gateway-failover/default.conf" "$R/etc/gateway-failover/default.conf"
 cp "$FILES/etc/init.d/gateway-failover" "$R/etc/init.d/gateway-failover"
@@ -97,4 +97,5 @@ chmod 0644 "$R/etc/gateway-failover/platform.conf.example"
 [ ! -e "$R/usr/lib/gateway-failover/board-qualification" ] || { echo "Error: unreviewed board qualification in rootfs" >&2; exit 1; }
 chmod 0644 "$R/usr/lib/gateway-failover/"*.sh "$R/etc/gateway-failover/default.conf"
 grep -Fxq 'mode=disabled' "$R/etc/gateway-failover/default.conf" || exit 1
+ln -sfn "../init.d/gateway-failover" "$R/etc/rc.d/S99zgateway-failover"
 echo "### Managed switch installed (disabled by default, stock SPA/API integration) ###"

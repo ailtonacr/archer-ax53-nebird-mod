@@ -18,6 +18,9 @@ start() {
     fi
     /usr/sbin/ax53-failover run >/dev/null 2>&1 &
     echo "$!" > "$PID"
+    # The policy can be saved even if the runner fails immediately.
+    sleep 1
+    kill -0 "$(cat "$PID")" 2>/dev/null || return 1
 }
 stop() {
     if [ -f "$PID" ]; then
