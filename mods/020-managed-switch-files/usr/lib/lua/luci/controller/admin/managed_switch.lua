@@ -152,7 +152,7 @@ local function gateway_status()
     if rc ~= 0 then return nil, "gateway status unavailable" end
     local data, allowed = {}, {
         mode=true, phase=true, consecutive=true, probe=true, action=true,
-        last_sample=true, first_sample=true, adapter=true, journal=true,
+        last_sample=true, first_sample=true, adapter=true, journal=true, freshness=true,
     }
     for line in output:gmatch("[^\r\n]+") do
         local key, value = line:match("^([%w_]+)=(.*)$")
@@ -167,6 +167,20 @@ local function gateway_status()
         or (data.adapter ~= "qualified" and data.adapter ~= "unqualified") then
         return nil, "invalid gateway status"
     end
+    local freshness = {disabled=true, never=true, recent=true, stale=true}
+    local probes = {unknown=true, healthy=true, down=true, ["upstream-down"]=true,
+        ["local-reachable"]=true, ["local-unreachable"]=true}
+    local actions = {none=true, takeover=true, ["return"]=true, blocked=true}
+    local journals = {none=true, ["stable:NORMAL"]=true, ["stable:FAILOVER"]=true,
+        ["pending:takeover"]=true, ["pending:return"]=true}
+    if not freshness[data.freshness] or not probes[data.probe] or not actions[data.action]
+        or not journals[data.journal] then return nil, "invalid gateway status fields" end
+    for _, key in ipairs({"consecutive", "first_sample", "last_sample"}) do
+        local value = data[key]
+        if not value or #value > 9 or not value:match("^%d+$") then return nil, "invalid sample field" end
+        data[key] = tonumber(value)
+    end
+    if data.first_sample > data.last_sample then return nil, "invalid sample chronology" end
     return data
 end
 

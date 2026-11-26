@@ -83,8 +83,7 @@ ax53-switch init
 ax53-switch check
 ax53-switch status
 ax53-switch configure <wan_vid> <lan_vid> <trunk_port> "<access_ports>" <cpu_lan> <cpu_wan>
-ax53-switch enable
-ax53-switch apply
+ax53-switch activate
 ax53-switch rollback
 ```
 
@@ -226,8 +225,8 @@ O patch é fail-closed: se os anchors de rota, `navConfig`, `modeMenu` ou filtro
 - Alterações não salvas bloqueiam `Aplicar agora`.
 - Enquanto o perfil está ativo, edição de VLAN/portas fica bloqueada.
 - `Aplicar agora` pede confirmação operacional.
-- Backend garante habilitação antes do apply.
-- Se `apply` falhar, o backend executa `rollback` automaticamente.
+- Backend ativa e aplica em uma transação.
+- Se `apply` falhar, o marcador de transição permanece; recuperação explícita é necessária.
 - `Rollback stock` permanece disponível explicitamente.
 - IPTV/VLAN customizado da TP-Link não deve ser usado simultaneamente com o perfil gerenciado.
 

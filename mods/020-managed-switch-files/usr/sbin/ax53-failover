@@ -60,7 +60,7 @@ acquire() {
     # guessing, no parallel transition. The caller must resolve stale lock.
     mkdir -p "$RUN"
     if ! mkdir "$LOCK" 2>/dev/null; then
-        say "network controller busy or stale lock" >&2
+        echo "network controller busy or stale lock" >&2
         exit 75
     fi
     trap 'rmdir "$LOCK" 2>/dev/null || :' EXIT
@@ -119,10 +119,14 @@ probe_primary() {
         case "$result" in healthy|down|unknown|upstream-down) echo "$result";; *) echo unknown;; esac
     else
         # ICMP alone is not a qualified health check. No takeover on this.
-        if command -v timeout >/dev/null 2>&1 && timeout -k 2 3 ping -c 1 -W 1 172.24.0.1 >/dev/null 2>&1; then
+        # BusyBox ping has its own reply deadline; do not confuse an absent
+        # timeout applet or unsupported options with a failed gateway.
+        command -v ping >/dev/null 2>&1 || { echo unknown; return; }
+        if ping -c 1 -W 1 172.24.0.1 >/dev/null 2>&1; then
             echo local-reachable
         else
-            echo local-unreachable
+            rc=$?
+            case "$rc" in 1) echo local-unreachable;; *) echo unknown;; esac
         fi
     fi
 }
@@ -183,6 +187,7 @@ tick() {
     fi
     load_state
     if [ "$mode" = observe ]; then
+        [ ! -f "$SWITCH_PENDING" ] || block "switch transition pending"
         [ -f "$DATA/managed-switch/config" ] &&
             grep -Eq '^enabled=(1|"1")$' "$DATA/managed-switch/config" ||
             die "observation requires managed profile"
@@ -225,7 +230,9 @@ case "${1:-}" in
     set-observe|set-disabled)
         acquire; read_conf
         [ "$mode" != auto ] || die "auto owner requires explicit reconciliation"
-        [ ! -f "$SWITCH_PENDING" ] || die "switch transition pending"
+        if [ "$1" = set-observe ]; then
+            [ ! -f "$SWITCH_PENDING" ] || die "switch transition pending"
+        fi
         if [ -f "$JOURNAL" ]; then
             grep -qx 'stable:NORMAL' "$JOURNAL" || die "failover journal requires reconciliation"
         fi
@@ -244,9 +251,32 @@ case "${1:-}" in
         ;;
     status)
         acquire; read_conf; load_state
+        freshness=never
+        if [ "$mode" = disabled ]; then freshness=disabled
+        elif [ "$last" -gt 0 ]; then
+            now=$(monotonic_now)
+            if [ "$now" -ge "$last" ] && [ $((now-last)) -le $((interval*3)) ]; then freshness=recent; else freshness=stale; fi
+        fi
         printf 'mode=%s\nphase=%s\nconsecutive=%s\nprobe=%s\naction=%s\nlast_sample=%s\nfirst_sample=%s\n' "$mode" "$phase" "$count" "$probe" "$action" "$last" "$since"
+        printf 'freshness=%s\n' "$freshness"
         if adapter_ok; then echo adapter=qualified; else echo adapter=unqualified; fi
-        if [ -f "$JOURNAL" ]; then printf 'journal='; cat "$JOURNAL"; fi ;;
+        if [ -f "$JOURNAL" ]; then printf 'journal='; cat "$JOURNAL"; else echo journal=none; fi ;;
+    reconcile-normal|reconcile-fallback)
+        acquire; read_conf
+        [ "$mode" = auto ] || die "reconciliation requires auto policy"
+        [ ! -f "$SWITCH_PENDING" ] || die "switch transition pending"
+        adapter_ok || die "unqualified platform"
+        case "$1" in
+            reconcile-normal) phase=NORMAL; verification=verify-return;;
+            reconcile-fallback) phase=FAILOVER; verification=verify-takeover;;
+        esac
+        # Readback-only reconciliation; never replay a half-complete transition.
+        bounded_adapter 15 "$verification" || die "physical reconciliation failed"
+        policy="$mode:$interval:$fail_samples:$recovery_samples"
+        atomic "$JOURNAL" "stable:$phase"
+        sync
+        reset_samples; save_state
+        ;;
     tick) tick ;;
     manual-return)
         acquire; read_conf
@@ -262,15 +292,29 @@ case "${1:-}" in
         fi
         transition return ;;
     run)
+        # Read policy exclusively under the same lock as writers. The runner
+        # has its own singleton lock; tick owns the network lock separately.
+        mkdir -p "$RUN"
+        runner="$RUN/gateway-failover.runner"
+        mkdir "$runner" 2>/dev/null || die "runner already active or stale"
+        trap 'rmdir "$runner" 2>/dev/null || :' EXIT
+        trap 'exit 0' HUP INT TERM
         while :; do
-            read_conf
-            [ "$mode" != disabled ] || exit 0
-            # Busy lock is transient; all other errors require intervention.
+            if snapshot=$("$0" runner-policy); then
+                set -- $snapshot
+                [ "$1" != disabled ] || exit 0
+                delay=$2
+            else
+                rc=$?
+                [ "$rc" -eq 75 ] || exit "$rc"
+                sleep 2; continue
+            fi
             if "$0" tick; then :; else
                 rc=$?
                 [ "$rc" -eq 75 ] || { say "watchdog stopped (rc=$rc)" >&2; exit "$rc"; }
             fi
-            sleep "$interval"
+            sleep "$delay"
         done ;;
-    *) die "usage: ax53-failover init|status|tick|run|manual-return|set-observe|set-disabled" ;;
+    runner-policy) acquire; read_conf; printf '%s %s\n' "$mode" "$interval" ;;
+    *) die "usage: ax53-failover init|status|tick|run|manual-return|set-observe|set-disabled|reconcile-normal|reconcile-fallback" ;;
 esac

@@ -4,7 +4,7 @@
 fo_step() {
     phase=$1 count=$2 probe=$3 fail_limit=$4 recovery_limit=$5 auto_return=$6
     case "$phase:$probe" in
-        NORMAL:healthy|SUSPECT:healthy) echo "NORMAL 0 none" ;;
+        NORMAL:healthy|SUSPECT:healthy|NORMAL:local-reachable|SUSPECT:local-reachable) echo "NORMAL 0 none" ;;
         NORMAL:down|SUSPECT:down)
             count=$((count + 1))
             if [ "$count" -ge "$fail_limit" ]; then

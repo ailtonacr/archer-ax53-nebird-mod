@@ -7,7 +7,7 @@ local status = table.concat({
     "mock table", "",
 }, "\n")
 local calls, form, result, fail = {}, {}, status, false
-local gateway = "mode=disabled\nphase=NORMAL\nadapter=unqualified\nconsecutive=0\nprobe=unknown\naction=none\nlast_sample=0\nfirst_sample=0\n"
+local gateway = "mode=disabled\nphase=NORMAL\nadapter=unqualified\nconsecutive=0\nprobe=unknown\naction=none\nlast_sample=0\nfirst_sample=0\nfreshness=disabled\njournal=none\n"
 package.loaded["luci.http"] = { formvalue = function(k) return form[k] end }
 package.loaded["luci.sys"] = {
     exec = function(cmd)

@@ -118,13 +118,14 @@ export function openManagedSwitch() {
   function pending() { return !!state && state.transition === "pending"; }
   function syncControls() {
     const on = enabled(), changed = dirty(), blocked = !state || pending();
-    [f.wan,f.lan,f.trunk,f.cpuLan,f.cpuWan].forEach(el => el.disabled = busy || on || blocked);
-    qa('[data-role="ports"] input').forEach(el => el.disabled = busy || on || blocked || el.value === f.trunk.value);
-    q('[data-act="save"]').disabled = busy || on || blocked || !changed;
+    const policyBlocked = !gateway || gateway.mode === "auto" || !["none","stable:NORMAL"].includes(gateway.journal);
+    [f.wan,f.lan,f.trunk,f.cpuLan,f.cpuWan].forEach(el => el.disabled = busy || on || blocked || policyBlocked);
+    qa('[data-role="ports"] input').forEach(el => el.disabled = busy || on || blocked || policyBlocked || el.value === f.trunk.value);
+    q('[data-act="save"]').disabled = busy || on || blocked || policyBlocked || !changed;
     q('[data-act="apply"]').disabled = busy || blocked || changed;
     q('[data-act="rollback"]').disabled = busy || !state;
     q('[data-role="locked"]').className = "ms-locked" + (on ? " show" : "");
-    const policyBlocked = !gateway || gateway.mode === "auto" || (gateway.journal && gateway.journal !== "stable:NORMAL");
+
     q('[data-act="mode-stock"]').disabled = busy || !state || policyBlocked || gateway.mode === "observe";
     q('[data-act="mode-managed"]').disabled = busy || blocked || changed || policyBlocked;
     q('[data-act="observe"]').disabled = busy || blocked || !on || policyBlocked || gateway.mode === "observe";
@@ -185,7 +186,7 @@ export function openManagedSwitch() {
       if (!data || !["disabled","observe","auto"].includes(data.mode) || !data.phase) throw new Error("Política indisponível");
       gateway=data;
       el.textContent="Política: "+data.mode+" | Estado registrado: "+data.phase+" | Adaptador: "+data.adapter+
-        (data.journal?" | Journal: "+data.journal:"");
+        " | Amostra: "+data.freshness+" | Journal: "+data.journal;
     } catch(e) {
       el.textContent="Política não verificada: "+errMsg(e);
       throw e;
@@ -217,7 +218,7 @@ export function openManagedSwitch() {
   q('[data-act="refresh"]').onclick=refresh;
   f.trunk.onchange=()=>{const next=f.trunk.value;if(currentTrunk&&currentTrunk!==next)draftAccess.add(currentTrunk);draftAccess.delete(next);currentTrunk=next;renderPorts()};
   [f.wan,f.lan,f.cpuLan,f.cpuWan].forEach(el=>el.oninput=()=>{renderTopology();syncControls()});
-  q('[data-role="form"]').onsubmit=e=>{e.preventDefault();if(enabled())return toast("Desabilite/restaure stock antes de editar.",false);const error=validate();if(error)return toast(error,false);action("save",draft(),"Configuração salva; switch físico não foi alterado.")};
+  q('[data-role="form"]').onsubmit=e=>{e.preventDefault();if(!gateway || gateway.mode==="auto" || !["none","stable:NORMAL"].includes(gateway.journal) || pending())return toast("Política bloqueia edição.",false);if(enabled())return toast("Desabilite/restaure stock antes de editar.",false);const error=validate();if(error)return toast(error,false);action("save",draft(),"Configuração salva; switch físico não foi alterado.")};
   q('[data-act="apply"]').onclick=async()=>{if(!state)return;if(dirty())return toast("Salve as alterações antes de aplicar.",false);if(!confirm("Isso reprograma o RTL8367S imediatamente. Confirme que o Proxmox está preparado, IPTV/VLAN custom está desabilitado e sua sessão não está na porta trunk. Aplicar agora?"))return;await action("apply",{},"Aplicação solicitada; confira a tabela VLAN física.")};
   q('[data-act="rollback"]').onclick=()=>{if(confirm("Executar rollback para o pipeline/layout stock e desabilitar o perfil gerenciado?"))action("rollback",{},"Rollback solicitado; perfil gerenciado desabilitado.")};
   q('[data-act="mode-stock"]').onclick=()=>q('[data-act="rollback"]').click();

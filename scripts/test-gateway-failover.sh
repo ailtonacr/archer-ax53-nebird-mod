@@ -10,6 +10,7 @@ assert() {
     [ "$actual" = "$expected" ] || { echo "FAIL expected $expected got $actual" >&2; exit 1; }
 }
 assert 'NORMAL 0 none' NORMAL 0 healthy 6 24 0
+assert 'NORMAL 0 none' SUSPECT 0 local-reachable 6 24 0
 assert 'SUSPECT 1 none' NORMAL 0 down 6 24 0
 assert 'SUSPECT 5 none' SUSPECT 4 down 6 24 0
 assert 'SUSPECT 6 takeover' SUSPECT 5 down 6 24 0
@@ -40,7 +41,10 @@ mkdir -p "$GF_DATA_ROOT/managed-switch"
 printf 'enabled=1\n' > "$GF_DATA_ROOT/managed-switch/config"
 sh "$CLI" set-observe
 sh "$CLI" status | grep -qx 'mode=observe'
+touch "$GF_DATA_ROOT/managed-switch/transition.pending"
 sh "$CLI" set-disabled
+[ -f "$GF_DATA_ROOT/managed-switch/transition.pending" ]
+rm "$GF_DATA_ROOT/managed-switch/transition.pending"
 sh "$CLI" status | grep -qx 'mode=disabled'
 sed 's/mode=disabled/mode=auto/' "$GF_DATA_ROOT/gateway-failover/config" > "$tmp/c"
 mv "$tmp/c" "$GF_DATA_ROOT/gateway-failover/config"
