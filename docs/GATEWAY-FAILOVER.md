@@ -1,55 +1,42 @@
-# AX53 gateway failover — stage 1 (not qualified for deployment)
-Base: feat/managed-switch-router-on-a-stick. No NetBird, new NAND partitions, CI or tags.
-## Implemented
-- POSIX policy state machine, hysteresis, disabled/observe/auto policies, status CLI.
-- Atomic transition intent journal with sync before and after hardware changes (power-loss behavior still needs physical testing), single writer lock, explicit board adapter
-  gate. Auto refuses unqualified adapters; stock default remains unchanged.
-- Observer service is packaged but not linked at boot. Only observe can start
-  via init. No hardware writes from the included adapter.
-- Shared nonblocking custom switch/failover lock, strict non-executable config parsing, switch intent marker, bounded adapter calls and monotonic sample windows. Vendor boot/hotplug remains an outstanding integration gate.\n- Local/offline shell tests with mock adapter, including manual return only after stable recovery and verified fallback. Initial auto operation requires verified primary layout. No hardware qualification implied. A stale lock or interrupted journal requires operator reconciliation; do not remove it blindly.
-## Hardware gates before real transitions
-1. Inspect installed build, vendor network UCI/state, actual bridge/VLAN table,
-   DHCP and IPv6 RA processes, NAT/firewall and WAN address; secure physical
-   recovery and back up configurations. The stock template is not live state.
-2. Implement adapter with preflight, probe-primary, takeover, verify-takeover,
-   return, verify-return. All commands bounded; preflight checks supported
-   build, approved topology, safe recovery, non-overlapping DHCP pools and
-   independent recovery/monitoring path. Probe returns healthy, down,
-   upstream-down or unknown (never derive down solely from internet ping).
-3. Fence primary WAN/LAN and verify hardware membership before assuming gateway
-   172.24.0.1. Existing rollback reconnects LAN1 untagged and is NOT fencing.
-   Preserve management 172.24.0.2 if supported, verify NAT/firewall and DHCP/DNS
-   from client; handle IPv6 or disable it safely in fallback.
-4. Reconcile vendor S19switch, S25network, S46iptv, 65-iptv, S99managed-switch
-   and networkx so no reboot/hotplug reopens primary or starts competing DHCP.
-   Do not enable auto boot before this work. Establish isolated control VLAN
-   with OpenWrt and recovery probe; prove actual forwarding before failback.
-5. Manual failover/failback with access on LAN2–4; tests for VM/host outage,
-   upstream-only outage, lease/ARP renewal, partial failures and power loss.
-   An interrupted journal blocks automation: inspect fencing, actual gateway
-   and services first; no blind deletion or retry. Add a verified reconciliation
-   command and stock UI before enabling auto service.
-6. Only after qualification: enable auto mode explicitly, initially manual
-   failback; opt in automatic failback after repeated physical tests.
-## Local test
-Run make test-firmware. The test mocks the adapter; it does not touch switch,
-UCI, firewall or physical hardware. Factory config mode=disabled.
+# AX53 gateway failover — current status and qualification gates
+Reviewed 2026-11-26 against implementation commit `15a1e1d362d84e4de323e0b5e6223d368fc86b2e` on `feat/managed-switch-router-on-a-stick`.
 
-## Stage 2 — ordered adapter and mode policy (not hardware qualified)
-- board-adapter dispatches an ordered takeover/return transaction from transition.sh. No qualified-platform is shipped. The reference layout.sh generates the primary, fenced and fallback membership masks for the documented AX53 LAN1 topology; control VID is an explicit input, not a production allocation.
-- Platform preflight must validate exact firmware, hardware readback, vendor writers, recovery network and DHCP reservations. Each step must be synchronous and check its physical postcondition. Fencing is checked before WAN access, firewall/gateway claim and after takeover. Return requires isolated primary health, stops DHCP/DNS/routing and releases address/WAN before reconnecting primary. No blind rollback after failure.
-- Platform commands: preflight, primary-layout, local-services-off, fence-primary, verify-fenced, enable-local-wan, prepare-firewall, claim-gateway, start-routing, start-dns-dhcp, verify-local-gateway, primary-ready-isolated, stop-dns-dhcp, stop-routing, release-gateway, disable-local-wan, reconnect-primary, probe-primary. The first-party platform must be implemented against observed vendor runtime; do not replace with an unconditional success script. The driver masks alone do not prove filtering or PVID behavior.
-- UI exposes stock L2 restore, managed L2 apply and a disabled auto option. Observe/disabled policy can be saved through the existing stock API; the observer is not started automatically by the UI and must be started explicitly. No automatic mode can be enabled through this API.
-- Read-only diagnostics: board-adapter diagnostics. Local tests: scripts/test-gateway-transition.sh (mock platform, failure injection, fixed mask fixtures). Hardware testing and service implementation remain mandatory.
+**Status: candidate implementation, not qualified for deployment.** Factory switch profile and failover policy remain disabled. No automatic gateway transitions are supported by the shipped image. No firmware was built or flashed for this review. The stock source snapshot, MIBIB, NAND layout, NetBird removal and no-Actions/no-tags policy are unchanged.
 
-### RTL8367S candidate implementation
-rtl8367s.sh defines the exact in-place VLAN membership and PVID changes for fence, local WAN enable/disable and reconnect; no VLAN reset. The platform must supply rtl_write and rtl_verify, establish the control VLAN before fencing, verify ingress filtering/PVID semantics and hardware readback, and serialize all vendor writers. This is not a qualified implementation of those callbacks. The stock boot/hotplug paths remain unchanged: auto must remain unavailable until integrated and tested. The L3 vendor implementation and reserved pool/WAN/control subnet are deliberately not guessed. The first real platform must prove no competing IPv4 gateway, DHCP or IPv6 advertisements, and preserve access via LAN2–4.
+## Current architecture
+- Stock TP-Link SPA -> `managed_switch.lua` -> `ax53-switch` for L2 configuration, and `ax53-failover` for policy/status.
+- Observer init is installed at `S99zgateway-failover`. It starts only for explicitly configured observe policy; the Lua API requests start/stop via the fixed init path. Auto is not started by that init script; the UI auto option is disabled.
+- The watchdog samples every 5 seconds by default; configured thresholds are 6 failure and 24 recovery intervals, with minimum elapsed windows of 30 and 120 seconds. Automatic return defaults off. Unqualified ICMP success is local-reachable, not a qualified internet health result; it never authorizes takeover.
+- `board-adapter` -> `transition.sh` -> `qualified-platform` -> `rtl8367s.sh` / `platform-l3.sh`. The dispatcher exists, but its required executable `board-qualification` does not. The installer explicitly rejects an unreviewed copy of it. No runtime platform profile is shipped; the example is not a configuration.
+- Fixed candidate topology: LAN1 trunk, WAN PHY0 / VID4094, LAN PHY1–4 / VID2, CPU16; LAN2–4 and Wi-Fi retained on LAN. Gateway 172.24.0.1, AX53 management 172.24.0.2, upstream 192.168.0.1. The OpenWrt WAN 192.168.0.3 is excluded from the candidate fallback profile. Control VID/subnet, fallback WAN reservation, DHCP pool and DNS must be approved independently; no test values are production allocations.
+- Candidate L3 uses ip, iptables, dnsmasq, routing table 203, rule priorities 10303–10304 and dedicated AX53GF_* chains. No persistent vendor UCI mutation. This is a proposed isolated implementation, not a validated native-service replacement.
 
-Before a stock restore, disable observation explicitly. Invalid or automatic policy blocks custom switch mutations. The control VLAN must enforce tagged-only ingress and authenticated/isolated probes; the candidate PVID alone cannot guarantee this.
+## Safety model and recovery
+Takeover verifies primary layout and local services off, fences production VLANs from LAN1, enables local WAN, verifies fencing, installs firewall, claims gateway, enables routing and starts DHCP/DNS. Return checks isolated primary readiness, stops DHCP/DNS and forwarding, releases addresses/rules, detaches local WAN and verifies local services off before reconnecting primary.
+The watchdog writes and syncs pending intent before mutation; it records stable state only after verification. Pending or unknown state blocks automation. `reconcile-normal` and `reconcile-fallback` only record a fully verified physical state in auto policy; they do not repair a partial transition. Do not erase journals/locks blindly. Stopping observe is permitted when a switch transition is pending and does not erase that transition. Stock rollback restores L2 only and may reconnect LAN1; it is not fencing or a complete gateway failback.
 
-## Platform dispatcher and candidate L3 (qualification gate)
-The shipped qualified-platform now connects the RTL8367S operations and native IPv4 commands. It requires an additional board-qualification contract derived from actual hardware evidence: preflight, control-vid, verify-control, verify-layout, verify-native-services-off, probe-primary, and verify-primary-ready-isolated. This contract is not shipped, because no real driver readback, ingress/filter verification, reserved VLAN/subnet, or independently verified health path has been observed. A flag or successful write is insufficient. Auto stays unavailable, including after boot. Platform mutations require the matching durable pending journal. No production profile is provisioned.
-The candidate L3 uses existing ip/iptables/dnsmasq binaries, a dedicated routing table and chains, and an isolated dnsmasq configuration; it does not persist vendor UCI changes. DHCP/WAN/DNS fields are required explicitly; the example is never activated. The design needs lab review of route priority, firewall chain ordering, IPv6/RA, service coexistence, hardware offload, DNS source binding, and cleanup of interrupted steps. It is not an approved replacement for native router configuration until tested. Manual recovery retains journal; never clear it to force a retry.
+## Revalidation — open defects and gates
+| Priority | Evidence and required action |
+| --- | --- |
+| P0 | `qualified-platform:18–28`: missing board-qualification and approved platform.conf; no production control VLAN, readback parser, independent primary health or automatic activation. Implement only from observed board evidence. Control verification must allow primary peer outage during takeover; it must not depend on the failed service being available. |
+| P0 | `patch-gateway-vendor-guards.py:25–38`: seven stock anchors each occur once in the tracked source; guards cover switch and IPTV entrypoints, not every writer. Stock normal mode still resets before reapply, and native iface firewall/NAT callbacks can run asynchronously. Serialize ownership of VLAN, netifd, firewall, NAT, DHCP, IPv6/RA and hardware offload; prove safe boot and interrupted transition. |
+| P0 | `platform-l3.sh:56–95,144–166`: sequential operations can leave partially created chains, addresses, rules or services. No per-step ownership ledger or repair operation. Reconciliation requires an already complete state; add controlled cleanup/recovery with isolation maintained. |
+| P0 | `platform-l3.sh:59,178–187`: requires global IPv4 forwarding off, fixed interface names, no native competing services, and a reserved profile. Native stock state has not been observed. The profile parser excludes only some known reservations; prove the complete DHCP pool, WAN reservation, DNS behavior for existing leases, and IPv6/RA isolation. |
+| P1 | `platform-l3.sh:85–95`: route table read errors can appear empty; checks only first rule priority; verify both priorities, exact chain order and contents, routing, interface ownership and packet path. `gf_l3_verify` is not an independent end-to-end client test. |
+| P1 | `ax53-failover` and init: mkdir locks can be orphaned; process identity uses PID and cmdline without start time; observer run reads current policy and is not hard-pinned to observe. Define singleton/recovery and cancellation rules. Stock rc.common masks some service exit codes; verify service state independently. |
+| P1 | Boot link name S99zgateway-failover does not match START=99 used by stock rc.common enable/disable/enabled. Make naming and lifecycle consistent before deployment. |
+| P1 | Lua uses fixed executable/allowlisted arguments but synchronous sys.exec and separate policy, init and status calls; real vendor auth/CSRF/response shape and concurrency need validation. UI has manual refresh, not live telemetry; displayed state is configured intent, not physical proof. |
+| P1 | Tests exercise mock transitions, failure injection, masks, profile parser, Lua stub and packaging. No actual qualified-platform L3 command sequence is exercised, no real hardware results. Add integration fixtures and run the complete suite in an isolated environment. |
+| P2 | Makefile setup references absent requirements.txt; build prerequisites and post-package gate remain to be repaired separately. No build requested or performed. |
 
-### 2026-11-26 correction integration
-Observation can be started/stopped through the fixed Lua service path; S99zgateway-failover only starts observe mode, never auto. Status separates recent samples from process identity. Stopping observation is permitted during a pending managed-switch transaction, but cannot erase that transaction. The qualified board contract must independently verify L3 off and fallback state (including exact firewall order, policy routing, no offload bypass, IPv6/RA, and no duplicate service/addresses). No qualified board contract or deployment profile is shipped. The platform dispatcher and L3 commands are candidate code requiring the qualification gate; no live change was executed.
+## Required qualification contract
+Implement board-qualification from actual readback and approved topology; commands: preflight, control-vid, verify-control, verify-layout, verify-native-services-off, probe-primary, verify-primary-ready-isolated, verify-l3-off, verify-l3-fallback. Verification must be read-only, bounded, fail closed, distinguish unavailable data from negative evidence, and check all VLAN membership/PVID/ingress rules, control-path isolation, L3 ownership and service state. Do not implement a marker-only or always-success stub. Mutations require matching durable pending intent and one proven writer. Preflight must remain valid through intended transitional layouts.
+
+## Validation procedure (not executed here)
+1. Preserve stock backup and working management access via LAN2–4; identify exact build, read-only driver output, bridge/interface addresses, process list, routing/firewall and service state without secrets. Use `/usr/lib/gateway-failover/board-adapter diagnostics`, `ax53-switch status`, `ax53-failover status`.
+2. Reserve an isolated control VLAN/subnet on all three devices and independently confirm pool/WAN/DNS; ensure primary failure can be distinguished from upstream outage. Verify tagging/filtering and boot fencing.
+3. Close P0/P1 safety issues, run `make test-firmware` with Lua 5.1, Python, Node and shell tools. Run controlled manual takeover and return in a lab; validate clients, DNS, WAN exposure, DHCP/ARP and IPv6, old leases, failed partial steps, power loss and concurrent vendor updates.
+4. Only after successful evidence and explicit approval, allow automatic failover with manual return first; enable automatic return after repeated successful tests. No real deployment before this gate.
+
+## Source evidence
+The full Git tree at the reviewed commit is non-truncated (3581 entries, 3194 blobs). The guard anchors were counted against the tracked stock text and all seven matched uniquely. Vendor Lua dispatcher/controller are binary in the extracted stock snapshot; their security behavior is not established by the stub. No test execution, firmware build, hardware validation or complete independent security audit was performed in this revalidation.

@@ -227,7 +227,7 @@ O patch é fail-closed: se os anchors de rota, `navConfig`, `modeMenu` ou filtro
 - `Aplicar agora` pede confirmação operacional.
 - Backend ativa e aplica em uma transação.
 - Se `apply` falhar, o marcador de transição permanece; recuperação explícita é necessária.
-- `Rollback stock` permanece disponível explicitamente.
+- `Rollback stock` permanece disponível explicitamente quando a política e o journal permitem; desative a observação antes. Não force o retorno durante fallback ou transição de gateway.
 - IPTV/VLAN customizado da TP-Link não deve ser usado simultaneamente com o perfil gerenciado.
 
 ## Rollback
@@ -297,3 +297,7 @@ Ainda requer validação na imagem/hardware da revisão atual:
 - `ax53-switch activate` (legacy `enable` alias) persists the intent and applies the managed layout in one custom-controller transaction. Do not use the old separate enable/apply sequence. `apply` is an idempotent reapply for the existing enabled profile; `--force` is reserved for the fake driver tests.
 - Config is parsed as data. Active configuration cannot be edited until an explicit stock restore. Status reports enabled **configuration intent**, not independently verified physical VLAN membership. A pending switch transition blocks reapplication; explicit recovery/rollback is required from a safe local path, after checking the Proxmox trunk and gateway. No automatic rollback to stock on failed activation (stock may reconnect LAN1).
 - The shared custom lock does not cover all stock services. Do not use failover auto mode until vendor boot/hotplug fencing, independent recovery and hardware validation are complete.
+
+
+## Revalidação de integração — 2026-11-26
+Fonte: implementação `15a1e1d362d84e4de323e0b5e6223d368fc86b2e`. O perfil L2, a integração SPA/Lua e o monitor estão conectados por inspeção de código, sem execução de testes nesta revisão. O modo stock restaura somente L2; não restaura DHCP/NAT/DNS/firewall automaticamente. O botão de failover automático permanece bloqueado. O watchdog pode iniciar em observação opt-in, sem assumir gateway. O patcher aplica guardas aos escritores switch/IPTV observados no rootfs extraído, preservando o snapshot stock do Git; sete anchors únicos verificados por inspeção. Não garante exclusão de todos os escritores nativos. Reaplicação após unlock do 65-iptv está conectada, porém ainda existe janela de reset e há recuperação manual de falha/deferred. Status representa intenção configurada, journal e leitura bruta do driver, não prova de isolamento. Ver [GATEWAY-FAILOVER.md](GATEWAY-FAILOVER.md) para os bloqueantes e critérios de homologação. Nenhuma alteração de infraestrutura ou build nesta revisão.
