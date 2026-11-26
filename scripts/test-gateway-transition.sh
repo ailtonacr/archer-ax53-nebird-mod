@@ -61,7 +61,7 @@ unset FAIL_STEP
 for vid in 0 2 4094 4095 invalid 099; do
     if gf_layout primary "$vid"; then echo "invalid control VID accepted" >&2; exit 1; fi
 done
-# Shipped adapter must fail closed: no qualified-platform installed.
+# Shipped adapter must fail closed: board qualification is not installed.
 if GF_LIB_ROOT="$LIB" sh "$LIB/board-adapter" preflight; then
     echo "unqualified adapter accepted" >&2; exit 1
 fi
@@ -90,4 +90,21 @@ vlan set 4094 3 1
 verify primary 99'
 : > "$tmp/log"; if rtl_fence 2; then exit 1; fi
 [ ! -s "$tmp/log" ]
-echo "OK: ordered transition contract, phase failures and isolation mask model"
+# Data-only L3 profile validation, using documentation-only test addresses.
+. "$LIB/platform-l3.sh"
+cat > "$tmp/profile" <<'EOF'
+wan_ip=192.168.0.250
+dhcp_start=172.24.0.210
+dhcp_end=172.24.0.220
+dns1=192.0.2.1
+dns2=192.0.2.2
+EOF
+gf_l3_load "$tmp/profile"
+[ "$GF_WAN_IP" = 192.168.0.250 ] && [ "$GF_POOL_START" = 172.24.0.210 ]
+sed 's/192.168.0.250/192.168.0.3/' "$tmp/profile" > "$tmp/bad"
+if gf_l3_load "$tmp/bad"; then echo "primary WAN collision accepted" >&2; exit 1; fi
+sed 's/172.24.0.210/172.24.0.52/' "$tmp/profile" > "$tmp/bad"
+if gf_l3_load "$tmp/bad"; then echo "reserved pool collision accepted" >&2; exit 1; fi
+echo "wan_ip=192.168.0.249" >> "$tmp/profile"
+if gf_l3_load "$tmp/profile"; then echo "duplicate profile accepted" >&2; exit 1; fi
+echo "OK: ordered transition contract, phase failures, isolation masks and L3 configuration"

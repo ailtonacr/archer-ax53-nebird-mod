@@ -1,0 +1,73 @@
+#!/bin/sh
+# AX53 platform dispatcher. Do not guess the format of the proprietary
+# RTL8367S readback or a production DHCP/health configuration.
+set -eu
+LIB="${GF_LIB_ROOT:-/usr/lib/gateway-failover}"
+DATA="${GF_DATA_ROOT:-/tp_data}/gateway-failover"
+RUN="${GF_RUN_ROOT:-/var/run}"
+DRIVER=/proc/driver/rtl8367s
+. "$LIB/layout.sh"
+. "$LIB/rtl8367s.sh"
+. "$LIB/platform-l3.sh"
+
+fail() { echo "AX53 platform: $*" >&2; exit 1; }
+# The production qualification contract is intentionally not satisfied by
+# a flag, a snapshot name, or a successful write to /proc.
+# A board-specific readback implementation must validate the entire layout,
+# ingress policy, PVID, CPU isolation, stock writers and service state.
+QUAL="$LIB/board-qualification"
+preflight() {
+    [ -x "$QUAL" ] || return 1
+    "$QUAL" preflight || return 1
+    control=$("$QUAL" control-vid) || return 1
+    gf_layout primary "$control" >/dev/null || return 1
+    [ -w "$DRIVER/vlan" ] && [ -w "$DRIVER/port" ] || return 1
+    [ -x /usr/sbin/ip ] && [ -x /usr/sbin/dnsmasq ] && command -v iptables >/dev/null || return 1
+    gf_l3_load "$DATA/platform.conf" || return 1
+    # Require proof of the configured control link and current services.
+    "$QUAL" verify-control "$control" || return 1
+}
+rtl_write() {
+    node=$1; shift
+    case "$node" in vlan|port) ;; *) return 1;; esac
+    printf '%s\n' "$*" > "$DRIVER/$node"
+}
+rtl_verify() {
+    "$QUAL" verify-layout "$1" "$2"
+}
+require_intent() {
+    [ -f "$DATA/journal" ] && grep -qx "pending:$1" "$DATA/journal"
+}
+case "${1:-}" in
+    preflight) preflight || fail "board/readback/control/L3 qualification incomplete"; exit 0;;
+    diagnostics)
+        printf '%s\n' 'Platform dispatcher present; qualification required.'
+        [ -x "$QUAL" ] || printf '%s\n' 'Missing qualified board readback/health contract.'
+        [ -f "$DATA/platform.conf" ] || printf '%s\n' 'Missing explicit fallback network profile.'
+        exit 0;;
+esac
+preflight || fail "unqualified board"
+case "$1" in
+    primary-layout) rtl_verify primary "$control";;
+    verify-fenced)
+        rtl_verify fenced "$control" || rtl_verify fallback "$control";;
+    local-services-off) gf_l3_off && "$QUAL" verify-native-services-off;;
+    probe-primary) "$QUAL" probe-primary;;
+    primary-ready-isolated) "$QUAL" verify-primary-ready-isolated;;
+    verify-local-gateway)
+        rtl_verify fallback "$control" && gf_l3_verify && "$QUAL" verify-native-services-off;;
+    fence-primary) require_intent takeover && rtl_fence "$control";;
+    enable-local-wan) require_intent takeover && rtl_enable_local_wan "$control";;
+    prepare-firewall) require_intent takeover && gf_l3_prepare_firewall;;
+    claim-gateway) require_intent takeover && gf_l3_claim;;
+    start-routing) require_intent takeover && gf_l3_start_routing;;
+    start-dns-dhcp) require_intent takeover && gf_l3_start_dns;;
+    stop-dns-dhcp) require_intent return && gf_l3_stop_dns;;
+    stop-routing) require_intent return && gf_l3_stop_routing;;
+    release-gateway) require_intent return && gf_l3_release;;
+    disable-local-wan) require_intent return && rtl_disable_local_wan "$control";;
+    reconnect-primary)
+        require_intent return && gf_l3_off &&
+            "$QUAL" verify-native-services-off && rtl_reconnect "$control";;
+    *) fail "unknown platform operation";;
+esac

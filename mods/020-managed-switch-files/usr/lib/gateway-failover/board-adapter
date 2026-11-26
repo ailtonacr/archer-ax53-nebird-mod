@@ -1,10 +1,9 @@
 #!/bin/sh
 set -eu
 LIB="${GF_LIB_ROOT:-/usr/lib/gateway-failover}"
-# Platform is NOT shipped as a live implementation. A qualified, board-specific
-# implementation must provide hardware readback, stock-service coordination,
-# boot fencing, validated control VLAN and native DHCP/NAT/DNS postconditions.
-# Never provide a fake qualification flag or a blanket success implementation.
+# The platform implementation is packaged; it refuses to mutate anything
+# without board-specific qualification of readback, ingress, control, and
+# native service ownership. No blanket success or marker-only qualification.
 PLATFORM="$LIB/qualified-platform"
 . "$LIB/transition.sh"
 . "$LIB/layout.sh"
@@ -24,6 +23,7 @@ case "${1:-}" in
             fi
         done
         command -v ip >/dev/null && { ip -4 addr show; ip -4 route show; } || :
+        [ ! -x "$PLATFORM" ] || "$PLATFORM" diagnostics
         exit 0;;
 esac
 [ -x "$PLATFORM" ] || { echo "board platform not qualified" >&2; exit 1; }

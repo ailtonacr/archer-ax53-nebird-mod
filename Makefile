@@ -37,7 +37,7 @@ test-firmware:
 	sh scripts/test-managed-switch.sh
 	sh -n mods/020-managed-switch-files/usr/sbin/ax53-failover
 	sh -n mods/020-managed-switch-files/etc/init.d/gateway-failover
-	for f in mods/020-managed-switch-files/usr/lib/gateway-failover/*.sh mods/020-managed-switch-files/usr/lib/gateway-failover/board-adapter scripts/test-gateway-transition.sh; do sh -n "$$f" || exit 1; done
+	for f in mods/020-managed-switch-files/usr/lib/gateway-failover/*.sh mods/020-managed-switch-files/usr/lib/gateway-failover/board-adapter mods/020-managed-switch-files/usr/lib/gateway-failover/qualified-platform scripts/test-gateway-transition.sh; do sh -n "$$f" || exit 1; done
 	sh scripts/test-gateway-failover.sh
 
 firmware: $(TARGET) test-firmware

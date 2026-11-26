@@ -1,0 +1,8 @@
+# Fill only after confirming actual reservations and dedicated control network.
+# Do NOT install this example as the runtime profile. No default pool or WAN
+# address is selected; the existing OpenWrt pool/reservations must not overlap.
+wan_ip=
+dhcp_start=
+dhcp_end=
+dns1=
+dns2=
