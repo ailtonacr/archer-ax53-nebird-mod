@@ -8,7 +8,7 @@ rtl_fence() {
     rtl_verify primary "$control" || return 1
     rtl_write vlan set 4094 1 1 || return 1
     rtl_write vlan set 2 65564 28 || return 1
-    # Untagged traffic on LAN1 cannot join either production VLAN.
+    # Untagged traffic on LAN1 cannot join either production VLAN. The\n    # qualified platform must separately enforce tagged-only ingress on the\n    # control VLAN; do not assume the PVID itself is a filtering control.
     rtl_write port pvid set 1 "$control" 0 || return 1
     rtl_verify fenced "$control"
 }

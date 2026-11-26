@@ -60,7 +60,7 @@ function template() {
 <main>
 <div data-role="toast" class="ms-toast"></div>
 <div class="ms-warn"><strong>Salvar não altera o switch.</strong> O RTL8367S só é reprogramado ao clicar em <strong>Aplicar agora</strong>. No primeiro cutover, mantenha acesso por Wi-Fi ou por uma porta access. Não use o perfil gerenciado simultaneamente com IPTV/VLAN customizado da TP-Link.</div>
-<div class="ms-card"><h2 style="font-size:17px;margin-top:0">Modo de operação</h2><div data-role="gateway-state" class="ms-small">Consultando política…</div><div class="ms-actions"><button type="button" class="ms-secondary" data-act="mode-stock">Roteador stock</button><button type="button" class="ms-primary" data-act="mode-managed">Switch gerenciado</button><button type="button" class="ms-warning" data-act="mode-auto" disabled>Failover automático (bloqueado)</button></div><div class="ms-actions"><button type="button" class="ms-secondary" data-act="observe">Configurar observação</button><button type="button" class="ms-secondary" data-act="observe-off">Desativar observação</button></div><p class="ms-small">Modo stock restaura apenas o layout L2; confirme DHCP, gateway e NAT pelos menus nativos. Observação configura a política; o serviço deve ser iniciado localmente. A alternância automática exige plataforma homologada.</p></div><div class="ms-grid"><section>
+<div class="ms-card"><h2 style="font-size:17px;margin-top:0">Modo de operação</h2><div data-role="gateway-state" class="ms-small">Consultando política…</div><div class="ms-actions"><button type="button" class="ms-secondary" data-act="mode-stock">Roteador stock</button><button type="button" class="ms-primary" data-act="mode-managed">Switch gerenciado</button><button type="button" class="ms-warning" data-act="mode-auto" disabled>Failover automático (bloqueado)</button></div><div class="ms-actions"><button type="button" class="ms-secondary" data-act="observe">Configurar observação</button><button type="button" class="ms-secondary" data-act="observe-off">Desativar observação</button></div><p class="ms-small">Modo stock restaura apenas o layout L2; desative a observação antes de restaurar e confirme DHCP, gateway e NAT pelos menus nativos. Observação configura a política; o serviço deve ser iniciado localmente. A alternância automática exige plataforma homologada.</p></div><div class="ms-grid"><section>
 <div class="ms-card"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h2 style="margin:0;font-size:17px">Perfil gerenciado</h2><span data-role="badge" class="ms-badge ms-off">Carregando…</span></div>
 <form data-role="form" style="margin-top:16px"><div class="ms-fields">
 <div class="ms-field"><label>VLAN WAN</label><input data-f="wan" type="number" min="1" max="4094" required></div>
@@ -125,12 +125,12 @@ export function openManagedSwitch() {
     q('[data-act="rollback"]').disabled = busy || !state;
     q('[data-role="locked"]').className = "ms-locked" + (on ? " show" : "");
     const policyBlocked = !gateway || gateway.mode === "auto" || (gateway.journal && gateway.journal !== "stable:NORMAL");
-    q('[data-act="mode-stock"]').disabled = busy || !state || policyBlocked;
+    q('[data-act="mode-stock"]').disabled = busy || !state || policyBlocked || gateway.mode === "observe";
     q('[data-act="mode-managed"]').disabled = busy || blocked || changed || policyBlocked;
     q('[data-act="observe"]').disabled = busy || blocked || !on || policyBlocked || gateway.mode === "observe";
     q('[data-act="observe-off"]').disabled = busy || policyBlocked || gateway.mode !== "observe";
     q('[data-act="apply"]').disabled = busy || blocked || changed || policyBlocked;
-    q('[data-act="rollback"]').disabled = busy || !state || policyBlocked;
+    q('[data-act="rollback"]').disabled = busy || !state || policyBlocked || gateway.mode === "observe";
     const badge = q('[data-role="badge"]');
     if (!state || pending()) { badge.textContent=state?"Transição pendente":"Estado não verificado"; badge.className="ms-badge ms-dirty"; }
     else if (changed && !on) { badge.textContent="Alterações não salvas"; badge.className="ms-badge ms-dirty"; }

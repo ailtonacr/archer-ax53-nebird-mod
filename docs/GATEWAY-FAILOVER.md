@@ -44,3 +44,5 @@ UCI, firewall or physical hardware. Factory config mode=disabled.
 
 ### RTL8367S candidate implementation
 rtl8367s.sh defines the exact in-place VLAN membership and PVID changes for fence, local WAN enable/disable and reconnect; no VLAN reset. The platform must supply rtl_write and rtl_verify, establish the control VLAN before fencing, verify ingress filtering/PVID semantics and hardware readback, and serialize all vendor writers. This is not a qualified implementation of those callbacks. The stock boot/hotplug paths remain unchanged: auto must remain unavailable until integrated and tested. The L3 vendor implementation and reserved pool/WAN/control subnet are deliberately not guessed. The first real platform must prove no competing IPv4 gateway, DHCP or IPv6 advertisements, and preserve access via LAN2–4.
+
+Before a stock restore, disable observation explicitly. Invalid or automatic policy blocks custom switch mutations. The control VLAN must enforce tagged-only ingress and authenticated/isolated probes; the candidate PVID alone cannot guarantee this.

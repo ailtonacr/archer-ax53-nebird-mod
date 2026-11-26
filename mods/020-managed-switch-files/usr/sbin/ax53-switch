@@ -469,8 +469,15 @@ guard_failover()
     if [ -f "$FAILOVER_DIR/journal" ]; then
         case "$(cat "$FAILOVER_DIR/journal")" in stable:NORMAL) ;; *) die "failover journal requires reconciliation";; esac
     fi
-    if [ -f "$FAILOVER_DIR/config" ] && grep -qx 'mode=auto' "$FAILOVER_DIR/config"; then
-        die "automatic controller owns network configuration"
+    if [ -f "$FAILOVER_DIR/config" ]; then
+        mode=$(sed -n 's/^mode=//p' "$FAILOVER_DIR/config")
+        case "$mode" in
+            disabled) ;;
+            observe)
+                case "$cmd" in disable|rollback) die "disable observation policy before stock restore";; esac;;
+            auto) die "automatic controller owns network configuration";;
+            *) die "invalid failover policy; reconcile first";;
+        esac
     fi
 }
 

@@ -7,11 +7,18 @@ local status = table.concat({
     "mock table", "",
 }, "\n")
 local calls, form, result, fail = {}, {}, status, false
+local gateway = "mode=disabled\nphase=NORMAL\nadapter=unqualified\nconsecutive=0\nprobe=unknown\naction=none\nlast_sample=0\nfirst_sample=0\n"
 package.loaded["luci.http"] = { formvalue = function(k) return form[k] end }
 package.loaded["luci.sys"] = {
     exec = function(cmd)
         calls[#calls + 1] = cmd
         if fail then return "failed\n__AX53_RC:1\n" end
+        if cmd:find("/usr/sbin/ax53-failover", 1, true) then
+            if cmd:find("'status'", 1, true) then return gateway .. "\n__AX53_RC:0\n" end
+            if cmd:find("'set-observe'", 1, true) then gateway = gateway:gsub("mode=disabled", "mode=observe") end
+            if cmd:find("'set-disabled'", 1, true) then gateway = gateway:gsub("mode=observe", "mode=disabled") end
+            return "\n__AX53_RC:0\n"
+        end
         if cmd:find("'status'", 1, true) then return result .. "\n__AX53_RC:0\n" end
         return "mock mutation\n__AX53_RC:0\n"
     end,
@@ -43,6 +50,10 @@ reject({operation="save"})
 form = {}
 assert(invoke({operation="apply"}).success)
 assert(#calls == 2 and calls[1]:find("'activate'",1,true), "apply must be single mutation")
+assert(invoke({operation="gateway_status"}).data.mode == "disabled")
+assert(invoke({operation="gateway_observe"}).data.mode == "observe")
+assert(invoke({operation="gateway_disabled"}).data.mode == "disabled")
+reject({operation="gateway_auto"})
 fail = true
 assert(not invoke({operation="apply"}).success, "CLI failure became success")
 print("OK: Lua 5.1 controller input, status and transaction contracts")
