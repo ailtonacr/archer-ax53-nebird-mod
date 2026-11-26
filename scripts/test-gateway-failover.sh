@@ -34,6 +34,14 @@ sh "$CLI" init
 sh "$CLI" status | grep -qx 'mode=disabled'
 sh "$CLI" tick
 [ ! -f "$GF_RUN_ROOT/gateway-failover.state" ]
+# Observer policy can only be selected with an existing managed profile.
+if sh "$CLI" set-observe; then echo "observation accepted without managed profile" >&2; exit 1; fi
+mkdir -p "$GF_DATA_ROOT/managed-switch"
+printf 'enabled=1\n' > "$GF_DATA_ROOT/managed-switch/config"
+sh "$CLI" set-observe
+sh "$CLI" status | grep -qx 'mode=observe'
+sh "$CLI" set-disabled
+sh "$CLI" status | grep -qx 'mode=disabled'
 sed 's/mode=disabled/mode=auto/' "$GF_DATA_ROOT/gateway-failover/config" > "$tmp/c"
 mv "$tmp/c" "$GF_DATA_ROOT/gateway-failover/config"
 if sh "$CLI" tick; then echo "FAIL unqualified auto" >&2; exit 1; fi

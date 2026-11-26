@@ -4,6 +4,7 @@ ROOT=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 LIB="$ROOT/mods/020-managed-switch-files/usr/lib/gateway-failover"
 . "$LIB/transition.sh"
 . "$LIB/layout.sh"
+. "$LIB/rtl8367s.sh"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 platform() {
@@ -64,4 +65,29 @@ done
 if GF_LIB_ROOT="$LIB" sh "$LIB/board-adapter" preflight; then
     echo "unqualified adapter accepted" >&2; exit 1
 fi
+# Exercise concrete in-place VLAN commands with no device access.
+rtl_write() { printf '%s\n' "$*" >> "$tmp/log"; }
+rtl_verify() { printf 'verify %s %s\n' "$@" >> "$tmp/log"; }
+: > "$tmp/log"; rtl_fence 99
+expect 'verify primary 99
+vlan set 4094 1 1
+vlan set 2 65564 28
+port pvid set 1 99 0
+verify fenced 99'
+: > "$tmp/log"; rtl_enable_local_wan 99
+expect 'verify fenced 99
+vlan set 4094 65537 1
+verify fallback 99'
+: > "$tmp/log"; rtl_disable_local_wan 99
+expect 'verify fallback 99
+vlan set 4094 1 1
+verify fenced 99'
+: > "$tmp/log"; rtl_reconnect 99
+expect 'verify fenced 99
+port pvid set 1 2 0
+vlan set 2 65566 28
+vlan set 4094 3 1
+verify primary 99'
+: > "$tmp/log"; if rtl_fence 2; then exit 1; fi
+[ ! -s "$tmp/log" ]
 echo "OK: ordered transition contract, phase failures and isolation mask model"
