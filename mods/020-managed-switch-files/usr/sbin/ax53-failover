@@ -47,7 +47,7 @@ read_conf() {
     [ "$fail_samples" -ge 2 ] && [ "$recovery_samples" -ge 2 ] || die "insufficient hysteresis"
 }
 acquire() {
-    # Vendor lock releases on process exit only via this trap; no stale PID
+    # Directory lock releases on ordinary exit via this trap; no stale PID
     # guessing, no parallel transition. The caller must resolve stale lock.
     mkdir "$LOCK" 2>/dev/null || die "locked: $LOCK"
     trap 'rmdir "$LOCK" 2>/dev/null || :' EXIT
@@ -85,9 +85,11 @@ transition() {
     # Durable intent precedes any hardware mutation. Interrupted transitions
     # require explicit reconciliation; boot must never blindly retry.
     atomic "$JOURNAL" "pending:$direction"
+    sync || die "cannot sync transition intent"
     if "$ADAPTER" "$direction" && "$ADAPTER" "verify-$direction"; then
         case "$direction" in takeover) next=FAILOVER;; return) next=NORMAL;; esac
         atomic "$JOURNAL" "stable:$next"
+        sync || die "cannot sync transition completion"
         atomic "$STATE" "$next 0 unknown none"
         say "transition verified: $next"
     else
@@ -122,6 +124,9 @@ tick() {
     [ "$phase" != ERROR ] || die "manual reconciliation required"
     if [ "$mode" = auto ]; then
         adapter_ok || die "auto refused: board adapter not qualified"
+        if [ ! -f "$JOURNAL" ]; then
+            "$ADAPTER" verify-return || die "initial primary layout not verified"
+        fi
     fi
     probe=$(probe_primary)
     set -- $(fo_step "$phase" "$count" "$probe" "$fail_samples" "$recovery_samples" "$auto_return")
@@ -139,6 +144,16 @@ case "${1:-}" in
         if adapter_ok; then echo adapter=qualified; else echo adapter=unqualified; fi
         if [ -f "$JOURNAL" ]; then printf 'journal='; cat "$JOURNAL"; fi ;;
     tick) tick ;;
+    manual-return)
+        read_conf
+        [ "$mode" = auto ] || die "manual return requires auto mode"
+        acquire
+        load_state
+        [ "$phase" = RECOVERY ] && [ "$count" -ge "$recovery_samples" ] || die "primary recovery not stable"
+        [ -f "$JOURNAL" ] && grep -qx "stable:FAILOVER" "$JOURNAL" || die "fallback journal not stable"
+        adapter_ok && "$ADAPTER" verify-takeover || die "fallback layout not verified"
+        [ "$(probe_primary)" = healthy ] || die "primary no longer healthy"
+        transition return ;;
     run)
         while :; do
             read_conf
@@ -147,5 +162,5 @@ case "${1:-}" in
             "$0" tick || exit 1
             sleep "$interval"
         done ;;
-    *) die "usage: ax53-failover init|status|tick|run" ;;
+    *) die "usage: ax53-failover init|status|tick|run|manual-return" ;;
 esac

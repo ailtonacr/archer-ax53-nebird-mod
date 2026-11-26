@@ -45,6 +45,7 @@ esac
 EOF
 chmod +x "$GF_LIB_ROOT/board-adapter"
 echo down > "$GF_DATA_ROOT/probe"
+if sh "$CLI" manual-return; then echo "FAIL premature manual return" >&2; exit 1; fi
 for n in 1 2 3 4 5; do sh "$CLI" tick; done
 [ ! -f "$GF_DATA_ROOT/gateway-failover/journal" ]
 sh "$CLI" tick
@@ -52,6 +53,12 @@ grep -qx 'stable:FAILOVER' "$GF_DATA_ROOT/gateway-failover/journal"
 echo healthy > "$GF_DATA_ROOT/probe"
 for n in $(seq 1 24); do sh "$CLI" tick; done
 grep -qx 'stable:FAILOVER' "$GF_DATA_ROOT/gateway-failover/journal"
+sh "$CLI" manual-return
+grep -qx 'stable:NORMAL' "$GF_DATA_ROOT/gateway-failover/journal"
+echo down > "$GF_DATA_ROOT/probe"
+for n in 1 2 3 4 5 6; do sh "$CLI" tick; done
+echo healthy > "$GF_DATA_ROOT/probe"
+for n in $(seq 1 24); do sh "$CLI" tick; done
 sed 's/auto_return=0/auto_return=1/' "$GF_DATA_ROOT/gateway-failover/config" > "$tmp/c"
 mv "$tmp/c" "$GF_DATA_ROOT/gateway-failover/config"
 sh "$CLI" tick

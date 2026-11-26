@@ -2,11 +2,11 @@
 Base: feat/managed-switch-router-on-a-stick. No NetBird, new NAND partitions, CI or tags.
 ## Implemented
 - POSIX policy state machine, hysteresis, disabled/observe/auto policies, status CLI.
-- Atomic transition intent journal, single writer lock, explicit board adapter
+- Atomic transition intent journal with sync before and after hardware changes (power-loss behavior still needs physical testing), single writer lock, explicit board adapter
   gate. Auto refuses unqualified adapters; stock default remains unchanged.
 - Observer service is packaged but not linked at boot. Only observe can start
   via init. No hardware writes from the included adapter.
-- Local/offline shell tests with mock adapter. No hardware qualification implied.
+- Local/offline shell tests with mock adapter, including manual return only after stable recovery and verified fallback. Initial auto operation requires verified primary layout. No hardware qualification implied.
 ## Hardware gates before real transitions
 1. Inspect installed build, vendor network UCI/state, actual bridge/VLAN table,
    DHCP and IPv6 RA processes, NAT/firewall and WAN address; secure physical
